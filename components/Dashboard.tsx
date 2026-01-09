@@ -42,6 +42,8 @@ import GroupManagement from './GroupManagement';
 import BusinessHours from './BusinessHours';
 import CategoryManagement from './CategoryManagement';
 import DepartmentManagement from './DepartmentManagement';
+import StatusManagement from './StatusManagement';
+import WorkflowMapping from './WorkflowMapping';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -124,7 +126,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
     portal: false
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'service-requests' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'service-requests' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications'>('dashboard');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
@@ -425,9 +427,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
       return <CategoryManagement />;
     }
 
-    if (currentView === 'status-management' || currentView === 'service-request-fields' || currentView === 'sla-management' || currentView === 'portal-highlights' || currentView === 'sla-policies' || currentView === 'escalation-rules' || currentView === 'auto-assignment' || currentView === 'auto-close-rules' || currentView === 'notifications') {
+    if (currentView === 'status-management') {
+      return <StatusManagement />;
+    }
+
+    if (currentView === 'workflow-mapping') {
+      return <WorkflowMapping />;
+    }
+
+    if (currentView === 'service-request-fields' || currentView === 'sla-management' || currentView === 'portal-highlights' || currentView === 'sla-policies' || currentView === 'escalation-rules' || currentView === 'auto-assignment' || currentView === 'auto-close-rules' || currentView === 'notifications') {
       const titleMap: any = {
-        'status-management': 'Status Management',
         'service-request-fields': 'Service Request Fields',
         'sla-management': 'SLA Management',
         'portal-highlights': 'Portal Highlights',
@@ -904,6 +913,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
                         className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'status-management' ? 'text-indigo-600' : 'text-gray-500'}`}
                       >
                         Status Management
+                      </div>
+                      <div
+                        onClick={() => setCurrentView('workflow-mapping')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'workflow-mapping' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Workflow Mapping
                       </div>
                     </div>
                   )}
