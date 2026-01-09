@@ -7,6 +7,7 @@ import {
     GripVertical,
     ArrowRight,
     ChevronDown,
+    ChevronUp,
     Trash2,
     Info,
     Lock,
@@ -46,14 +47,17 @@ interface Transition {
     conditionLabel?: string;
 }
 
-interface Department {
+interface DepartmentWorkflow {
+    workflow_id: string;
     company_id: number;
-    company_name: string;
+    department_id: number;
+    workflow_name: string;
+    is_active: boolean;
 }
 
 const WorkflowMapping: React.FC = () => {
-    const [departments, setDepartments] = useState<Department[]>([]);
-    const [selectedDepartment, setSelectedDepartment] = useState<number | null>(null);
+    const [departments, setDepartments] = useState<DepartmentWorkflow[]>([]);
+    const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null);
     const [statuses, setStatuses] = useState<Status[]>([]);
     const [nodes, setNodes] = useState<WorkflowNode[]>([]);
     const [transitions, setTransitions] = useState<Transition[]>([]);
@@ -62,11 +66,25 @@ const WorkflowMapping: React.FC = () => {
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [showTransitionModal, setShowTransitionModal] = useState(false);
     const [showWarning, setShowWarning] = useState(false);
-    const [pendingDepartmentChange, setPendingDepartmentChange] = useState<number | null>(null);
+    const [pendingDepartmentChange, setPendingDepartmentChange] = useState<string | null>(null);
 
     const [draggedStatus, setDraggedStatus] = useState<Status | null>(null);
     const [draggingNode, setDraggingNode] = useState<string | null>(null);
     const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
+
+    // Group expand/collapse state
+    const [expandedGroups, setExpandedGroups] = useState<{ system: boolean; agent: boolean }>({
+        system: true,
+        agent: true
+    });
+
+    const toggleGroup = (group: 'system' | 'agent') => {
+        setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
+    };
+
+    // Filter statuses by category
+    const systemStatuses = availableStatuses.filter(s => s.status_category === 'system');
+    const agentStatuses = availableStatuses.filter(s => s.status_category === 'agent');
 
     const canvasRef = useRef<HTMLDivElement>(null);
 
@@ -111,15 +129,15 @@ const WorkflowMapping: React.FC = () => {
     const fetchDepartments = async () => {
         try {
             const { data, error } = await supabase
-                .from('company')
-                .select('company_id, company_name')
+                .from('department_workflows')
+                .select('workflow_id, company_id, department_id, workflow_name, is_active')
                 .eq('is_active', true)
-                .order('company_name');
+                .order('workflow_name');
 
             if (error) throw error;
             setDepartments(data || []);
             if (data && data.length > 0) {
-                setSelectedDepartment(data[0].company_id);
+                setSelectedDepartment(data[0].workflow_id);
             }
         } catch (error) {
             console.error('Error fetching departments:', error);
@@ -158,12 +176,12 @@ const WorkflowMapping: React.FC = () => {
         setAvailableStatuses(available);
     };
 
-    const handleDepartmentChange = (deptId: number) => {
+    const handleDepartmentChange = (workflowId: string) => {
         if (hasUnsavedChanges) {
-            setPendingDepartmentChange(deptId);
+            setPendingDepartmentChange(workflowId);
             setShowWarning(true);
         } else {
-            setSelectedDepartment(deptId);
+            setSelectedDepartment(workflowId);
         }
     };
 
@@ -324,7 +342,7 @@ const WorkflowMapping: React.FC = () => {
         return node ? { x: node.x + 75, y: node.y + 25 } : { x: 0, y: 0 };
     };
 
-    const selectedDeptName = departments.find(d => d.company_id === selectedDepartment)?.company_name || '';
+    const selectedDeptName = departments.find(d => d.workflow_id === selectedDepartment)?.workflow_name || '';
 
     return (
         <div className="h-full flex flex-col bg-gray-50">
@@ -351,12 +369,12 @@ const WorkflowMapping: React.FC = () => {
                     <div className="relative">
                         <select
                             value={selectedDepartment || ''}
-                            onChange={(e) => handleDepartmentChange(Number(e.target.value))}
+                            onChange={(e) => handleDepartmentChange(e.target.value)}
                             className="appearance-none bg-white border border-gray-200 rounded-lg px-4 py-2 pr-10 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent min-w-[200px]"
                         >
                             {departments.map(dept => (
-                                <option key={dept.company_id} value={dept.company_id}>
-                                    {dept.company_name}
+                                <option key={dept.workflow_id} value={dept.workflow_id}>
+                                    {dept.workflow_name}
                                 </option>
                             ))}
                         </select>
@@ -538,26 +556,96 @@ const WorkflowMapping: React.FC = () => {
                     <h3 className="font-bold text-gray-800 mb-1">Available Statuses</h3>
                     <p className="text-xs text-gray-500 mb-4">Drag to canvas to add to workflow</p>
 
-                    <div className="space-y-2">
-                        {availableStatuses.map(status => (
-                            <div
-                                key={status.status_id}
-                                draggable
-                                onDragStart={() => handleDragStart(status)}
-                                className={`flex items-center gap-3 px-3 py-2 rounded-lg border border-gray-200 cursor-grab hover:bg-gray-50 transition-colors ${draggedStatus?.status_id === status.status_id ? 'opacity-50' : ''}`}
+                    <div className="space-y-3">
+                        {/* System Statuses Group */}
+                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                            <button
+                                onClick={() => toggleGroup('system')}
+                                className="w-full flex items-center justify-between px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors"
                             >
-                                <GripVertical size={14} className="text-gray-400" />
-                                <div className={`w-3 h-3 rounded-full ${getStatusColor(status)}`} />
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium text-gray-700 truncate">{status.status_name}</p>
-                                    <p className="text-xs text-gray-400">{status.status_code}</p>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-gray-400" />
+                                    <span className="text-sm font-semibold text-gray-700">System Statuses</span>
+                                    <span className="text-xs text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded-full">
+                                        {systemStatuses.length}
+                                    </span>
                                 </div>
-                                {status.is_final && (
-                                    <Lock size={12} className="text-gray-400" title="Final status" />
+                                {expandedGroups.system ? (
+                                    <ChevronUp size={16} className="text-gray-400" />
+                                ) : (
+                                    <ChevronDown size={16} className="text-gray-400" />
                                 )}
-                            </div>
-                        ))}
+                            </button>
+                            {expandedGroups.system && (
+                                <div className="p-2 space-y-1.5 bg-white">
+                                    {systemStatuses.length > 0 ? (
+                                        systemStatuses.map(status => (
+                                            <div
+                                                key={status.status_id}
+                                                draggable
+                                                onDragStart={() => handleDragStart(status)}
+                                                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border border-gray-100 cursor-grab hover:bg-gray-50 hover:border-gray-200 transition-colors ${draggedStatus?.status_id === status.status_id ? 'opacity-50' : ''}`}
+                                            >
+                                                <GripVertical size={12} className="text-gray-300" />
+                                                <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(status)}`} />
+                                                <span className="flex-1 text-sm font-medium text-gray-700 truncate">{status.status_name}</span>
+                                                {status.is_final && (
+                                                    <Lock size={11} className="text-gray-400" title="Final status" />
+                                                )}
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <p className="text-xs text-gray-400 text-center py-2">No system statuses available</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
 
+                        {/* Agent Statuses Group */}
+                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                            <button
+                                onClick={() => toggleGroup('agent')}
+                                className="w-full flex items-center justify-between px-3 py-2.5 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                            >
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                                    <span className="text-sm font-semibold text-gray-700">Agent Statuses</span>
+                                    <span className="text-xs text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded-full">
+                                        {agentStatuses.length}
+                                    </span>
+                                </div>
+                                {expandedGroups.agent ? (
+                                    <ChevronUp size={16} className="text-gray-400" />
+                                ) : (
+                                    <ChevronDown size={16} className="text-gray-400" />
+                                )}
+                            </button>
+                            {expandedGroups.agent && (
+                                <div className="p-2 space-y-1.5 bg-white">
+                                    {agentStatuses.length > 0 ? (
+                                        agentStatuses.map(status => (
+                                            <div
+                                                key={status.status_id}
+                                                draggable
+                                                onDragStart={() => handleDragStart(status)}
+                                                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border border-gray-100 cursor-grab hover:bg-gray-50 hover:border-gray-200 transition-colors ${draggedStatus?.status_id === status.status_id ? 'opacity-50' : ''}`}
+                                            >
+                                                <GripVertical size={12} className="text-gray-300" />
+                                                <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(status)}`} />
+                                                <span className="flex-1 text-sm font-medium text-gray-700 truncate">{status.status_name}</span>
+                                                {status.is_final && (
+                                                    <Lock size={11} className="text-gray-400" title="Final status" />
+                                                )}
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <p className="text-xs text-gray-400 text-center py-2">No agent statuses available</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* All statuses in use message */}
                         {availableStatuses.length === 0 && (
                             <div className="text-center py-8 text-gray-400">
                                 <Info size={24} className="mx-auto mb-2 opacity-50" />
