@@ -12,7 +12,9 @@ import {
     Info,
     Lock,
     Settings,
-    Zap
+    Zap,
+    CheckCircle,
+    XCircle
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
@@ -55,6 +57,32 @@ interface DepartmentWorkflow {
     is_active: boolean;
 }
 
+// Bridge table: workflow_statuses JOIN ticket_statuses
+interface WorkflowStatus {
+    workflow_status_id: string;
+    workflow_id: string;
+    status_id: string;
+    is_initial: boolean;
+    is_active: boolean;
+    // Joined from ticket_statuses
+    status_name: string;
+    status_code: string;
+    status_category: 'system' | 'agent';
+    is_final: boolean;
+    sla_behavior: 'run' | 'pause' | 'stop';
+}
+
+// Transition stored in workflow_transitions
+interface WorkflowTransitionDB {
+    transition_id: string;
+    workflow_id: string;
+    from_status_id: string;
+    to_status_id: string;
+    allowed_roles: string[];
+    is_automatic: boolean;
+    condition?: object;
+}
+
 const WorkflowMapping: React.FC = () => {
     const [departments, setDepartments] = useState<DepartmentWorkflow[]>([]);
     const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null);
@@ -68,9 +96,25 @@ const WorkflowMapping: React.FC = () => {
     const [showWarning, setShowWarning] = useState(false);
     const [pendingDepartmentChange, setPendingDepartmentChange] = useState<string | null>(null);
 
+    // Toast notification state
+    const [toast, setToast] = useState<{ show: boolean; type: 'success' | 'error'; message: string }>({
+        show: false,
+        type: 'success',
+        message: ''
+    });
+
+    const showToast = (type: 'success' | 'error', message: string) => {
+        setToast({ show: true, type, message });
+        setTimeout(() => setToast(prev => ({ ...prev, show: false })), 4000);
+    };
+
     const [draggedStatus, setDraggedStatus] = useState<Status | null>(null);
     const [draggingNode, setDraggingNode] = useState<string | null>(null);
     const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
+
+    // Workflow statuses - status yang diizinkan di workflow ini
+    const [workflowStatuses, setWorkflowStatuses] = useState<WorkflowStatus[]>([]);
+    const [loadingWorkflowStatuses, setLoadingWorkflowStatuses] = useState(false);
 
     // Group expand/collapse state
     const [expandedGroups, setExpandedGroups] = useState<{ system: boolean; agent: boolean }>({
@@ -88,13 +132,139 @@ const WorkflowMapping: React.FC = () => {
 
     const canvasRef = useRef<HTMLDivElement>(null);
 
-    // New transition form
+    // New transition form - matching actual table structure
     const [transitionForm, setTransitionForm] = useState({
-        fromNodeId: '',
-        toNodeId: '',
-        condition: '',
+        fromStatusId: '',
+        toStatusId: '',
+        allowedRoles: [] as string[],
+        isAutomatic: false,
         conditionLabel: ''
     });
+
+    // Delete confirmation state
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+    const deleteWorkflow = async () => {
+        if (!selectedDepartment) return;
+
+        try {
+            setLoading(true);
+            // 1. Delete Transitions
+            const { error: transError } = await supabase
+                .from('workflow_transitions')
+                .delete()
+                .eq('workflow_id', selectedDepartment);
+
+            if (transError) throw transError;
+
+            // 2. Delete Statuses
+            const { error: statusError } = await supabase
+                .from('workflow_statuses')
+                .delete()
+                .eq('workflow_id', selectedDepartment);
+
+            if (statusError) throw statusError;
+
+            // 3. Delete Workflow Entry
+            const { error: wfError } = await supabase
+                .from('department_workflows')
+                .delete()
+                .eq('workflow_id', selectedDepartment);
+
+            if (wfError) throw wfError;
+
+            showToast('success', 'Workflow configuration deleted successfully');
+            setShowDeleteConfirm(false);
+            setSelectedDepartment(null);
+            fetchDepartments(); // Refresh list
+        } catch (error: any) {
+            console.error('Error deleting workflow:', error);
+            showToast('error', error.message || 'Failed to delete workflow');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Enable Workflow feature state
+    const [showEnableModal, setShowEnableModal] = useState(false);
+    const [availableDepts, setAvailableDepts] = useState<{ id: number, name: string }[]>([]);
+    const [selectedEnableId, setSelectedEnableId] = useState('');
+
+    const fetchAvailableDepts = async () => {
+        try {
+            // 1. Get all departments (from company table as per project structure)
+            const { data: allDepts, error: deptError } = await supabase
+                .from('company')
+                .select('company_id, company_name')
+                .eq('is_active', true);
+
+            if (deptError) throw deptError;
+
+            // 2. Get existing workflows
+            const { data: existingWorkflows, error: wfError } = await supabase
+                .from('department_workflows')
+                .select('department_id');
+
+            if (wfError) throw wfError;
+
+            const existingIds = existingWorkflows?.map(w => w.department_id) || [];
+
+            // 3. Filter: Only show departments without workflow
+            const available = (allDepts || [])
+                .filter(d => !existingIds.includes(d.company_id))
+                .map(d => ({ id: d.company_id, name: d.company_name }));
+
+            setAvailableDepts(available);
+            if (available.length > 0) {
+                setSelectedEnableId(available[0].id.toString());
+            }
+
+        } catch (error) {
+            console.error('Error fetching available departments:', error);
+        }
+    };
+
+    const enableWorkflow = async () => {
+        if (!selectedEnableId) return;
+
+        try {
+            const dept = availableDepts.find(d => d.id.toString() === selectedEnableId);
+            if (!dept) return;
+
+            // Company ID 1 hardcoded or assume single tenant for now
+            // department_id references company.company_id
+            const { error } = await supabase
+                .from('department_workflows')
+                .insert({
+                    company_id: parseInt(selectedEnableId),
+                    department_id: parseInt(selectedEnableId),
+                    workflow_name: `${dept.name} Workflow`,
+                    is_active: true
+                });
+
+            if (error) throw error;
+
+            showToast('success', `Workflow enabled for ${dept.name}`);
+            setShowEnableModal(false);
+            fetchDepartments(); // Refresh dropdown
+        } catch (error: any) {
+            showToast('error', error.message || 'Failed to enable workflow');
+        }
+    };
+
+    useEffect(() => {
+        if (showEnableModal) {
+            fetchAvailableDepts();
+        }
+    }, [showEnableModal]);
+
+
+
+
+
+
+
+
 
     // Color mapping based on status type
     const getStatusColor = (status: Status): string => {
@@ -123,6 +293,7 @@ const WorkflowMapping: React.FC = () => {
     useEffect(() => {
         if (selectedDepartment && statuses.length > 0) {
             loadWorkflow();
+            fetchWorkflowStatuses(selectedDepartment);
         }
     }, [selectedDepartment, statuses]);
 
@@ -161,13 +332,252 @@ const WorkflowMapping: React.FC = () => {
         }
     };
 
+    // Fetch workflow statuses - status yang diizinkan di workflow ini
+    const fetchWorkflowStatuses = async (workflowId: string) => {
+        setLoadingWorkflowStatuses(true);
+        try {
+            const { data, error } = await supabase
+                .from('workflow_statuses')
+                .select(`
+                    workflow_status_id,
+                    workflow_id,
+                    status_id,
+                    ticket_statuses (
+                        status_name,
+                        status_code,
+                        status_category,
+                        is_final,
+                        sla_behavior
+                    )
+                `)
+                .eq('workflow_id', workflowId);
+
+            if (error) throw error;
+
+            // Transform the data to flatten the joined table
+            const transformedData: WorkflowStatus[] = (data || []).map((item: any) => ({
+                workflow_status_id: item.workflow_status_id,
+                workflow_id: item.workflow_id,
+                status_id: item.status_id,
+                is_initial: false, // Default to false since column doesn't exist
+                is_active: true, // Default to true since column doesn't exist
+                status_name: item.ticket_statuses?.status_name || '',
+                status_code: item.ticket_statuses?.status_code || '',
+                status_category: item.ticket_statuses?.status_category || 'agent',
+                is_final: item.ticket_statuses?.is_final || false,
+                sla_behavior: item.ticket_statuses?.sla_behavior || 'run'
+            }));
+
+            setWorkflowStatuses(transformedData);
+            console.log('Workflow statuses loaded:', transformedData);
+        } catch (error) {
+            console.error('Error fetching workflow statuses:', error);
+            setWorkflowStatuses([]);
+        } finally {
+            setLoadingWorkflowStatuses(false);
+        }
+    };
+
     const loadWorkflow = async () => {
-        // For now, initialize with empty workflow
-        // In future, load from workflow_mappings table
-        setNodes([]);
-        setTransitions([]);
-        updateAvailableStatuses([]);
-        setHasUnsavedChanges(false);
+        if (!selectedDepartment) return;
+
+        try {
+            // 1. Fetch workflow_statuses dengan JOIN ke ticket_statuses
+            const { data: statusData, error: statusError } = await supabase
+                .from('workflow_statuses')
+                .select(`
+                    workflow_status_id,
+                    workflow_id,
+                    status_id,
+                    ticket_statuses (
+                        status_name,
+                        status_code,
+                        status_category,
+                        is_final,
+                        sla_behavior
+                    )
+                `)
+                .eq('workflow_id', selectedDepartment);
+
+            if (statusError) throw statusError;
+
+            // 2. Fetch workflow_transitions
+            const { data: transData, error: transError } = await supabase
+                .from('workflow_transitions')
+                .select('*')
+                .eq('workflow_id', selectedDepartment);
+
+            if (transError) throw transError;
+
+            // 3. Convert workflow_statuses to WorkflowNode[] with flow-based layout
+            const NODE_WIDTH = 180;
+            const NODE_HEIGHT = 60;
+            const HORIZONTAL_GAP = 80;
+            const VERTICAL_GAP = 100;
+            const START_X = 50;
+            const START_Y = 80;
+
+            // Categorize statuses for flow layout
+            const statusList = (statusData || []).map((item: any) => ({
+                ...item,
+                statusName: item.ticket_statuses?.status_name || 'Unknown',
+                statusCode: item.ticket_statuses?.status_code || '',
+                isFinal: item.ticket_statuses?.is_final || false,
+                isSystem: item.ticket_statuses?.status_category === 'system',
+                slaBehavior: item.ticket_statuses?.sla_behavior || 'run'
+            }));
+
+            // Group by flow position
+            const startStatuses = statusList.filter((s: any) =>
+                s.statusCode.toLowerCase().includes('new')
+            );
+            const workingStatuses = statusList.filter((s: any) => {
+                const code = s.statusCode.toLowerCase();
+                return (code.includes('open') || code.includes('assign') || code.includes('progress') || code.includes('work')) && !s.isFinal;
+            });
+            const pendingStatuses = statusList.filter((s: any) => {
+                const code = s.statusCode.toLowerCase();
+                return code.includes('pending') || code.includes('wait');
+            });
+            const resolvedStatuses = statusList.filter((s: any) => {
+                const code = s.statusCode.toLowerCase();
+                return code.includes('resolved') || code.includes('complete');
+            });
+            const finalStatuses = statusList.filter((s: any) => s.isFinal);
+
+            // Any remaining statuses
+            const allCategorized = [...startStatuses, ...workingStatuses, ...pendingStatuses, ...resolvedStatuses, ...finalStatuses];
+            const otherStatuses = statusList.filter((s: any) =>
+                !allCategorized.some((c: any) => c.workflow_status_id === s.workflow_status_id)
+            );
+
+            // Position nodes in flow layout
+            // Row 0: Start → Working → Resolved → Final (main flow)
+            // Row 1: Pending statuses (below working)
+            // Row 2: Other statuses
+
+            const createNodes = (items: any[], startX: number, startY: number, direction: 'horizontal' | 'vertical' = 'horizontal'): WorkflowNode[] => {
+                return items.map((item: any, index: number) => ({
+                    id: item.workflow_status_id,
+                    statusId: item.status_id,
+                    statusName: item.statusName,
+                    statusCode: item.statusCode,
+                    x: direction === 'horizontal' ? startX + index * (NODE_WIDTH + HORIZONTAL_GAP) : startX,
+                    y: direction === 'horizontal' ? startY : startY + index * (NODE_HEIGHT + 30),
+                    color: getStatusColorFromCode(item.statusCode),
+                    isFinal: item.isFinal,
+                    isSystem: item.isSystem
+                }));
+            };
+
+            let currentX = START_X;
+            const mainRowY = START_Y;
+            const pendingRowY = START_Y + NODE_HEIGHT + VERTICAL_GAP;
+            const otherRowY = pendingRowY + NODE_HEIGHT + VERTICAL_GAP;
+
+            const allNodes: WorkflowNode[] = [];
+
+            // Main flow row: Start → Working → Resolved → Final
+            const mainFlowGroups = [
+                { items: startStatuses, label: 'start' },
+                { items: workingStatuses, label: 'working' },
+                { items: resolvedStatuses, label: 'resolved' },
+                { items: finalStatuses.filter((s: any) => !resolvedStatuses.some((r: any) => r.workflow_status_id === s.workflow_status_id)), label: 'final' }
+            ];
+
+            mainFlowGroups.forEach(group => {
+                group.items.forEach((item: any, index: number) => {
+                    allNodes.push({
+                        id: item.workflow_status_id,
+                        statusId: item.status_id,
+                        statusName: item.statusName,
+                        statusCode: item.statusCode,
+                        x: currentX,
+                        y: mainRowY,
+                        color: getStatusColorFromCode(item.statusCode),
+                        isFinal: item.isFinal,
+                        isSystem: item.isSystem
+                    });
+                    currentX += NODE_WIDTH + HORIZONTAL_GAP;
+                });
+            });
+
+            // Pending row (below, centered under working)
+            const pendingStartX = START_X + (NODE_WIDTH + HORIZONTAL_GAP); // Start after "New"
+            pendingStatuses.forEach((item: any, index: number) => {
+                // Skip if already in main flow
+                if (allNodes.some(n => n.id === item.workflow_status_id)) return;
+                allNodes.push({
+                    id: item.workflow_status_id,
+                    statusId: item.status_id,
+                    statusName: item.statusName,
+                    statusCode: item.statusCode,
+                    x: pendingStartX + index * (NODE_WIDTH + HORIZONTAL_GAP),
+                    y: pendingRowY,
+                    color: getStatusColorFromCode(item.statusCode),
+                    isFinal: item.isFinal,
+                    isSystem: item.isSystem
+                });
+            });
+
+            // Other statuses (third row)
+            otherStatuses.forEach((item: any, index: number) => {
+                if (allNodes.some(n => n.id === item.workflow_status_id)) return;
+                allNodes.push({
+                    id: item.workflow_status_id,
+                    statusId: item.status_id,
+                    statusName: item.statusName,
+                    statusCode: item.statusCode,
+                    x: START_X + index * (NODE_WIDTH + HORIZONTAL_GAP),
+                    y: otherRowY,
+                    color: getStatusColorFromCode(item.statusCode),
+                    isFinal: item.isFinal,
+                    isSystem: item.isSystem
+                });
+            });
+
+            // 4. Convert workflow_transitions to Transition[]
+            // Need to map from_status_id/to_status_id back to workflow_status_id (node id)
+            const statusIdToNodeId = new Map<string, string>();
+            (statusData || []).forEach((item: any) => {
+                statusIdToNodeId.set(item.status_id, item.workflow_status_id);
+            });
+
+            const workflowTransitions: Transition[] = (transData || []).map((item: any) => ({
+                id: item.transition_id,
+                fromNodeId: statusIdToNodeId.get(item.from_status_id) || '',
+                toNodeId: statusIdToNodeId.get(item.to_status_id) || '',
+                conditionLabel: item.condition?.label
+            })).filter(t => t.fromNodeId && t.toNodeId); // Filter out invalid transitions
+
+            // 5. Update state
+            setNodes(allNodes);
+            setTransitions(workflowTransitions);
+            updateAvailableStatuses(allNodes);
+            setHasUnsavedChanges(false);
+
+            console.log('Workflow loaded:', { nodes: allNodes.length, transitions: workflowTransitions.length });
+
+        } catch (error) {
+            console.error('Error loading workflow:', error);
+            setNodes([]);
+            setTransitions([]);
+            updateAvailableStatuses([]);
+        }
+    };
+
+    // Helper function to get color from status code
+    const getStatusColorFromCode = (code: string): string => {
+        const lowerCode = code.toLowerCase();
+        if (lowerCode.includes('new')) return 'bg-blue-500';
+        if (lowerCode.includes('open') || lowerCode.includes('assign')) return 'bg-indigo-500';
+        if (lowerCode.includes('progress') || lowerCode.includes('work')) return 'bg-green-500';
+        if (lowerCode.includes('pending') || lowerCode.includes('wait')) return 'bg-yellow-500';
+        if (lowerCode.includes('resolved') || lowerCode.includes('complete')) return 'bg-emerald-400';
+        if (lowerCode.includes('closed')) return 'bg-gray-600';
+        if (lowerCode.includes('cancel') || lowerCode.includes('reject')) return 'bg-red-500';
+        if (lowerCode.includes('reopen')) return 'bg-purple-500';
+        return 'bg-indigo-500';
     };
 
     const updateAvailableStatuses = (usedNodes: WorkflowNode[]) => {
@@ -197,31 +607,50 @@ const WorkflowMapping: React.FC = () => {
         setDraggedStatus(status);
     };
 
-    const handleCanvasDrop = (e: React.DragEvent) => {
+    const handleCanvasDrop = async (e: React.DragEvent) => {
         e.preventDefault();
-        if (!draggedStatus || !canvasRef.current) return;
+        if (!draggedStatus || !canvasRef.current || !selectedDepartment) return;
 
         const rect = canvasRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left - 75; // Center the node
         const y = e.clientY - rect.top - 25;
 
-        const newNode: WorkflowNode = {
-            id: `node_${Date.now()}`,
-            statusId: draggedStatus.status_id,
-            statusName: draggedStatus.status_name,
-            statusCode: draggedStatus.status_code,
-            x: Math.max(0, Math.min(x, rect.width - 150)),
-            y: Math.max(0, Math.min(y, rect.height - 50)),
-            color: getStatusColor(draggedStatus),
-            isFinal: draggedStatus.is_final,
-            isSystem: draggedStatus.status_category === 'system'
-        };
+        try {
+            // Save to database
+            const { data, error } = await supabase
+                .from('workflow_statuses')
+                .insert({
+                    workflow_id: selectedDepartment,
+                    status_id: draggedStatus.status_id,
+                    sort_order: nodes.length + 1
+                })
+                .select()
+                .single();
 
-        const newNodes = [...nodes, newNode];
-        setNodes(newNodes);
-        updateAvailableStatuses(newNodes);
-        setDraggedStatus(null);
-        setHasUnsavedChanges(true);
+            if (error) throw error;
+
+            const newNode: WorkflowNode = {
+                id: data.workflow_status_id, // Use real DB ID
+                statusId: draggedStatus.status_id,
+                statusName: draggedStatus.status_name,
+                statusCode: draggedStatus.status_code,
+                x: Math.max(0, Math.min(x, rect.width - 150)),
+                y: Math.max(0, Math.min(y, rect.height - 50)),
+                color: getStatusColor(draggedStatus),
+                isFinal: draggedStatus.is_final,
+                isSystem: draggedStatus.status_category === 'system'
+            };
+
+            const newNodes = [...nodes, newNode];
+            setNodes(newNodes);
+            updateAvailableStatuses(newNodes);
+            setDraggedStatus(null);
+            showToast('success', 'Status added to workflow');
+
+        } catch (error: any) {
+            console.error('Error adding status:', error);
+            showToast('error', error.message || 'Failed to add status');
+        }
     };
 
     const handleNodeDragStart = (nodeId: string, e: React.MouseEvent) => {
@@ -257,8 +686,8 @@ const WorkflowMapping: React.FC = () => {
         setConnectingFrom(nodeId);
     };
 
-    const handleConnectEnd = (nodeId: string) => {
-        if (!connectingFrom || connectingFrom === nodeId) {
+    const handleConnectEnd = async (nodeId: string) => {
+        if (!connectingFrom || connectingFrom === nodeId || !selectedDepartment) {
             setConnectingFrom(null);
             return;
         }
@@ -268,7 +697,7 @@ const WorkflowMapping: React.FC = () => {
 
         // Validation
         if (toNode?.statusCode.toLowerCase().includes('new')) {
-            alert('Cannot create incoming transition to "New" status');
+            showToast('error', 'Cannot create incoming transition to "New" status');
             setConnectingFrom(null);
             return;
         }
@@ -276,61 +705,171 @@ const WorkflowMapping: React.FC = () => {
         // Check if transition already exists
         const exists = transitions.some(t => t.fromNodeId === connectingFrom && t.toNodeId === nodeId);
         if (exists) {
+            showToast('error', 'This transition already exists');
             setConnectingFrom(null);
             return;
         }
 
-        const newTransition: Transition = {
-            id: `trans_${Date.now()}`,
-            fromNodeId: connectingFrom,
-            toNodeId: nodeId
-        };
+        if (!fromNode || !toNode) {
+            setConnectingFrom(null);
+            return;
+        }
 
-        setTransitions(prev => [...prev, newTransition]);
-        setConnectingFrom(null);
-        setHasUnsavedChanges(true);
+        try {
+            // Save to database immediately
+            const { data, error } = await supabase
+                .from('workflow_transitions')
+                .insert({
+                    workflow_id: selectedDepartment,
+                    from_status_id: fromNode.statusId,  // status_id references ticket_statuses
+                    to_status_id: toNode.statusId,      // status_id references ticket_statuses
+                    allowed_roles: ['agent'],           // Default role
+                    is_automatic: false
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            // Add to local state
+            const newTransition: Transition = {
+                id: data.transition_id,
+                fromNodeId: connectingFrom,
+                toNodeId: nodeId
+            };
+
+            setTransitions(prev => [...prev, newTransition]);
+            showToast('success', `Transition: ${fromNode.statusName} → ${toNode.statusName}`);
+        } catch (error: any) {
+            console.error('Error saving transition:', error);
+            showToast('error', error.message || 'Failed to create transition');
+        } finally {
+            setConnectingFrom(null);
+        }
     };
 
-    const removeNode = (nodeId: string) => {
+    const removeNode = async (nodeId: string) => {
         const node = nodes.find(n => n.id === nodeId);
-        if (node?.isSystem) return; // Cannot remove system nodes
+        if (node?.isSystem) {
+            showToast('error', 'Cannot remove system nodes');
+            return;
+        }
 
-        const newNodes = nodes.filter(n => n.id !== nodeId);
-        const newTransitions = transitions.filter(t => t.fromNodeId !== nodeId && t.toNodeId !== nodeId);
+        try {
+            // 1. Delete associated transitions first
+            const { error: transError } = await supabase
+                .from('workflow_transitions')
+                .delete()
+                .eq('workflow_id', selectedDepartment)
+                .or(`from_status_id.eq.${node?.statusId},to_status_id.eq.${node?.statusId}`);
 
-        setNodes(newNodes);
-        setTransitions(newTransitions);
-        updateAvailableStatuses(newNodes);
-        setHasUnsavedChanges(true);
+            if (transError) throw transError;
+
+            // 2. Delete the status from workflow
+            const { error: statusError } = await supabase
+                .from('workflow_statuses')
+                .delete()
+                .eq('workflow_status_id', nodeId);
+
+            if (statusError) throw statusError;
+
+            // Update local state
+            const newNodes = nodes.filter(n => n.id !== nodeId);
+            const newTransitions = transitions.filter(t => t.fromNodeId !== nodeId && t.toNodeId !== nodeId);
+
+            setNodes(newNodes);
+            setTransitions(newTransitions);
+            updateAvailableStatuses(newNodes);
+            showToast('success', 'Status removed from workflow');
+
+        } catch (error: any) {
+            console.error('Error removing status:', error);
+            showToast('error', error.message || 'Failed to remove status');
+        }
     };
 
-    const removeTransition = (transitionId: string) => {
-        setTransitions(prev => prev.filter(t => t.id !== transitionId));
-        setHasUnsavedChanges(true);
+    const removeTransition = async (transitionId: string) => {
+        try {
+            const { error } = await supabase
+                .from('workflow_transitions')
+                .delete()
+                .eq('transition_id', transitionId);
+
+            if (error) throw error;
+
+            setTransitions(prev => prev.filter(t => t.id !== transitionId));
+            showToast('success', 'Transition removed');
+        } catch (error: any) {
+            console.error('Error removing transition:', error);
+            showToast('error', error.message || 'Failed to remove transition');
+        }
     };
 
-    const addTransitionManual = () => {
-        if (!transitionForm.fromNodeId || !transitionForm.toNodeId) return;
+    const addTransitionManual = async () => {
+        if (!transitionForm.fromStatusId || !transitionForm.toStatusId || !selectedDepartment) return;
 
-        const newTransition: Transition = {
-            id: `trans_${Date.now()}`,
-            fromNodeId: transitionForm.fromNodeId,
-            toNodeId: transitionForm.toNodeId,
-            condition: transitionForm.condition || undefined,
-            conditionLabel: transitionForm.conditionLabel || undefined
-        };
+        // Validation: From and To cannot be the same
+        if (transitionForm.fromStatusId === transitionForm.toStatusId) {
+            showToast('error', 'From Status and To Status cannot be the same');
+            return;
+        }
 
-        setTransitions(prev => [...prev, newTransition]);
-        setTransitionForm({ fromNodeId: '', toNodeId: '', condition: '', conditionLabel: '' });
-        setShowTransitionModal(false);
-        setHasUnsavedChanges(true);
+        // Get the actual status records to retrieve status_id (which references ticket_statuses)
+        const fromWorkflowStatus = workflowStatuses.find(s => s.workflow_status_id === transitionForm.fromStatusId);
+        const toWorkflowStatus = workflowStatuses.find(s => s.workflow_status_id === transitionForm.toStatusId);
+
+        if (!fromWorkflowStatus || !toWorkflowStatus) {
+            showToast('error', 'Invalid status selection');
+            return;
+        }
+
+        try {
+            // Save to database - use status_id (references ticket_statuses), NOT workflow_status_id
+            const { data, error } = await supabase
+                .from('workflow_transitions')
+                .insert({
+                    workflow_id: selectedDepartment,
+                    from_status_id: fromWorkflowStatus.status_id, // This references ticket_statuses.status_id
+                    to_status_id: toWorkflowStatus.status_id,     // This references ticket_statuses.status_id
+                    allowed_roles: transitionForm.allowedRoles.length > 0 ? transitionForm.allowedRoles : ['agent'],
+                    is_automatic: transitionForm.isAutomatic,
+                    condition: transitionForm.conditionLabel ? { label: transitionForm.conditionLabel } : {}
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            // Add to local state for canvas display
+            const newTransition: Transition = {
+                id: data.transition_id,
+                fromNodeId: transitionForm.fromStatusId,
+                toNodeId: transitionForm.toStatusId,
+                conditionLabel: transitionForm.conditionLabel || undefined
+            };
+
+            setTransitions(prev => [...prev, newTransition]);
+            setTransitionForm({
+                fromStatusId: '',
+                toStatusId: '',
+                allowedRoles: [],
+                isAutomatic: false,
+                conditionLabel: ''
+            });
+            setShowTransitionModal(false);
+
+            showToast('success', `Transition added: ${fromWorkflowStatus.status_name} → ${toWorkflowStatus.status_name}`);
+        } catch (error: any) {
+            console.error('Error saving transition:', error);
+            showToast('error', error.message || 'Failed to save transition. Please try again.');
+        }
     };
 
     const handleSave = async () => {
         // TODO: Save workflow to database
         console.log('Saving workflow:', { nodes, transitions, departmentId: selectedDepartment });
         setHasUnsavedChanges(false);
-        alert('Workflow saved successfully!');
+        showToast('success', 'Workflow saved successfully!');
     };
 
     const handleCancel = () => {
@@ -346,6 +885,38 @@ const WorkflowMapping: React.FC = () => {
 
     return (
         <div className="h-full flex flex-col bg-gray-50">
+            {/* Toast Notification */}
+            {toast.show && (
+                <div
+                    className={`fixed top-4 right-4 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border backdrop-blur-sm ${toast.type === 'success'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-red-50 border-red-200 text-red-800'
+                        }`}
+                    style={{
+                        animation: 'slideIn 0.3s ease-out forwards'
+                    }}
+                >
+                    <style>{`
+                        @keyframes slideIn {
+                            from { transform: translateX(100%); opacity: 0; }
+                            to { transform: translateX(0); opacity: 1; }
+                        }
+                    `}</style>
+                    {toast.type === 'success' ? (
+                        <CheckCircle size={20} className="text-emerald-500 flex-shrink-0" />
+                    ) : (
+                        <XCircle size={20} className="text-red-500 flex-shrink-0" />
+                    )}
+                    <span className="text-sm font-medium">{toast.message}</span>
+                    <button
+                        onClick={() => setToast(prev => ({ ...prev, show: false }))}
+                        className="ml-2 p-1 rounded-full hover:bg-black/5 transition-colors"
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+
             {/* Header */}
             <div className="bg-white border-b border-gray-200 px-6 py-4">
                 <div className="flex justify-between items-start">
@@ -354,13 +925,7 @@ const WorkflowMapping: React.FC = () => {
                         <p className="text-gray-500 text-sm">Configure workflow rules for each department</p>
                     </div>
 
-                    {/* Unsaved Changes Warning */}
-                    {hasUnsavedChanges && (
-                        <div className="flex items-center gap-2 bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg border border-amber-200">
-                            <AlertTriangle size={16} />
-                            <span className="text-sm font-medium">You have unsaved changes</span>
-                        </div>
-                    )}
+
                 </div>
 
                 {/* Department Selector */}
@@ -380,6 +945,26 @@ const WorkflowMapping: React.FC = () => {
                         </select>
                         <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                     </div>
+
+                    {selectedDepartment && (
+                        <button
+                            onClick={() => setShowDeleteConfirm(true)}
+                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete Workflow Configuration"
+                        >
+                            <Trash2 size={18} />
+                        </button>
+                    )}
+
+                    <div className="h-6 w-px bg-gray-200 mx-2"></div>
+
+                    <button
+                        onClick={() => setShowEnableModal(true)}
+                        className="text-indigo-600 hover:text-indigo-700 text-sm font-medium flex items-center gap-1 hover:underline"
+                    >
+                        <Plus size={14} />
+                        Enable Workflow for Department
+                    </button>
                 </div>
             </div>
 
@@ -393,22 +978,7 @@ const WorkflowMapping: React.FC = () => {
                     Add Transition
                 </button>
                 <div className="flex-1" />
-                <button
-                    onClick={handleCancel}
-                    disabled={!hasUnsavedChanges}
-                    className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    <X size={16} />
-                    Cancel
-                </button>
-                <button
-                    onClick={handleSave}
-                    disabled={!hasUnsavedChanges}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    <Save size={16} />
-                    Save
-                </button>
+
             </div>
 
             {/* Main Content */}
@@ -692,7 +1262,10 @@ const WorkflowMapping: React.FC = () => {
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
                         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                            <h3 className="text-lg font-bold text-gray-800">Add Transition</h3>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800">Add Transition</h3>
+                                <p className="text-xs text-gray-500">Define status transition for this workflow</p>
+                            </div>
                             <button
                                 onClick={() => setShowTransitionModal(false)}
                                 className="text-gray-400 hover:text-gray-600"
@@ -702,52 +1275,100 @@ const WorkflowMapping: React.FC = () => {
                         </div>
 
                         <div className="p-6 space-y-4">
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">From Status</label>
-                                <select
-                                    value={transitionForm.fromNodeId}
-                                    onChange={(e) => setTransitionForm({ ...transitionForm, fromNodeId: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                >
-                                    <option value="">Select status...</option>
-                                    {nodes.filter(n => !n.isFinal).map(node => (
-                                        <option key={node.id} value={node.id}>{node.statusName}</option>
-                                    ))}
-                                </select>
-                            </div>
+                            {/* Loading state */}
+                            {loadingWorkflowStatuses ? (
+                                <div className="text-center py-8">
+                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-2"></div>
+                                    <p className="text-sm text-gray-500">Loading workflow statuses...</p>
+                                </div>
+                            ) : workflowStatuses.length === 0 ? (
+                                <div className="text-center py-8 bg-amber-50 rounded-lg border border-amber-200">
+                                    <AlertTriangle size={32} className="mx-auto mb-2 text-amber-500" />
+                                    <p className="text-sm font-medium text-amber-700">No statuses configured for this workflow</p>
+                                    <p className="text-xs text-amber-600 mt-1">Please add statuses to workflow_statuses table first</p>
+                                </div>
+                            ) : (
+                                <>
+                                    {/* From Status */}
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-1.5">From Status</label>
+                                        <select
+                                            value={transitionForm.fromStatusId}
+                                            onChange={(e) => setTransitionForm({ ...transitionForm, fromStatusId: e.target.value })}
+                                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="">Select status...</option>
+                                            {workflowStatuses
+                                                .filter(s => !s.is_final) // Final status cannot be "from"
+                                                .map(status => (
+                                                    <option key={status.workflow_status_id} value={status.workflow_status_id}>
+                                                        {status.status_name}
+                                                    </option>
+                                                ))
+                                            }
+                                        </select>
+                                        <p className="text-xs text-gray-400 mt-1">Status where transition starts (excludes final statuses)</p>
+                                    </div>
 
-                            <div className="flex justify-center">
-                                <ArrowRight size={24} className="text-gray-400" />
-                            </div>
+                                    <div className="flex justify-center">
+                                        <ArrowRight size={24} className="text-gray-400" />
+                                    </div>
 
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">To Status</label>
-                                <select
-                                    value={transitionForm.toNodeId}
-                                    onChange={(e) => setTransitionForm({ ...transitionForm, toNodeId: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                >
-                                    <option value="">Select status...</option>
-                                    {nodes.filter(n => !n.statusCode.toLowerCase().includes('new')).map(node => (
-                                        <option key={node.id} value={node.id}>{node.statusName}</option>
-                                    ))}
-                                </select>
-                            </div>
+                                    {/* To Status */}
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-1.5">To Status</label>
+                                        <select
+                                            value={transitionForm.toStatusId}
+                                            onChange={(e) => setTransitionForm({ ...transitionForm, toStatusId: e.target.value })}
+                                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="">Select status...</option>
+                                            {workflowStatuses
+                                                .filter(s => s.workflow_status_id !== transitionForm.fromStatusId) // Exclude selected from
+                                                .map(status => (
+                                                    <option key={status.workflow_status_id} value={status.workflow_status_id}>
+                                                        {status.status_name}
+                                                        {status.is_final && ' (Final)'}
+                                                    </option>
+                                                ))
+                                            }
+                                        </select>
+                                        <p className="text-xs text-gray-400 mt-1">Status where transition ends</p>
+                                    </div>
 
-                            <div>
-                                <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-1.5">
-                                    <Zap size={14} className="text-amber-500" />
-                                    Condition (Optional)
-                                </label>
-                                <input
-                                    type="text"
-                                    value={transitionForm.conditionLabel}
-                                    onChange={(e) => setTransitionForm({ ...transitionForm, conditionLabel: e.target.value })}
-                                    placeholder="e.g. User Reply, Auto Close, Approval"
-                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                                />
-                                <p className="text-xs text-gray-400 mt-1">Add "IF" label to show conditional transition</p>
-                            </div>
+                                    {/* Options */}
+                                    <div className="border-t border-gray-100 pt-4 space-y-3">
+                                        <label className="flex items-center gap-3 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={transitionForm.isAutomatic}
+                                                onChange={(e) => setTransitionForm({ ...transitionForm, isAutomatic: e.target.checked })}
+                                                className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            />
+                                            <div>
+                                                <span className="text-sm font-medium text-gray-700">Automatic Transition</span>
+                                                <p className="text-xs text-gray-400">This transition happens automatically based on conditions</p>
+                                            </div>
+                                        </label>
+                                    </div>
+
+                                    {/* Condition Label (Optional) */}
+                                    <div>
+                                        <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-1.5">
+                                            <Zap size={14} className="text-amber-500" />
+                                            Display Label (Optional)
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={transitionForm.conditionLabel}
+                                            onChange={(e) => setTransitionForm({ ...transitionForm, conditionLabel: e.target.value })}
+                                            placeholder="e.g. Resolve, Escalate, Send to Customer"
+                                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                                        />
+                                        <p className="text-xs text-gray-400 mt-1">Custom label shown on the transition button</p>
+                                    </div>
+                                </>
+                            )}
                         </div>
 
                         <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
@@ -759,8 +1380,8 @@ const WorkflowMapping: React.FC = () => {
                             </button>
                             <button
                                 onClick={addTransitionManual}
-                                disabled={!transitionForm.fromNodeId || !transitionForm.toNodeId}
-                                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-50"
+                                disabled={!transitionForm.fromStatusId || !transitionForm.toStatusId || loadingWorkflowStatuses}
+                                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 Add Transition
                             </button>
@@ -784,10 +1405,10 @@ const WorkflowMapping: React.FC = () => {
                         </div>
                         <div className="flex justify-end gap-3 mt-6">
                             <button
-                                onClick={() => { setShowWarning(false); setPendingDepartmentChange(null); }}
-                                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg border border-gray-200"
+                                onClick={() => setShowWarning(false)}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg"
                             >
-                                Keep Editing
+                                Cancel
                             </button>
                             <button
                                 onClick={confirmDepartmentChange}
@@ -795,6 +1416,98 @@ const WorkflowMapping: React.FC = () => {
                             >
                                 Discard & Switch
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {showDeleteConfirm && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+                        <div className="flex items-start gap-4">
+                            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <Trash2 size={24} className="text-red-600" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800 mb-2">Delete Workflow?</h3>
+                                <p className="text-sm text-gray-600">
+                                    Are you sure you want to delete this workflow configuration?
+                                    All statuses and transitions will be permanently removed.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button
+                                onClick={() => setShowDeleteConfirm(false)}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={deleteWorkflow}
+                                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg"
+                            >
+                                Delete Workflow
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Enable Workflow Modal */}
+            {showEnableModal && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+                            <h3 className="text-lg font-bold text-gray-800">Enable Workflow for Department</h3>
+                            <button onClick={() => setShowEnableModal(false)} className="text-gray-400 hover:text-gray-600">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="p-6">
+                            {availableDepts.length === 0 ? (
+                                <div className="text-center py-6 bg-gray-50 rounded-lg">
+                                    <CheckCircle size={32} className="mx-auto mb-2 text-green-500" />
+                                    <p className="text-gray-600 font-medium">All departments already have workflows enabled.</p>
+                                </div>
+                            ) : (
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Select Department</label>
+                                    <select
+                                        value={selectedEnableId}
+                                        onChange={(e) => setSelectedEnableId(e.target.value)}
+                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    >
+                                        <option value="" disabled>Select a department...</option>
+                                        {availableDepts.map(dept => (
+                                            <option key={dept.id} value={dept.id}>{dept.name}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-gray-500 mt-2">
+                                        This will create a new workflow configuration for the selected department.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3 rounded-b-2xl">
+                            <button
+                                onClick={() => setShowEnableModal(false)}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg border border-gray-200 bg-white"
+                            >
+                                Cancel
+                            </button>
+                            {availableDepts.length > 0 && (
+                                <button
+                                    onClick={enableWorkflow}
+                                    disabled={!selectedEnableId}
+                                    className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    Enable Workflow
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
