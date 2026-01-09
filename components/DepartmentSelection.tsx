@@ -64,13 +64,27 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
       console.log('✅ Got data, transforming...');
 
       // Transform data
-      const transformed: Department[] = response.data.map((dept: any) => ({
-        id: dept.company_id || dept.id || String(Math.random()),
-        company_name: dept.company_name || 'Unknown',
-        description: dept.description || 'No description',
-        is_active: dept.is_active !== false,
-        items: getDefaultItems(dept.company_name || 'Unknown')
-      }));
+      const transformed: Department[] = response.data.map((dept: any) => {
+        let services = dept.services;
+        if (typeof services === 'string') {
+          try {
+            services = JSON.parse(services);
+          } catch (e) {
+            console.error('Error parsing services JSON:', e);
+            services = [];
+          }
+        }
+
+        return {
+          id: dept.company_id || dept.id || String(Math.random()),
+          company_name: dept.company_name || 'Unknown',
+          description: dept.description || 'No description',
+          is_active: dept.is_active !== false,
+          items: services && Array.isArray(services) && services.length > 0
+            ? services
+            : ['Service 1', 'Service 2', 'Service 3']
+        };
+      });
 
       console.log('✅ Transformed departments:', transformed);
       setDepartments(transformed);
@@ -81,19 +95,6 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
     } finally {
       setLoading(false);
     }
-  };
-
-  // Helper function to get default items based on department name
-  const getDefaultItems = (companyName: string): string[] => {
-    const itemsMap: { [key: string]: string[] } = {
-      'DIT': ['Network Security', 'Hardware Support', 'Application Support'],
-      'CREATIVE': ['Brand Identity', 'UI/UX Design', 'Motion Graphics'],
-      'HCO': ['Talent Acquisition', 'Employee Relations', 'Payroll Systems'],
-      'LEGAL': ['Contract Review', 'Risk Assessment', 'Regulatory Filing'],
-      'CRM': ['Socmed Buzz', 'Campaign Blast', 'Event Visit']
-    };
-
-    return itemsMap[companyName.toUpperCase()] || ['Service 1', 'Service 2', 'Service 3'];
   };
 
   useEffect(() => {
@@ -268,7 +269,7 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
 
                 {/* List Items */}
                 <ul className="space-y-4 mb-8">
-                  {dept.items?.map((item, index) => (
+                  {dept.items?.slice(0, 3).map((item, index) => (
                     <li key={index} className="flex items-center gap-3">
                       <div
                         className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center bg-green-100 text-green-600 group-hover:bg-white/20 group-hover:text-white"

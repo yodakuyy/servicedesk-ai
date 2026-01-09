@@ -20,7 +20,13 @@ import {
   ChevronLeft,
   BookOpen,
   TrendingUp,
-  Bell
+  Bell,
+  Building2,
+  Users,
+  Wrench,
+  Shield,
+  Zap,
+  Globe
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import IncidentList from './IncidentList';
@@ -35,6 +41,7 @@ import { UserDetail } from './UserManagement';
 import GroupManagement from './GroupManagement';
 import BusinessHours from './BusinessHours';
 import CategoryManagement from './CategoryManagement';
+import DepartmentManagement from './DepartmentManagement';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -108,8 +115,16 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ icon: Icon, label, active = f
 const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsSubOpen, setSettingsSubOpen] = useState({
+    organization: false,
+    usersAccess: false,
+    ticketConfig: false,
+    slaConfig: false,
+    automation: false,
+    portal: false
+  });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'service-requests' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'profile' | 'team-availability' | 'availability' | 'categories'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'service-requests' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications'>('dashboard');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
@@ -125,6 +140,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [previousViewBeforeProfile, setPreviousViewBeforeProfile] = useState<'user-dashboard' | 'profile'>('user-dashboard');
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const toggleSettingsSub = (key: keyof typeof settingsSubOpen) => {
+    setSettingsSubOpen(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   // Load user profile and accessible menus from localStorage
   useEffect(() => {
@@ -398,8 +417,35 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
       return <BusinessHours />;
     }
 
+    if (currentView === 'department-management') {
+      return <DepartmentManagement />;
+    }
+
     if (currentView === 'categories') {
       return <CategoryManagement />;
+    }
+
+    if (currentView === 'status-management' || currentView === 'service-request-fields' || currentView === 'sla-management' || currentView === 'portal-highlights' || currentView === 'sla-policies' || currentView === 'escalation-rules' || currentView === 'auto-assignment' || currentView === 'auto-close-rules' || currentView === 'notifications') {
+      const titleMap: any = {
+        'status-management': 'Status Management',
+        'service-request-fields': 'Service Request Fields',
+        'sla-management': 'SLA Management',
+        'portal-highlights': 'Portal Highlights',
+        'sla-policies': 'SLA Policies',
+        'escalation-rules': 'Escalation Rules',
+        'auto-assignment': 'Auto Assignment',
+        'auto-close-rules': 'Auto Close Rules',
+        'notifications': 'Notifications'
+      };
+      return (
+        <div className="p-8 flex flex-col items-center justify-center h-full text-center">
+          <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
+            <Settings size={32} className="text-indigo-400" />
+          </div>
+          <h3 className="text-lg font-bold text-gray-800 mb-2">{titleMap[currentView]}</h3>
+          <p className="text-gray-500 max-w-md">This settings module is currently under development.</p>
+        </div>
+      );
     }
 
     if (currentView === 'profile') {
@@ -671,7 +717,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
   return (
     <div className="flex min-h-screen bg-[#f3f4f6] font-sans">
       {/* Sidebar */}
-      <div className={`${isSidebarOpen ? 'w-64 border-r' : 'w-0 border-none'} bg-white border-gray-200 flex flex-col hidden lg:flex sticky top-0 h-screen transition-all duration-300 overflow-hidden`}>
+      <div className={`${isSidebarOpen ? 'w-72 border-r' : 'w-0 border-none'} bg-white border-gray-200 flex flex-col hidden lg:flex sticky top-0 h-screen transition-all duration-300 overflow-hidden`}>
         <div className="p-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-md shadow-indigo-200 flex-shrink-0">
@@ -771,55 +817,187 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
 
               {isSettingsOpen && (
                 <div className="bg-gray-50/50 pb-2 transition-all duration-300 ease-in-out">
+
+                  {/* Organization */}
                   <div
-                    onClick={() => {
-                      setCurrentView('user-management');
-                      setIsSettingsOpen(false);
-                    }}
-                    className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'user-management' ? 'text-indigo-600 bg-indigo-50' : 'text-gray-500 hover:text-indigo-600'
-                      }`}
+                    onClick={() => toggleSettingsSub('organization')}
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium mt-1 whitespace-nowrap"
                   >
-                    User Management
-                  </div>
-                  <div
-                    onClick={() => {
-                      setCurrentView('group-management');
-                      setIsSettingsOpen(false);
-                    }}
-                    className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'group-management' ? 'text-indigo-600 bg-indigo-50' : 'text-gray-500 hover:text-indigo-600'
-                      }`}
-                  >
-                    Group Management
-                  </div>
-                  <div
-                    onClick={() => {
-                      setCurrentView('business-hours');
-                      setIsSettingsOpen(false);
-                    }}
-                    className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'business-hours' ? 'text-indigo-600 bg-indigo-50' : 'text-gray-500 hover:text-indigo-600'
-                      }`}
-                  >
-                    Business Hours
-                  </div>
-                  <div
-                    onClick={() => {
-                      setCurrentView('categories');
-                      setIsSettingsOpen(false);
-                    }}
-                    className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'categories' ? 'text-indigo-600 bg-indigo-50' : 'text-gray-500 hover:text-indigo-600'
-                      }`}
-                  >
-                    Categories
-                  </div>
-                  {[
-                    'SLA Management',
-                    'Service Request Fields',
-                    'Portal Highlights'
-                  ].map((item) => (
-                    <div key={item} className="pl-16 pr-6 py-2 text-sm text-gray-500 hover:text-indigo-600 cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap">
-                      {item}
+                    <div className="flex items-center gap-2">
+                      <Building2 size={16} />
+                      <span>Organization</span>
                     </div>
-                  ))}
+                    <ChevronRight size={14} className={`transition-transform duration-200 ${settingsSubOpen.organization ? 'rotate-90' : ''}`} />
+                  </div>
+                  {settingsSubOpen.organization && (
+                    <div className="bg-gray-100/30 pb-1">
+                      <div
+                        onClick={() => setCurrentView('department-management')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'department-management' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Company / Department
+                      </div>
+                      <div
+                        onClick={() => setCurrentView('business-hours')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'business-hours' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Business Hours
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Users & Access */}
+                  <div
+                    onClick={() => toggleSettingsSub('usersAccess')}
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium whitespace-nowrap"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Users size={16} />
+                      <span>Users & Access</span>
+                    </div>
+                    <ChevronRight size={14} className={`transition-transform duration-200 ${settingsSubOpen.usersAccess ? 'rotate-90' : ''}`} />
+                  </div>
+                  {settingsSubOpen.usersAccess && (
+                    <div className="bg-gray-100/30 pb-1">
+                      <div
+                        onClick={() => setCurrentView('user-management')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'user-management' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        User Management
+                      </div>
+                      <div
+                        onClick={() => setCurrentView('group-management')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'group-management' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Group Management
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ticket Configuration */}
+                  <div
+                    onClick={() => toggleSettingsSub('ticketConfig')}
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium whitespace-nowrap"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Wrench size={16} />
+                      <span>Ticket Configuration</span>
+                    </div>
+                    <ChevronRight size={14} className={`transition-transform duration-200 ${settingsSubOpen.ticketConfig ? 'rotate-90' : ''}`} />
+                  </div>
+                  {settingsSubOpen.ticketConfig && (
+                    <div className="bg-gray-100/30 pb-1">
+                      <div
+                        onClick={() => setCurrentView('categories')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'categories' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Categories
+                      </div>
+                      <div
+                        onClick={() => setCurrentView('service-request-fields')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'service-request-fields' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Service Request Fields
+                      </div>
+                      <div
+                        onClick={() => setCurrentView('status-management')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'status-management' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Status Management
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SLA Configuration */}
+                  <div
+                    onClick={() => toggleSettingsSub('slaConfig')}
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium whitespace-nowrap"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Shield size={16} />
+                      <span>SLA Configuration</span>
+                    </div>
+                    <ChevronRight size={14} className={`transition-transform duration-200 ${settingsSubOpen.slaConfig ? 'rotate-90' : ''}`} />
+                  </div>
+                  {settingsSubOpen.slaConfig && (
+                    <div className="bg-gray-100/30 pb-1">
+                      <div
+                        onClick={() => setCurrentView('sla-management')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'sla-management' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        SLA Management
+                      </div>
+                      <div
+                        onClick={() => setCurrentView('sla-policies')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'sla-policies' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        SLA Policies
+                      </div>
+                      <div
+                        onClick={() => setCurrentView('escalation-rules')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'escalation-rules' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Escalation Rules
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Automation */}
+                  <div
+                    onClick={() => toggleSettingsSub('automation')}
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium whitespace-nowrap"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Zap size={16} />
+                      <span>Automation</span>
+                    </div>
+                    <ChevronRight size={14} className={`transition-transform duration-200 ${settingsSubOpen.automation ? 'rotate-90' : ''}`} />
+                  </div>
+                  {settingsSubOpen.automation && (
+                    <div className="bg-gray-100/30 pb-1">
+                      <div
+                        onClick={() => setCurrentView('auto-assignment')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'auto-assignment' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Auto Assignment
+                      </div>
+                      <div
+                        onClick={() => setCurrentView('auto-close-rules')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'auto-close-rules' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Auto Close Rules
+                      </div>
+                      <div
+                        onClick={() => setCurrentView('notifications')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'notifications' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Notifications
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Portal */}
+                  <div
+                    onClick={() => toggleSettingsSub('portal')}
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium whitespace-nowrap"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Globe size={16} />
+                      <span>Portal</span>
+                    </div>
+                    <ChevronRight size={14} className={`transition-transform duration-200 ${settingsSubOpen.portal ? 'rotate-90' : ''}`} />
+                  </div>
+                  {settingsSubOpen.portal && (
+                    <div className="bg-gray-100/30 pb-1">
+                      <div
+                        onClick={() => setCurrentView('portal-highlights')}
+                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'portal-highlights' ? 'text-indigo-600' : 'text-gray-500'}`}
+                      >
+                        Portal Highlights
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               )}
             </>

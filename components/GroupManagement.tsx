@@ -266,7 +266,7 @@ const GroupManagement: React.FC = () => {
                     <td className="px-6 py-4 text-center">
                       <button
                         onClick={() => handleViewGroup(group)}
-                        className="inline-flex items-center justify-center px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-200"
+                        className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
                         title="View group details"
                       >
                         View

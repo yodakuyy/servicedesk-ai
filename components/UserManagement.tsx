@@ -1285,7 +1285,7 @@ const UserManagement: React.FC = () => {
                                         <td className="px-6 py-4">
                                             <button
                                                 onClick={() => setSelectedUser(user)}
-                                                className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                                                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
                                             >
                                                 View
                                             </button>
