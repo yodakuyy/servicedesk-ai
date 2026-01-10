@@ -13,8 +13,10 @@ import {
     X,
     GripVertical,
     CheckCircle,
+    XCircle,
     Settings,
-    MoreVertical
+    MoreVertical,
+    AlertTriangle
 } from 'lucide-react';
 
 // --- Interfaces ---
@@ -24,13 +26,13 @@ interface WorkflowTemplate {
     name: string;
     description: string;
     category: string;
-    version: string;
+    version: number;
     is_active: boolean;
     created_at: string;
 }
 
 interface TicketStatus {
-    id: string; // uuid
+    status_id: string; // uuid - primary key from database
     status_code: string;
     status_name: string;
     status_category: 'open' | 'pending' | 'resolved' | 'closed' | 'system';
@@ -161,7 +163,7 @@ const TemplateList = ({
                             <div className="flex items-center justify-between pt-4 border-t border-gray-50">
                                 <div className="flex items-center gap-2">
                                     <span className="text-xs font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-600 border border-gray-200">
-                                        {template.version}
+                                        v{template.version}
                                     </span>
                                     {template.is_active ? (
                                         <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
@@ -222,24 +224,27 @@ const WorkflowBuilder = ({
             setStatuses(statusData || []);
 
             // 2. Fetch Existing Workflow Configuration
-            // Statuses
-            // Assuming workflow_statuses has workflow_id (linking to template)
-            const { data: wfStatuses } = await supabase
+            // Statuses - using correct column name workflow_status_id
+            const { data: wfStatuses, error: wfStatusError } = await supabase
                 .from('workflow_statuses')
                 .select(`
-                    id, 
+                    workflow_status_id, 
                     status_id, 
                     ticket_statuses:status_id (status_name, status_code, status_category),
                     sort_order
                 `)
-                .eq('workflow_id', templateId)
+                .eq('workflow_template_id', templateId)
                 .order('sort_order');
 
+            console.log('Loaded workflow_statuses:', wfStatuses, 'Error:', wfStatusError);
+
             // Transitions
-            const { data: wfTransitions } = await supabase
+            const { data: wfTransitions, error: wfTransError } = await supabase
                 .from('workflow_transitions')
                 .select('*')
                 .eq('workflow_id', templateId);
+
+            console.log('Loaded workflow_transitions:', wfTransitions, 'Error:', wfTransError);
 
             // 3. Map to UI Model
             // Since we might not have X/Y stored, we calculate auto-layout or use sort_order
@@ -248,7 +253,7 @@ const WorkflowBuilder = ({
             if (wfStatuses && wfStatuses.length > 0) {
                 // Simple Layout Calculation
                 loadedNodes = wfStatuses.map((ws: any, index: number) => ({
-                    id: ws.id, // backend ID
+                    id: ws.workflow_status_id, // Use correct column name
                     statusId: ws.status_id,
                     statusName: ws.ticket_statuses?.status_name || 'Unknown',
                     statusCode: ws.ticket_statuses?.status_code || '',
@@ -258,15 +263,19 @@ const WorkflowBuilder = ({
                 }));
             }
 
+            console.log('Mapped nodes:', loadedNodes);
+
             // Map transitions
             const loadedTransitions: WorkflowTransition[] = (wfTransitions || []).map((t: any) => ({
-                id: t.id,
-                fromNodeId: t.from_status_id, // assuming these are linking to workflow_statuses.id
+                id: t.transition_id,
+                fromNodeId: t.from_status_id, // These reference workflow_statuses.workflow_status_id
                 toNodeId: t.to_status_id
             })).filter(t =>
                 loadedNodes.some(n => n.id === t.fromNodeId) &&
                 loadedNodes.some(n => n.id === t.toNodeId)
             );
+
+            console.log('Mapped transitions:', loadedTransitions);
 
             setNodes(loadedNodes);
             setTransitions(loadedTransitions);
@@ -281,14 +290,14 @@ const WorkflowBuilder = ({
     const handleAddStatus = (status: TicketStatus) => {
         // Prevent duplicate status if typically 1 status type per workflow? 
         // Or allow multiples? Usually 1.
-        if (nodes.some(n => n.statusId === status.id)) {
+        if (nodes.some(n => n.statusId === status.status_id)) {
             alert('Status already added to workflow');
             return;
         }
 
         const newNode: WorkflowNode = {
             id: `temp-${Date.now()}`,
-            statusId: status.id,
+            statusId: status.status_id,
             statusName: status.status_name,
             statusCode: status.status_code,
             category: status.status_category,
@@ -402,9 +411,9 @@ const WorkflowBuilder = ({
                         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Available Statuses</h3>
                     </div>
                     <div className="p-4 space-y-3 overflow-y-auto">
-                        {statuses.filter(s => !nodes.some(n => n.statusId === s.id)).map(status => (
+                        {statuses.filter(s => !nodes.some(n => n.statusId === s.status_id)).map(status => (
                             <div
-                                key={status.id}
+                                key={status.status_id}
                                 onClick={() => handleAddStatus(status)}
                                 className="p-3 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:border-indigo-400 hover:shadow-md transition-all group"
                             >
@@ -419,7 +428,7 @@ const WorkflowBuilder = ({
                                 </div>
                             </div>
                         ))}
-                        {statuses.filter(s => !nodes.some(n => n.statusId === s.id)).length === 0 && (
+                        {statuses.filter(s => !nodes.some(n => n.statusId === s.status_id)).length === 0 && (
                             <p className="text-xs text-center text-gray-400 italic mt-4">All statuses added.</p>
                         )}
                     </div>
@@ -549,12 +558,28 @@ const WorkflowTemplate = () => {
     const [loading, setLoading] = useState(false);
     const [selectedTemplate, setSelectedTemplate] = useState<WorkflowTemplate | null>(null);
 
+    // Toast notification state
+    const [toast, setToast] = useState<{ show: boolean; type: 'success' | 'error'; message: string }>({
+        show: false,
+        type: 'success',
+        message: ''
+    });
+
+    const showToast = (type: 'success' | 'error', message: string) => {
+        setToast({ show: true, type, message });
+        setTimeout(() => setToast(prev => ({ ...prev, show: false })), 4000);
+    };
+
+    // Delete confirmation state
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+
     // Form Data
     const [formData, setFormData] = useState({
         name: '',
         category: 'IT',
         description: '',
-        version: 'v1.0',
+        version: 1,
         is_active: false
     });
 
@@ -580,16 +605,23 @@ const WorkflowTemplate = () => {
     };
 
     const handleSaveBasic = async () => {
-        if (!formData.name) return alert('Name required');
+        if (!formData.name) {
+            showToast('error', 'Template name is required');
+            return;
+        }
         try {
             if (view === 'create') {
                 const { data, error } = await supabase.from('workflow_templates').insert([{
-                    name: formData.name, category: formData.category, description: formData.description, version: formData.version, is_active: formData.is_active
+                    name: formData.name,
+                    category: formData.category,
+                    description: formData.description,
+                    version: formData.version,
+                    is_active: formData.is_active
                 }]).select().single();
 
                 if (error) throw error;
 
-                // Move to builder directly?
+                showToast('success', 'Template created successfully!');
                 setSelectedTemplate(data);
                 setView('builder');
             } else {
@@ -598,11 +630,12 @@ const WorkflowTemplate = () => {
                 }).eq('id', selectedTemplate?.id);
 
                 if (error) throw error;
+                showToast('success', 'Template updated successfully!');
                 setView('list');
             }
         } catch (e: any) {
             console.error('Save error:', e);
-            alert(`Failed to save template: ${e.message}`);
+            showToast('error', `Failed to save template: ${e.message}`);
         }
     };
 
@@ -611,11 +644,11 @@ const WorkflowTemplate = () => {
         try {
             // 1. Clear old data (Full Replace Strategy)
             await supabase.from('workflow_transitions').delete().eq('workflow_id', selectedTemplate.id);
-            await supabase.from('workflow_statuses').delete().eq('workflow_id', selectedTemplate.id);
+            await supabase.from('workflow_statuses').delete().eq('workflow_template_id', selectedTemplate.id);
 
             // 2. Insert Statuses
             const statusInserts = nodes.map((n, idx) => ({
-                workflow_id: selectedTemplate.id,
+                workflow_template_id: selectedTemplate.id,
                 status_id: n.statusId,
                 sort_order: idx + 1 // Or map x/y if we had columns
             }));
@@ -625,14 +658,18 @@ const WorkflowTemplate = () => {
                 .insert(statusInserts)
                 .select();
 
+            console.log('Insert status response:', insertedStatuses, statusError);
+
             if (statusError) throw statusError;
 
             // 3. Map Node IDs (temp) to Real IDs
-            const statusMap = new Map<string, string>(); // statusId (ticket_status) -> workflow_statuses.id
+            const statusMap = new Map<string, string>(); // statusId (ticket_status) -> workflow_statuses.workflow_status_id
             // Problem: If multiple nodes have SAME status_id (not allowed in my logic), this map works.
             insertedStatuses?.forEach((s: any) => {
-                statusMap.set(s.status_id, s.id);
+                statusMap.set(s.status_id, s.workflow_status_id); // Use correct column name
             });
+
+            console.log('Status map:', Object.fromEntries(statusMap));
 
             // 4. Insert Transitions
             const transInserts = transitions.map(t => {
@@ -650,7 +687,10 @@ const WorkflowTemplate = () => {
                 return {
                     workflow_id: selectedTemplate.id,
                     from_status_id: realFromId,
-                    to_status_id: realToId
+                    to_status_id: realToId,
+                    allowed_roles: ['agent'], // Default value - required column
+                    is_automatic: false,       // Default value
+                    condition: {}              // Default empty object
                 };
             }).filter(Boolean);
 
@@ -659,12 +699,41 @@ const WorkflowTemplate = () => {
                 if (transError) throw transError;
             }
 
-            alert('Workflow saved successfully!');
+            showToast('success', 'Workflow saved successfully!');
             setView('list');
 
         } catch (error: any) {
             console.error('Save failed:', error);
-            alert('Failed to save: ' + error.message);
+            showToast('error', 'Failed to save: ' + error.message);
+        }
+    };
+
+    const handleDeleteTemplate = async () => {
+        if (!deleteTargetId) return;
+        try {
+            // Try to delete related data first (ignore errors if columns don't exist)
+            // These may fail if the template has no associated workflow data or different schema
+            const { error: transErr } = await supabase.from('workflow_transitions').delete().eq('workflow_id', deleteTargetId);
+            if (transErr) {
+                console.log('Note: Could not delete transitions:', transErr.message);
+            }
+
+            const { error: statusErr } = await supabase.from('workflow_statuses').delete().eq('workflow_template_id', deleteTargetId);
+            if (statusErr) {
+                console.log('Note: Could not delete statuses:', statusErr.message);
+            }
+
+            // Delete the template itself - this one we care about
+            const { error } = await supabase.from('workflow_templates').delete().eq('id', deleteTargetId);
+            if (error) throw error;
+
+            showToast('success', 'Template deleted successfully!');
+            setShowDeleteConfirm(false);
+            setDeleteTargetId(null);
+            fetchTemplates();
+        } catch (error: any) {
+            console.error('Delete error:', error);
+            showToast('error', 'Failed to delete template: ' + error.message);
         }
     };
 
@@ -682,20 +751,85 @@ const WorkflowTemplate = () => {
 
     return (
         <div className="p-8 max-w-7xl mx-auto min-h-screen">
+            {/* Toast Notification */}
+            {toast.show && (
+                <div
+                    className={`fixed top-4 right-4 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border backdrop-blur-sm ${toast.type === 'success'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-red-50 border-red-200 text-red-800'
+                        }`}
+                    style={{ animation: 'slideIn 0.3s ease-out forwards' }}
+                >
+                    <style>{`
+                        @keyframes slideIn {
+                            from { transform: translateX(100%); opacity: 0; }
+                            to { transform: translateX(0); opacity: 1; }
+                        }
+                    `}</style>
+                    {toast.type === 'success' ? (
+                        <CheckCircle size={20} className="text-emerald-500 flex-shrink-0" />
+                    ) : (
+                        <XCircle size={20} className="text-red-500 flex-shrink-0" />
+                    )}
+                    <span className="text-sm font-medium">{toast.message}</span>
+                    <button
+                        onClick={() => setToast(prev => ({ ...prev, show: false }))}
+                        className="ml-2 p-1 rounded-full hover:bg-black/5 transition-colors"
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {showDeleteConfirm && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+                        <div className="flex items-start gap-4">
+                            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <Trash2 size={24} className="text-red-600" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800 mb-2">Delete Template?</h3>
+                                <p className="text-sm text-gray-600">
+                                    This will permanently delete this template and all its workflow configuration.
+                                    This action cannot be undone.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button
+                                onClick={() => {
+                                    setShowDeleteConfirm(false);
+                                    setDeleteTargetId(null);
+                                }}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleDeleteTemplate}
+                                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg"
+                            >
+                                Delete Template
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {view === 'list' && (
                 <TemplateList
                     templates={templates}
                     loading={loading}
                     onCreate={() => {
-                        setFormData({ name: '', category: 'IT', description: '', version: 'v1.0', is_active: false });
+                        setFormData({ name: '', category: 'IT', description: '', version: 1, is_active: false });
                         setView('create');
                     }}
                     onEdit={handleEditClick}
-                    onDelete={async (id) => {
-                        if (confirm('Delete?')) {
-                            await supabase.from('workflow_templates').delete().eq('id', id);
-                            fetchTemplates();
-                        }
+                    onDelete={(id) => {
+                        setDeleteTargetId(id);
+                        setShowDeleteConfirm(true);
                     }}
                 />
             )}
@@ -718,7 +852,13 @@ const WorkflowTemplate = () => {
                             </div>
                             <div className="flex-1">
                                 <label className="block text-sm font-medium mb-1">Version</label>
-                                <input className="w-full p-2 border rounded" value={formData.version} onChange={e => setFormData({ ...formData, version: e.target.value })} />
+                                <input
+                                    type="number"
+                                    min="1"
+                                    className="w-full p-2 border rounded"
+                                    value={formData.version}
+                                    onChange={e => setFormData({ ...formData, version: parseInt(e.target.value) || 1 })}
+                                />
                             </div>
                         </div>
                         <div>

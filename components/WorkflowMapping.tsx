@@ -161,7 +161,7 @@ const WorkflowMapping: React.FC = () => {
             const { error: statusError } = await supabase
                 .from('workflow_statuses')
                 .delete()
-                .eq('workflow_id', selectedDepartment);
+                .eq('workflow_template_id', selectedDepartment);
 
             if (statusError) throw statusError;
 
@@ -189,6 +189,11 @@ const WorkflowMapping: React.FC = () => {
     const [showEnableModal, setShowEnableModal] = useState(false);
     const [availableDepts, setAvailableDepts] = useState<{ id: number, name: string }[]>([]);
     const [selectedEnableId, setSelectedEnableId] = useState('');
+
+    // Template selection for Enable Workflow
+    const [availableTemplates, setAvailableTemplates] = useState<{ id: string, name: string, category: string }[]>([]);
+    const [selectedTemplateId, setSelectedTemplateId] = useState('');
+    const [enablingWorkflow, setEnablingWorkflow] = useState(false);
 
     const fetchAvailableDepts = async () => {
         try {
@@ -224,37 +229,128 @@ const WorkflowMapping: React.FC = () => {
         }
     };
 
+    const fetchAvailableTemplates = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('workflow_templates')
+                .select('id, name, category')
+                .eq('is_active', true)
+                .order('name');
+
+            if (error) throw error;
+
+            setAvailableTemplates(data || []);
+            // Don't auto-select - let user choose or start empty
+            setSelectedTemplateId('');
+        } catch (error) {
+            console.error('Error fetching templates:', error);
+            setAvailableTemplates([]);
+        }
+    };
+
     const enableWorkflow = async () => {
         if (!selectedEnableId) return;
 
+        setEnablingWorkflow(true);
         try {
             const dept = availableDepts.find(d => d.id.toString() === selectedEnableId);
             if (!dept) return;
 
-            // Company ID 1 hardcoded or assume single tenant for now
-            // department_id references company.company_id
-            const { error } = await supabase
+            // 1. Create department workflow entry
+            // Note: Using dept.id as department_id, assuming company_id = 1 for now
+            // You may need to adjust this based on your actual data model
+            const { data: newWorkflow, error: wfError } = await supabase
                 .from('department_workflows')
                 .insert({
-                    company_id: parseInt(selectedEnableId),
-                    department_id: parseInt(selectedEnableId),
+                    company_id: 1, // Default company, adjust if needed
+                    department_id: dept.id,
                     workflow_name: `${dept.name} Workflow`,
                     is_active: true
-                });
+                })
+                .select()
+                .single();
 
-            if (error) throw error;
+            if (wfError) {
+                // Handle duplicate key constraint violation
+                if (wfError.code === '23505') {
+                    showToast('error', `Workflow for ${dept.name} already exists. Please edit the existing workflow instead.`);
+                    return;
+                }
+                throw wfError;
+            }
 
-            showToast('success', `Workflow enabled for ${dept.name}`);
+            // 2. If template selected, copy statuses and transitions
+            if (selectedTemplateId && newWorkflow) {
+                // 2a. Fetch template statuses
+                const { data: templateStatuses, error: statusErr } = await supabase
+                    .from('workflow_statuses')
+                    .select('status_id, sort_order')
+                    .eq('workflow_template_id', selectedTemplateId);
+
+                if (statusErr) throw statusErr;
+
+                // 2b. Insert statuses into new workflow
+                if (templateStatuses && templateStatuses.length > 0) {
+                    const statusInserts = templateStatuses.map(s => ({
+                        workflow_template_id: newWorkflow.workflow_id,
+                        status_id: s.status_id,
+                        sort_order: s.sort_order
+                    }));
+
+                    const { data: insertedStatuses, error: insertErr } = await supabase
+                        .from('workflow_statuses')
+                        .insert(statusInserts)
+                        .select();
+
+                    if (insertErr) throw insertErr;
+
+                    // 2c. Fetch template transitions
+                    const { data: templateTransitions, error: transErr } = await supabase
+                        .from('workflow_transitions')
+                        .select('from_status_id, to_status_id, allowed_roles, is_automatic, condition')
+                        .eq('workflow_id', selectedTemplateId);
+
+                    if (transErr) throw transErr;
+
+                    // 2d. Insert transitions into new workflow
+                    if (templateTransitions && templateTransitions.length > 0) {
+                        const transitionInserts = templateTransitions.map(t => ({
+                            workflow_id: newWorkflow.workflow_id,
+                            from_status_id: t.from_status_id,
+                            to_status_id: t.to_status_id,
+                            allowed_roles: t.allowed_roles || ['agent'],
+                            is_automatic: t.is_automatic || false,
+                            condition: t.condition || {}
+                        }));
+
+                        const { error: transInsertErr } = await supabase
+                            .from('workflow_transitions')
+                            .insert(transitionInserts);
+
+                        if (transInsertErr) throw transInsertErr;
+                    }
+                }
+
+                showToast('success', `Workflow enabled for ${dept.name} (copied from template)`);
+            } else {
+                showToast('success', `Workflow enabled for ${dept.name} (empty workflow)`);
+            }
+
             setShowEnableModal(false);
+            setSelectedTemplateId('');
             fetchDepartments(); // Refresh dropdown
         } catch (error: any) {
+            console.error('Error enabling workflow:', error);
             showToast('error', error.message || 'Failed to enable workflow');
+        } finally {
+            setEnablingWorkflow(false);
         }
     };
 
     useEffect(() => {
         if (showEnableModal) {
             fetchAvailableDepts();
+            fetchAvailableTemplates();
         }
     }, [showEnableModal]);
 
@@ -340,7 +436,7 @@ const WorkflowMapping: React.FC = () => {
                 .from('workflow_statuses')
                 .select(`
                     workflow_status_id,
-                    workflow_id,
+                    workflow_template_id,
                     status_id,
                     ticket_statuses (
                         status_name,
@@ -350,14 +446,14 @@ const WorkflowMapping: React.FC = () => {
                         sla_behavior
                     )
                 `)
-                .eq('workflow_id', workflowId);
+                .eq('workflow_template_id', workflowId);
 
             if (error) throw error;
 
             // Transform the data to flatten the joined table
             const transformedData: WorkflowStatus[] = (data || []).map((item: any) => ({
                 workflow_status_id: item.workflow_status_id,
-                workflow_id: item.workflow_id,
+                workflow_id: item.workflow_template_id,
                 status_id: item.status_id,
                 is_initial: false, // Default to false since column doesn't exist
                 is_active: true, // Default to true since column doesn't exist
@@ -387,7 +483,7 @@ const WorkflowMapping: React.FC = () => {
                 .from('workflow_statuses')
                 .select(`
                     workflow_status_id,
-                    workflow_id,
+                    workflow_template_id,
                     status_id,
                     ticket_statuses (
                         status_name,
@@ -397,7 +493,7 @@ const WorkflowMapping: React.FC = () => {
                         sla_behavior
                     )
                 `)
-                .eq('workflow_id', selectedDepartment);
+                .eq('workflow_template_id', selectedDepartment);
 
             if (statusError) throw statusError;
 
@@ -620,7 +716,7 @@ const WorkflowMapping: React.FC = () => {
             const { data, error } = await supabase
                 .from('workflow_statuses')
                 .insert({
-                    workflow_id: selectedDepartment,
+                    workflow_template_id: selectedDepartment,
                     status_id: draggedStatus.status_id,
                     sort_order: nodes.length + 1
                 })
@@ -1473,21 +1569,58 @@ const WorkflowMapping: React.FC = () => {
                                     <p className="text-gray-600 font-medium">All departments already have workflows enabled.</p>
                                 </div>
                             ) : (
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Select Department</label>
-                                    <select
-                                        value={selectedEnableId}
-                                        onChange={(e) => setSelectedEnableId(e.target.value)}
-                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                    >
-                                        <option value="" disabled>Select a department...</option>
-                                        {availableDepts.map(dept => (
-                                            <option key={dept.id} value={dept.id}>{dept.name}</option>
-                                        ))}
-                                    </select>
-                                    <p className="text-xs text-gray-500 mt-2">
-                                        This will create a new workflow configuration for the selected department.
-                                    </p>
+                                <div className="space-y-4">
+                                    {/* Department Selector */}
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-1.5">Select Department</label>
+                                        <select
+                                            value={selectedEnableId}
+                                            onChange={(e) => setSelectedEnableId(e.target.value)}
+                                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="" disabled>Select a department...</option>
+                                            {availableDepts.map(dept => (
+                                                <option key={dept.id} value={dept.id}>{dept.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    {/* Template Selector */}
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                                            Base Template
+                                            <span className="text-gray-400 font-normal ml-1">(Optional)</span>
+                                        </label>
+                                        <select
+                                            value={selectedTemplateId}
+                                            onChange={(e) => setSelectedTemplateId(e.target.value)}
+                                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="">Start with empty workflow</option>
+                                            {availableTemplates.map(template => (
+                                                <option key={template.id} value={template.id}>
+                                                    {template.name} ({template.category})
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            {selectedTemplateId
+                                                ? 'Statuses and transitions will be copied from the selected template.'
+                                                : 'You can configure statuses and transitions manually later.'
+                                            }
+                                        </p>
+                                    </div>
+
+                                    {/* Info Box */}
+                                    {selectedTemplateId && (
+                                        <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 flex items-start gap-2">
+                                            <Info size={16} className="text-indigo-600 flex-shrink-0 mt-0.5" />
+                                            <p className="text-xs text-indigo-700">
+                                                The selected template's workflow configuration will be copied to this department.
+                                                You can customize it after creation.
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -1502,10 +1635,20 @@ const WorkflowMapping: React.FC = () => {
                             {availableDepts.length > 0 && (
                                 <button
                                     onClick={enableWorkflow}
-                                    disabled={!selectedEnableId}
-                                    className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled={!selectedEnableId || enablingWorkflow}
+                                    className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                                 >
-                                    Enable Workflow
+                                    {enablingWorkflow ? (
+                                        <>
+                                            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                            </svg>
+                                            Creating...
+                                        </>
+                                    ) : (
+                                        selectedTemplateId ? 'Enable with Template' : 'Enable Workflow'
+                                    )}
                                 </button>
                             )}
                         </div>
