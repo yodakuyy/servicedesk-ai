@@ -279,20 +279,20 @@ const WorkflowMapping: React.FC = () => {
                 throw wfError;
             }
 
-            // 2. If template selected, copy statuses and transitions
+            // 2. If template selected, copy statuses and transitions from TEMPLATE tables
             if (selectedTemplateId && newWorkflow) {
-                // 2a. Fetch template statuses
+                // 2a. Fetch template statuses from NEW TABLE: workflow_template_statuses
                 const { data: templateStatuses, error: statusErr } = await supabase
-                    .from('workflow_statuses')
+                    .from('workflow_template_statuses')
                     .select('status_id, sort_order')
                     .eq('workflow_template_id', selectedTemplateId);
 
                 if (statusErr) throw statusErr;
 
-                // 2b. Insert statuses into new workflow
+                // 2b. Insert statuses into department workflow (workflow_statuses table)
                 if (templateStatuses && templateStatuses.length > 0) {
                     const statusInserts = templateStatuses.map(s => ({
-                        workflow_template_id: newWorkflow.workflow_id,
+                        workflow_template_id: newWorkflow.workflow_id, // This goes to workflow_statuses for dept
                         status_id: s.status_id,
                         sort_order: s.sort_order
                     }));
@@ -304,21 +304,21 @@ const WorkflowMapping: React.FC = () => {
 
                     if (insertErr) throw insertErr;
 
-                    // 2c. Fetch template transitions
+                    // 2c. Fetch template transitions from NEW TABLE: workflow_template_transitions
                     const { data: templateTransitions, error: transErr } = await supabase
-                        .from('workflow_transitions')
+                        .from('workflow_template_transitions')
                         .select('from_status_id, to_status_id, allowed_roles, is_automatic, condition')
-                        .eq('workflow_id', selectedTemplateId);
+                        .eq('workflow_template_id', selectedTemplateId);
 
                     if (transErr) throw transErr;
 
-                    // 2d. Insert transitions into new workflow
+                    // 2d. Insert transitions into department workflow (workflow_transitions table)
                     if (templateTransitions && templateTransitions.length > 0) {
                         const transitionInserts = templateTransitions.map(t => ({
-                            workflow_id: newWorkflow.workflow_id,
-                            from_status_id: t.from_status_id,
-                            to_status_id: t.to_status_id,
-                            allowed_roles: t.allowed_roles || ['agent'],
+                            workflow_id: newWorkflow.workflow_id, // FK to department_workflows
+                            from_status_id: t.from_status_id,    // FK to ticket_statuses
+                            to_status_id: t.to_status_id,        // FK to ticket_statuses
+                            allowed_roles: t.allowed_roles ? [t.allowed_roles] : ['agent'], // Convert varchar to array
                             is_automatic: t.is_automatic || false,
                             condition: t.condition || {}
                         }));

@@ -16,7 +16,8 @@ import {
     XCircle,
     Settings,
     MoreVertical,
-    AlertTriangle
+    AlertTriangle,
+    Info
 } from 'lucide-react';
 
 // --- Interfaces ---
@@ -46,6 +47,8 @@ interface WorkflowNode {
     statusName: string;
     statusCode: string;
     category: string;
+    slaBehavior: 'run' | 'pause' | 'stop';
+    isFinal: boolean;
     x: number;
     y: number;
 }
@@ -192,11 +195,13 @@ const TemplateList = ({
 const WorkflowBuilder = ({
     templateId,
     templateName,
+    templateVersion,
     onBack,
     onSave
 }: {
     templateId: string,
     templateName: string,
+    templateVersion: number,
     onBack: () => void,
     onSave: (nodes: WorkflowNode[], transitions: WorkflowTransition[]) => Promise<void>
 }) => {
@@ -219,61 +224,64 @@ const WorkflowBuilder = ({
     const fetchData = async () => {
         setLoading(true);
         try {
-            // 1. Fetch Ticket Statuses
+            // 1. Fetch Ticket Statuses (for sidebar)
             const { data: statusData } = await supabase.from('ticket_statuses').select('*').order('is_final');
             setStatuses(statusData || []);
 
-            // 2. Fetch Existing Workflow Configuration
-            // Statuses - using correct column name workflow_status_id
+            // 2. Fetch Template Statuses from NEW TABLE: workflow_template_statuses
             const { data: wfStatuses, error: wfStatusError } = await supabase
-                .from('workflow_statuses')
+                .from('workflow_template_statuses')
                 .select(`
-                    workflow_status_id, 
+                    workflow_template_status_id, 
                     status_id, 
-                    ticket_statuses:status_id (status_name, status_code, status_category),
-                    sort_order
+                    ticket_statuses:status_id (status_name, status_code, status_category, sla_behavior, is_final),
+                    sort_order,
+                    position_x,
+                    position_y
                 `)
                 .eq('workflow_template_id', templateId)
                 .order('sort_order');
 
-            console.log('Loaded workflow_statuses:', wfStatuses, 'Error:', wfStatusError);
+            console.log('Loaded workflow_template_statuses:', wfStatuses, 'Error:', wfStatusError);
 
-            // Transitions
+            // 3. Fetch Template Transitions from NEW TABLE: workflow_template_transitions
             const { data: wfTransitions, error: wfTransError } = await supabase
-                .from('workflow_transitions')
+                .from('workflow_template_transitions')
                 .select('*')
-                .eq('workflow_id', templateId);
+                .eq('workflow_template_id', templateId);
 
-            console.log('Loaded workflow_transitions:', wfTransitions, 'Error:', wfTransError);
+            console.log('Loaded workflow_template_transitions:', wfTransitions, 'Error:', wfTransError);
 
-            // 3. Map to UI Model
-            // Since we might not have X/Y stored, we calculate auto-layout or use sort_order
+            // 4. Map to UI Model
             let loadedNodes: WorkflowNode[] = [];
 
             if (wfStatuses && wfStatuses.length > 0) {
-                // Simple Layout Calculation
+                // Use saved positions if available, otherwise fallback to grid layout
                 loadedNodes = wfStatuses.map((ws: any, index: number) => ({
-                    id: ws.workflow_status_id, // Use correct column name
+                    id: ws.workflow_template_status_id, // PK from new table
                     statusId: ws.status_id,
                     statusName: ws.ticket_statuses?.status_name || 'Unknown',
                     statusCode: ws.ticket_statuses?.status_code || '',
                     category: ws.ticket_statuses?.status_category || 'open',
-                    x: 50 + (index % 4) * 220, // Grid layout fallback
-                    y: 50 + Math.floor(index / 4) * 150
+                    slaBehavior: ws.ticket_statuses?.sla_behavior || 'run',
+                    isFinal: ws.ticket_statuses?.is_final || false,
+                    x: ws.position_x ?? (50 + (index % 4) * 220), // Use saved position or fallback
+                    y: ws.position_y ?? (50 + Math.floor(index / 4) * 150)
                 }));
             }
 
             console.log('Mapped nodes:', loadedNodes);
 
-            // Map transitions
+            // 5. Map transitions - these now reference ticket_statuses.status_id directly
+            // We need to map from_status_id/to_status_id to node IDs
+            const statusIdToNodeId = new Map<string, string>();
+            loadedNodes.forEach(n => statusIdToNodeId.set(n.statusId, n.id));
+
             const loadedTransitions: WorkflowTransition[] = (wfTransitions || []).map((t: any) => ({
-                id: t.transition_id,
-                fromNodeId: t.from_status_id, // These reference workflow_statuses.workflow_status_id
-                toNodeId: t.to_status_id
-            })).filter(t =>
-                loadedNodes.some(n => n.id === t.fromNodeId) &&
-                loadedNodes.some(n => n.id === t.toNodeId)
-            );
+                id: t.workflow_template_transition_id,
+                fromNodeId: statusIdToNodeId.get(t.from_status_id) || '',
+                toNodeId: statusIdToNodeId.get(t.to_status_id) || ''
+            })).filter(t => t.fromNodeId && t.toNodeId);
 
             console.log('Mapped transitions:', loadedTransitions);
 
@@ -301,6 +309,8 @@ const WorkflowBuilder = ({
             statusName: status.status_name,
             statusCode: status.status_code,
             category: status.status_category,
+            slaBehavior: status.sla_behavior,
+            isFinal: status.is_final,
             x: 250, // Default center
             y: 100
         };
@@ -358,15 +368,9 @@ const WorkflowBuilder = ({
         }
     };
 
-    // Helper to get color
-    const getStatusColor = (category: string) => {
-        switch (category) {
-            case 'open': return 'bg-blue-100 border-blue-300 text-blue-800';
-            case 'pending': return 'bg-yellow-100 border-yellow-300 text-yellow-800';
-            case 'resolved': return 'bg-green-100 border-green-300 text-green-800';
-            case 'closed': return 'bg-gray-100 border-gray-300 text-gray-800';
-            default: return 'bg-indigo-100 border-indigo-300 text-indigo-800';
-        }
+    // Remove a transition
+    const removeTransition = (transitionId: string) => {
+        setTransitions(transitions.filter(t => t.id !== transitionId));
     };
 
     return (
@@ -380,7 +384,7 @@ const WorkflowBuilder = ({
                     <div>
                         <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                             {templateName}
-                            <span className="text-xs font-normal text-gray-400 border border-gray-200 px-2 py-0.5 rounded">v2.0</span>
+                            <span className="text-xs font-normal text-gray-400 border border-gray-200 px-2 py-0.5 rounded">v{templateVersion}</span>
                         </h2>
                         <p className="text-xs text-gray-500">Drag statuses to canvas and connect them to define flow.</p>
                     </div>
@@ -392,7 +396,7 @@ const WorkflowBuilder = ({
                             }`}
                     >
                         <ArrowRight size={18} />
-                        {isDrawingMode ? 'Cancel Connection' : 'Connect Statuses'}
+                        {isDrawingMode ? 'Cancel' : 'Add Transition'}
                     </button>
                     <button
                         onClick={() => onSave(nodes, transitions)}
@@ -404,33 +408,78 @@ const WorkflowBuilder = ({
                 </div>
             </div>
 
+            {/* Legend Bar */}
+            <div className="bg-gray-50 border-b border-gray-200 px-6 py-2 flex items-center gap-6 flex-shrink-0">
+                <Info size={14} className="text-gray-400" />
+                <div className="flex items-center gap-4 text-xs">
+                    <span className="flex items-center gap-1">
+                        <span className="w-3 h-3 rounded bg-green-100 border border-green-300"></span>
+                        <span className="text-gray-600">SLA Running</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                        <span className="w-3 h-3 rounded bg-yellow-100 border border-yellow-300"></span>
+                        <span className="text-gray-600">SLA Paused</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                        <span className="w-3 h-3 rounded bg-red-100 border border-red-300"></span>
+                        <span className="text-gray-600">SLA Stopped</span>
+                    </span>
+                    <span className="border-l border-gray-300 pl-4 flex items-center gap-1">
+                        <span className="px-1.5 py-0.5 bg-green-600 text-white text-[9px] font-bold rounded">Start</span>
+                        <span className="text-gray-500">First status</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                        <span className="px-1.5 py-0.5 bg-red-600 text-white text-[9px] font-bold rounded">Final</span>
+                        <span className="text-gray-500">End status</span>
+                    </span>
+                </div>
+            </div>
+
             <div className="flex flex-1 overflow-hidden">
                 {/* Sidebar - Available Statuses */}
                 <div className="w-64 bg-gray-50 border-r border-gray-200 flex flex-col flex-shrink-0">
                     <div className="p-4 border-b border-gray-200">
                         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Available Statuses</h3>
                     </div>
-                    <div className="p-4 space-y-3 overflow-y-auto">
-                        {statuses.filter(s => !nodes.some(n => n.statusId === s.status_id)).map(status => (
-                            <div
-                                key={status.status_id}
-                                onClick={() => handleAddStatus(status)}
-                                className="p-3 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:border-indigo-400 hover:shadow-md transition-all group"
-                            >
-                                <div className="flex items-center justify-between mb-1">
-                                    <span className="font-semibold text-gray-700 text-sm">{status.status_name}</span>
-                                    <Plus size={14} className="text-gray-300 group-hover:text-indigo-600" />
+                    <div className="p-4 space-y-2 overflow-y-auto flex-1">
+                        {statuses.map(status => {
+                            const isOnCanvas = nodes.some(n => n.statusId === status.status_id);
+                            // SLA behavior colors
+                            const slaDotColor = status.sla_behavior === 'run'
+                                ? 'bg-green-500'
+                                : status.sla_behavior === 'pause'
+                                    ? 'bg-yellow-500'
+                                    : 'bg-red-500';
+                            return (
+                                <div
+                                    key={status.status_id}
+                                    onClick={() => !isOnCanvas && handleAddStatus(status)}
+                                    className={`p-3 rounded-lg border transition-all flex items-center justify-between
+                                        ${isOnCanvas
+                                            ? 'bg-gray-100 border-gray-200 cursor-default opacity-60'
+                                            : 'bg-white border-gray-200 shadow-sm cursor-pointer hover:border-indigo-400 hover:shadow-md group'
+                                        }`}
+                                >
+                                    <div className="flex-1">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            {/* SLA Behavior Indicator */}
+                                            <span className={`w-2 h-2 rounded-full ${slaDotColor}`} title={`SLA: ${status.sla_behavior.toUpperCase()}`}></span>
+                                            <span className={`font-semibold text-sm ${isOnCanvas ? 'text-gray-500' : 'text-gray-700'}`}>
+                                                {status.status_name}
+                                            </span>
+                                        </div>
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize font-medium bg-gray-100 text-gray-600`}>
+                                            {status.status_category}
+                                        </span>
+                                    </div>
+                                    {isOnCanvas ? (
+                                        <CheckCircle size={18} className="text-green-500" />
+                                    ) : (
+                                        <Plus size={16} className="text-gray-300 group-hover:text-indigo-600" />
+                                    )}
                                 </div>
-                                <div className="flex gap-2">
-                                    <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded capitalize">
-                                        {status.status_category}
-                                    </span>
-                                </div>
-                            </div>
-                        ))}
-                        {statuses.filter(s => !nodes.some(n => n.statusId === s.status_id)).length === 0 && (
-                            <p className="text-xs text-center text-gray-400 italic mt-4">All statuses added.</p>
-                        )}
+                            );
+                        })}
                     </div>
                 </div>
 
@@ -445,34 +494,138 @@ const WorkflowBuilder = ({
                         backgroundSize: '20px 20px'
                     }}
                 >
-                    {/* Render Transitions (Lines) */}
+                    {/* Render Transitions (Curved Lines) */}
                     <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
                         <defs>
-                            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                                <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
-                            </marker>
+                            {/* Define arrow markers for each color */}
+                            {['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#94a3b8'].map((color, i) => (
+                                <marker
+                                    key={`arrow-${i}`}
+                                    id={`arrowhead-${i}`}
+                                    markerWidth="10"
+                                    markerHeight="7"
+                                    refX="9"
+                                    refY="3.5"
+                                    orient="auto"
+                                >
+                                    <polygon points="0 0, 10 3.5, 0 7" fill={color} />
+                                </marker>
+                            ))}
                         </defs>
-                        {transitions.map(t => {
+                        {transitions.map((t, index) => {
                             const from = nodes.find(n => n.id === t.fromNodeId);
                             const to = nodes.find(n => n.id === t.toNodeId);
                             if (!from || !to) return null;
 
-                            // Calculate center points
-                            const startX = from.x + 90; // Width/2
-                            const startY = from.y + 30; // Height/2
-                            const endX = to.x + 90;
-                            const endY = to.y + 30;
+                            // Color palette for transitions
+                            const colors = ['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899'];
+                            const color = colors[index % colors.length];
+                            const arrowId = `arrowhead-${index % 5}`;
+
+                            // Calculate edge points (not center)
+                            const NODE_WIDTH = 180;
+                            const NODE_HEIGHT = 60;
+
+                            // Determine direction and connection points
+                            let startX, startY, endX, endY;
+                            const dx = to.x - from.x;
+                            const dy = to.y - from.y;
+
+                            // Connect from right edge to left edge if going right
+                            if (Math.abs(dx) > Math.abs(dy)) {
+                                if (dx > 0) {
+                                    // Going right
+                                    startX = from.x + NODE_WIDTH;
+                                    startY = from.y + NODE_HEIGHT / 2;
+                                    endX = to.x;
+                                    endY = to.y + NODE_HEIGHT / 2;
+                                } else {
+                                    // Going left
+                                    startX = from.x;
+                                    startY = from.y + NODE_HEIGHT / 2;
+                                    endX = to.x + NODE_WIDTH;
+                                    endY = to.y + NODE_HEIGHT / 2;
+                                }
+                            } else {
+                                if (dy > 0) {
+                                    // Going down
+                                    startX = from.x + NODE_WIDTH / 2;
+                                    startY = from.y + NODE_HEIGHT;
+                                    endX = to.x + NODE_WIDTH / 2;
+                                    endY = to.y;
+                                } else {
+                                    // Going up
+                                    startX = from.x + NODE_WIDTH / 2;
+                                    startY = from.y;
+                                    endX = to.x + NODE_WIDTH / 2;
+                                    endY = to.y + NODE_HEIGHT;
+                                }
+                            }
+
+                            // Calculate bezier control points for curved line
+                            const midX = (startX + endX) / 2;
+                            const midY = (startY + endY) / 2;
+
+                            // Add curve based on direction
+                            let ctrl1X, ctrl1Y, ctrl2X, ctrl2Y;
+                            if (Math.abs(dx) > Math.abs(dy)) {
+                                // Horizontal dominant - curve vertically
+                                ctrl1X = startX + (endX - startX) * 0.4;
+                                ctrl1Y = startY;
+                                ctrl2X = startX + (endX - startX) * 0.6;
+                                ctrl2Y = endY;
+                            } else {
+                                // Vertical dominant - curve horizontally
+                                ctrl1X = startX;
+                                ctrl1Y = startY + (endY - startY) * 0.4;
+                                ctrl2X = endX;
+                                ctrl2Y = startY + (endY - startY) * 0.6;
+                            }
+
+                            const pathD = `M ${startX} ${startY} C ${ctrl1X} ${ctrl1Y}, ${ctrl2X} ${ctrl2Y}, ${endX} ${endY}`;
 
                             return (
-                                <g key={t.id}>
-                                    <line
-                                        x1={startX} y1={startY} x2={endX} y2={endY}
-                                        stroke="#cbd5e1"
-                                        strokeWidth="2"
-                                        markerEnd="url(#arrowhead)"
+                                <g key={t.id} className="transition-group">
+                                    {/* Main curved path */}
+                                    <path
+                                        d={pathD}
+                                        fill="none"
+                                        stroke={color}
+                                        strokeWidth="2.5"
+                                        markerEnd={`url(#${arrowId})`}
+                                        className="transition-all"
                                     />
-                                    {/* Delete button for transition - simplified as center click */}
-                                    {/* Could add a circle in middle to delete */}
+                                    {/* Invisible wider path for easier hover detection */}
+                                    <path
+                                        d={pathD}
+                                        fill="none"
+                                        stroke="transparent"
+                                        strokeWidth="20"
+                                        className="pointer-events-auto cursor-pointer"
+                                    />
+                                    {/* Delete button at midpoint */}
+                                    <g
+                                        className="pointer-events-auto cursor-pointer opacity-0 hover:opacity-100 transition-opacity"
+                                        onClick={() => removeTransition(t.id)}
+                                    >
+                                        <circle
+                                            cx={midX}
+                                            cy={midY}
+                                            r="10"
+                                            fill="#ef4444"
+                                            className="drop-shadow-sm"
+                                        />
+                                        <text
+                                            x={midX}
+                                            y={midY + 4}
+                                            textAnchor="middle"
+                                            fill="white"
+                                            fontSize="12"
+                                            fontWeight="bold"
+                                        >
+                                            ×
+                                        </text>
+                                    </g>
                                 </g>
                             );
                         })}
@@ -491,49 +644,89 @@ const WorkflowBuilder = ({
                     </svg>
 
                     {/* Render Nodes */}
-                    {nodes.map(node => (
-                        <div
-                            key={node.id}
-                            onMouseDown={(e) => { e.stopPropagation(); setDraggedNodeId(node.id); }}
-                            onClick={() => {
-                                if (isDrawingMode) {
-                                    if (!drawingStartNodeId) setDrawingStartNodeId(node.id);
-                                    else handleNodeClick(node.id);
-                                }
-                            }}
-                            style={{ left: node.x, top: node.y }}
-                            className={`absolute w-[180px] z-10 bg-white rounded-lg shadow-sm border-2 transition-shadow group
-                                ${getStatusColor(node.category)}
-                                ${drawingStartNodeId === node.id ? 'ring-2 ring-indigo-500 ring-offset-2' : ''}
-                                ${isDrawingMode ? 'cursor-crosshair hover:border-indigo-400' : 'cursor-move hover:shadow-md'}
-                            `}
-                        >
-                            <div className="p-3">
-                                <div className="flex justify-between items-start mb-2">
-                                    <div className="flex items-center gap-2">
-                                        <GripVertical size={14} className="text-gray-300" />
-                                        <span className="font-bold text-sm truncate w-[100px]">{node.statusName}</span>
+                    {nodes.map((node, nodeIndex) => {
+                        // Determine node colors based on SLA BEHAVIOR (not category)
+                        // 🟢 Green = SLA RUN, 🟡 Yellow = SLA PAUSE, 🔴 Red = SLA STOP
+                        let nodeColors = '';
+                        let slaBadgeText = '';
+
+                        if (node.slaBehavior === 'run') {
+                            nodeColors = 'bg-green-50 border-green-300';
+                            slaBadgeText = 'Running';
+                        } else if (node.slaBehavior === 'pause') {
+                            nodeColors = 'bg-yellow-50 border-yellow-300';
+                            slaBadgeText = 'Paused';
+                        } else {
+                            nodeColors = 'bg-red-50 border-red-300';
+                            slaBadgeText = 'Stopped';
+                        }
+
+                        // Check if this is the first/start node (first in list or "New" status)
+                        const isStartNode = nodeIndex === 0 || node.statusCode?.toLowerCase() === 'new';
+
+                        return (
+                            <div
+                                key={node.id}
+                                onMouseDown={(e) => { e.stopPropagation(); setDraggedNodeId(node.id); }}
+                                onClick={() => {
+                                    if (isDrawingMode) {
+                                        if (!drawingStartNodeId) setDrawingStartNodeId(node.id);
+                                        else handleNodeClick(node.id);
+                                    }
+                                }}
+                                style={{ left: node.x, top: node.y }}
+                                className={`absolute w-[180px] z-10 rounded-xl shadow-sm border-2 transition-all group
+                                    ${nodeColors}
+                                    ${drawingStartNodeId === node.id ? 'ring-2 ring-indigo-500 ring-offset-2' : ''}
+                                    ${isDrawingMode ? 'cursor-crosshair' : 'cursor-move hover:shadow-md'}
+                                `}
+                            >
+                                {/* Start Badge */}
+                                {isStartNode && (
+                                    <div className="absolute -top-3 left-3 px-2 py-0.5 bg-green-600 text-white text-[10px] font-bold rounded">
+                                        Start
                                     </div>
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); handleRemoveNode(node.id); }}
-                                        className="text-gray-300 hover:text-red-500"
-                                    >
-                                        <X size={14} />
-                                    </button>
-                                </div>
-                                <div className="flex justify-between items-center mt-2">
-                                    <span className="text-[10px] uppercase font-bold opacity-60">{node.category}</span>
-                                    {isDrawingMode && drawingStartNodeId === node.id && (
-                                        <span className="text-[10px] text-indigo-600 font-bold animate-pulse">Source</span>
-                                    )}
+                                )}
+
+                                {/* Final Badge */}
+                                {node.isFinal && (
+                                    <div className="absolute -top-3 right-3 px-2 py-0.5 bg-red-600 text-white text-[10px] font-bold rounded">
+                                        Final
+                                    </div>
+                                )}
+
+                                <div className="p-3 pt-4">
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex items-center gap-2">
+                                            <GripVertical size={12} className="text-gray-300 opacity-50" />
+                                            <span className="font-bold text-sm text-gray-800">{node.statusName}</span>
+                                        </div>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleRemoveNode(node.id); }}
+                                            className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-2">
+                                        {/* Category Badge */}
+                                        <span className="text-[10px] capitalize font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+                                            {node.category}
+                                        </span>
+                                        {/* SLA Badge (optional, smaller) */}
+                                        {node.slaBehavior === 'pause' && (
+                                            <span className="text-[9px] uppercase font-bold text-yellow-600">
+                                                ⏸ Paused
+                                            </span>
+                                        )}
+                                        {isDrawingMode && drawingStartNodeId === node.id && (
+                                            <span className="text-[10px] text-indigo-600 font-bold animate-pulse">Source</span>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
-
-                            {/* Connectors (Visual Only) */}
-                            <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-300 rounded-full opacity-0 group-hover:opacity-100"></div>
-                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-300 rounded-full opacity-0 group-hover:opacity-100"></div>
-                        </div>
-                    ))}
+                        );
+                    })}
 
                     {nodes.length === 0 && (
                         <div className="absolute inset-0 flex items-center justify-center text-gray-400 pointer-events-none">
@@ -544,6 +737,15 @@ const WorkflowBuilder = ({
                             </div>
                         </div>
                     )}
+
+                    {/* Bottom Info Banner */}
+                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg px-4 py-2 shadow-sm flex items-center gap-2 text-gray-600 text-sm">
+                        <span className="text-yellow-500">💡</span>
+                        <span>
+                            <strong>Template Mode:</strong> Everything shown here is for reference only. Actual workflows will be configured when this template is applied in{' '}
+                            <span className="text-indigo-600 font-medium">Workflow Mapping</span>.
+                        </span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -642,64 +844,62 @@ const WorkflowTemplate = () => {
     const handleSaveBuilder = async (nodes: WorkflowNode[], transitions: WorkflowTransition[]) => {
         if (!selectedTemplate) return;
         try {
-            // 1. Clear old data (Full Replace Strategy)
-            await supabase.from('workflow_transitions').delete().eq('workflow_id', selectedTemplate.id);
-            await supabase.from('workflow_statuses').delete().eq('workflow_template_id', selectedTemplate.id);
+            // 1. Clear old template statuses and transitions
+            await supabase.from('workflow_template_transitions').delete().eq('workflow_template_id', selectedTemplate.id);
+            await supabase.from('workflow_template_statuses').delete().eq('workflow_template_id', selectedTemplate.id);
 
-            // 2. Insert Statuses
+            // 2. Insert Template Statuses to NEW TABLE (with position)
             const statusInserts = nodes.map((n, idx) => ({
                 workflow_template_id: selectedTemplate.id,
                 status_id: n.statusId,
-                sort_order: idx + 1 // Or map x/y if we had columns
+                sort_order: idx + 1,
+                position_x: Math.round(n.x),
+                position_y: Math.round(n.y)
             }));
 
             const { data: insertedStatuses, error: statusError } = await supabase
-                .from('workflow_statuses')
+                .from('workflow_template_statuses')
                 .insert(statusInserts)
                 .select();
 
-            console.log('Insert status response:', insertedStatuses, statusError);
+            console.log('Insert template statuses response:', insertedStatuses, statusError);
 
             if (statusError) throw statusError;
 
-            // 3. Map Node IDs (temp) to Real IDs
-            const statusMap = new Map<string, string>(); // statusId (ticket_status) -> workflow_statuses.workflow_status_id
-            // Problem: If multiple nodes have SAME status_id (not allowed in my logic), this map works.
-            insertedStatuses?.forEach((s: any) => {
-                statusMap.set(s.status_id, s.workflow_status_id); // Use correct column name
-            });
+            // 3. Insert Template Transitions to NEW TABLE
+            if (transitions.length > 0) {
+                // Build mapping from node ID to status_id
+                const nodeIdToStatusId = new Map<string, string>();
+                nodes.forEach(n => nodeIdToStatusId.set(n.id, n.statusId));
 
-            console.log('Status map:', Object.fromEntries(statusMap));
+                const transitionInserts = transitions.map(t => {
+                    const fromStatusId = nodeIdToStatusId.get(t.fromNodeId);
+                    const toStatusId = nodeIdToStatusId.get(t.toNodeId);
 
-            // 4. Insert Transitions
-            const transInserts = transitions.map(t => {
-                // Find start/end status_ids from nodes
-                const fromNode = nodes.find(n => n.id === t.fromNodeId);
-                const toNode = nodes.find(n => n.id === t.toNodeId);
+                    if (!fromStatusId || !toStatusId) return null;
 
-                if (!fromNode || !toNode) return null;
+                    return {
+                        workflow_template_id: selectedTemplate.id,
+                        from_status_id: fromStatusId,  // References ticket_statuses.status_id
+                        to_status_id: toStatusId,      // References ticket_statuses.status_id
+                        allowed_roles: 'agent',        // varchar, not array
+                        is_automatic: false,
+                        condition: {}
+                    };
+                }).filter(Boolean);
 
-                const realFromId = statusMap.get(fromNode.statusId);
-                const realToId = statusMap.get(toNode.statusId);
+                if (transitionInserts.length > 0) {
+                    const { error: transError } = await supabase
+                        .from('workflow_template_transitions')
+                        .insert(transitionInserts);
 
-                if (!realFromId || !realToId) return null;
+                    if (transError) throw transError;
+                }
 
-                return {
-                    workflow_id: selectedTemplate.id,
-                    from_status_id: realFromId,
-                    to_status_id: realToId,
-                    allowed_roles: ['agent'], // Default value - required column
-                    is_automatic: false,       // Default value
-                    condition: {}              // Default empty object
-                };
-            }).filter(Boolean);
-
-            if (transInserts.length > 0) {
-                const { error: transError } = await supabase.from('workflow_transitions').insert(transInserts);
-                if (transError) throw transError;
+                console.log('Template transitions saved:', transitionInserts.length);
             }
 
-            showToast('success', 'Workflow saved successfully!');
+            showToast('success', `Template saved with ${nodes.length} statuses and ${transitions.length} transitions!`);
             setView('list');
 
         } catch (error: any) {
@@ -888,6 +1088,7 @@ const WorkflowTemplate = () => {
                 <WorkflowBuilder
                     templateId={selectedTemplate.id}
                     templateName={selectedTemplate.name}
+                    templateVersion={selectedTemplate.version}
                     onBack={() => setView('list')}
                     onSave={handleSaveBuilder}
                 />
