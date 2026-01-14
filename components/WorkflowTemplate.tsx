@@ -111,11 +111,9 @@ const TemplateList = ({
                         onChange={(e) => setCategoryFilter(e.target.value)}
                         className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-sm"
                     >
-                        <option value="all">All Categories</option>
-                        <option value="IT">IT</option>
-                        <option value="HR">HR</option>
-                        <option value="Finance">Finance</option>
+                        <option value="all">All Scopes</option>
                         <option value="General">General</option>
+                        <option value="Custom">Custom</option>
                     </select>
                 </div>
             </div>
@@ -138,10 +136,9 @@ const TemplateList = ({
                     ).map(template => (
                         <div key={template.id} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all group relative cursor-pointer" onClick={() => onEdit(template)}>
                             <div className="flex justify-between items-start mb-4">
-                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${template.category === 'IT' ? 'bg-blue-50 text-blue-600' :
-                                    template.category === 'HR' ? 'bg-pink-50 text-pink-600' :
-                                        template.category === 'Finance' ? 'bg-green-50 text-green-600' :
-                                            'bg-gray-100 text-gray-600'
+                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${template.category === 'General' ? 'bg-indigo-50 text-indigo-600' :
+                                    template.category === 'Custom' ? 'bg-amber-50 text-amber-600' :
+                                        'bg-gray-100 text-gray-600'
                                     }`}>
                                     {template.category}
                                 </span>
@@ -483,268 +480,278 @@ const WorkflowBuilder = ({
                     </div>
                 </div>
 
-                {/* Main Canvas */}
-                <div
-                    ref={canvasRef}
-                    className="flex-1 bg-[#f8fafc] relative bg-grid-pattern overflow-hidden cursor-default select-none"
-                    onMouseMove={handleCanvasMouseMove}
-                    onMouseUp={() => setDraggedNodeId(null)}
-                    style={{
-                        backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)',
-                        backgroundSize: '20px 20px'
-                    }}
-                >
-                    {/* Render Transitions (Curved Lines) */}
-                    <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
-                        <defs>
-                            {/* Define arrow markers for each color */}
-                            {['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#94a3b8'].map((color, i) => (
-                                <marker
-                                    key={`arrow-${i}`}
-                                    id={`arrowhead-${i}`}
-                                    markerWidth="10"
-                                    markerHeight="7"
-                                    refX="9"
-                                    refY="3.5"
-                                    orient="auto"
-                                >
-                                    <polygon points="0 0, 10 3.5, 0 7" fill={color} />
-                                </marker>
-                            ))}
-                        </defs>
-                        {transitions.map((t, index) => {
-                            const from = nodes.find(n => n.id === t.fromNodeId);
-                            const to = nodes.find(n => n.id === t.toNodeId);
-                            if (!from || !to) return null;
+                {/* Main Canvas - Scrollable */}
+                <div className="flex-1 overflow-auto bg-[#f8fafc] relative">
+                    <div
+                        ref={canvasRef}
+                        className="relative bg-grid-pattern cursor-default select-none"
+                        onMouseMove={handleCanvasMouseMove}
+                        onMouseUp={() => setDraggedNodeId(null)}
+                        style={{
+                            backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)',
+                            backgroundSize: '20px 20px',
+                            // Dynamic height based on node positions, minimum 600px
+                            minHeight: Math.max(600, nodes.length > 0
+                                ? Math.max(...nodes.map(n => n.y)) + 200
+                                : 600),
+                            minWidth: Math.max(800, nodes.length > 0
+                                ? Math.max(...nodes.map(n => n.x)) + 250
+                                : 800),
+                            paddingBottom: '100px' // Extra padding at bottom
+                        }}
+                    >
+                        {/* Render Transitions (Curved Lines) */}
+                        <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
+                            <defs>
+                                {/* Define arrow markers for each color */}
+                                {['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#94a3b8'].map((color, i) => (
+                                    <marker
+                                        key={`arrow-${i}`}
+                                        id={`arrowhead-${i}`}
+                                        markerWidth="10"
+                                        markerHeight="7"
+                                        refX="9"
+                                        refY="3.5"
+                                        orient="auto"
+                                    >
+                                        <polygon points="0 0, 10 3.5, 0 7" fill={color} />
+                                    </marker>
+                                ))}
+                            </defs>
+                            {transitions.map((t, index) => {
+                                const from = nodes.find(n => n.id === t.fromNodeId);
+                                const to = nodes.find(n => n.id === t.toNodeId);
+                                if (!from || !to) return null;
 
-                            // Color palette for transitions
-                            const colors = ['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899'];
-                            const color = colors[index % colors.length];
-                            const arrowId = `arrowhead-${index % 5}`;
+                                // Color palette for transitions
+                                const colors = ['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899'];
+                                const color = colors[index % colors.length];
+                                const arrowId = `arrowhead-${index % 5}`;
 
-                            // Calculate edge points (not center)
-                            const NODE_WIDTH = 180;
-                            const NODE_HEIGHT = 60;
+                                // Calculate edge points (not center)
+                                const NODE_WIDTH = 180;
+                                const NODE_HEIGHT = 60;
 
-                            // Determine direction and connection points
-                            let startX, startY, endX, endY;
-                            const dx = to.x - from.x;
-                            const dy = to.y - from.y;
+                                // Determine direction and connection points
+                                let startX, startY, endX, endY;
+                                const dx = to.x - from.x;
+                                const dy = to.y - from.y;
 
-                            // Connect from right edge to left edge if going right
-                            if (Math.abs(dx) > Math.abs(dy)) {
-                                if (dx > 0) {
-                                    // Going right
-                                    startX = from.x + NODE_WIDTH;
-                                    startY = from.y + NODE_HEIGHT / 2;
-                                    endX = to.x;
-                                    endY = to.y + NODE_HEIGHT / 2;
+                                // Connect from right edge to left edge if going right
+                                if (Math.abs(dx) > Math.abs(dy)) {
+                                    if (dx > 0) {
+                                        // Going right
+                                        startX = from.x + NODE_WIDTH;
+                                        startY = from.y + NODE_HEIGHT / 2;
+                                        endX = to.x;
+                                        endY = to.y + NODE_HEIGHT / 2;
+                                    } else {
+                                        // Going left
+                                        startX = from.x;
+                                        startY = from.y + NODE_HEIGHT / 2;
+                                        endX = to.x + NODE_WIDTH;
+                                        endY = to.y + NODE_HEIGHT / 2;
+                                    }
                                 } else {
-                                    // Going left
-                                    startX = from.x;
-                                    startY = from.y + NODE_HEIGHT / 2;
-                                    endX = to.x + NODE_WIDTH;
-                                    endY = to.y + NODE_HEIGHT / 2;
+                                    if (dy > 0) {
+                                        // Going down
+                                        startX = from.x + NODE_WIDTH / 2;
+                                        startY = from.y + NODE_HEIGHT;
+                                        endX = to.x + NODE_WIDTH / 2;
+                                        endY = to.y;
+                                    } else {
+                                        // Going up
+                                        startX = from.x + NODE_WIDTH / 2;
+                                        startY = from.y;
+                                        endX = to.x + NODE_WIDTH / 2;
+                                        endY = to.y + NODE_HEIGHT;
+                                    }
                                 }
+
+                                // Calculate bezier control points for curved line
+                                const midX = (startX + endX) / 2;
+                                const midY = (startY + endY) / 2;
+
+                                // Add curve based on direction
+                                let ctrl1X, ctrl1Y, ctrl2X, ctrl2Y;
+                                if (Math.abs(dx) > Math.abs(dy)) {
+                                    // Horizontal dominant - curve vertically
+                                    ctrl1X = startX + (endX - startX) * 0.4;
+                                    ctrl1Y = startY;
+                                    ctrl2X = startX + (endX - startX) * 0.6;
+                                    ctrl2Y = endY;
+                                } else {
+                                    // Vertical dominant - curve horizontally
+                                    ctrl1X = startX;
+                                    ctrl1Y = startY + (endY - startY) * 0.4;
+                                    ctrl2X = endX;
+                                    ctrl2Y = startY + (endY - startY) * 0.6;
+                                }
+
+                                const pathD = `M ${startX} ${startY} C ${ctrl1X} ${ctrl1Y}, ${ctrl2X} ${ctrl2Y}, ${endX} ${endY}`;
+
+                                return (
+                                    <g key={t.id} className="transition-group">
+                                        {/* Main curved path */}
+                                        <path
+                                            d={pathD}
+                                            fill="none"
+                                            stroke={color}
+                                            strokeWidth="2.5"
+                                            markerEnd={`url(#${arrowId})`}
+                                            className="transition-all"
+                                        />
+                                        {/* Invisible wider path for easier hover detection */}
+                                        <path
+                                            d={pathD}
+                                            fill="none"
+                                            stroke="transparent"
+                                            strokeWidth="20"
+                                            className="pointer-events-auto cursor-pointer"
+                                        />
+                                        {/* Delete button at midpoint */}
+                                        <g
+                                            className="pointer-events-auto cursor-pointer opacity-0 hover:opacity-100 transition-opacity"
+                                            onClick={() => removeTransition(t.id)}
+                                        >
+                                            <circle
+                                                cx={midX}
+                                                cy={midY}
+                                                r="10"
+                                                fill="#ef4444"
+                                                className="drop-shadow-sm"
+                                            />
+                                            <text
+                                                x={midX}
+                                                y={midY + 4}
+                                                textAnchor="middle"
+                                                fill="white"
+                                                fontSize="12"
+                                                fontWeight="bold"
+                                            >
+                                                ×
+                                            </text>
+                                        </g>
+                                    </g>
+                                );
+                            })}
+                            {/* Drawing Line */}
+                            {isDrawingMode && drawingStartNodeId && (
+                                <line
+                                    x1={nodes.find(n => n.id === drawingStartNodeId)?.x! + 90}
+                                    y1={nodes.find(n => n.id === drawingStartNodeId)?.y! + 30}
+                                    x2={mousePos.x}
+                                    y2={mousePos.y}
+                                    stroke="#6366f1"
+                                    strokeWidth="2"
+                                    strokeDasharray="5,5"
+                                />
+                            )}
+                        </svg>
+
+                        {/* Render Nodes */}
+                        {nodes.map((node, nodeIndex) => {
+                            // Determine node colors based on SLA BEHAVIOR (not category)
+                            // 🟢 Green = SLA RUN, 🟡 Yellow = SLA PAUSE, 🔴 Red = SLA STOP
+                            let nodeColors = '';
+                            let slaBadgeText = '';
+
+                            if (node.slaBehavior === 'run') {
+                                nodeColors = 'bg-green-50 border-green-300';
+                                slaBadgeText = 'Running';
+                            } else if (node.slaBehavior === 'pause') {
+                                nodeColors = 'bg-yellow-50 border-yellow-300';
+                                slaBadgeText = 'Paused';
                             } else {
-                                if (dy > 0) {
-                                    // Going down
-                                    startX = from.x + NODE_WIDTH / 2;
-                                    startY = from.y + NODE_HEIGHT;
-                                    endX = to.x + NODE_WIDTH / 2;
-                                    endY = to.y;
-                                } else {
-                                    // Going up
-                                    startX = from.x + NODE_WIDTH / 2;
-                                    startY = from.y;
-                                    endX = to.x + NODE_WIDTH / 2;
-                                    endY = to.y + NODE_HEIGHT;
-                                }
+                                nodeColors = 'bg-red-50 border-red-300';
+                                slaBadgeText = 'Stopped';
                             }
 
-                            // Calculate bezier control points for curved line
-                            const midX = (startX + endX) / 2;
-                            const midY = (startY + endY) / 2;
-
-                            // Add curve based on direction
-                            let ctrl1X, ctrl1Y, ctrl2X, ctrl2Y;
-                            if (Math.abs(dx) > Math.abs(dy)) {
-                                // Horizontal dominant - curve vertically
-                                ctrl1X = startX + (endX - startX) * 0.4;
-                                ctrl1Y = startY;
-                                ctrl2X = startX + (endX - startX) * 0.6;
-                                ctrl2Y = endY;
-                            } else {
-                                // Vertical dominant - curve horizontally
-                                ctrl1X = startX;
-                                ctrl1Y = startY + (endY - startY) * 0.4;
-                                ctrl2X = endX;
-                                ctrl2Y = startY + (endY - startY) * 0.6;
-                            }
-
-                            const pathD = `M ${startX} ${startY} C ${ctrl1X} ${ctrl1Y}, ${ctrl2X} ${ctrl2Y}, ${endX} ${endY}`;
+                            // Check if this is the first/start node (first in list or "New" status)
+                            const isStartNode = nodeIndex === 0 || node.statusCode?.toLowerCase() === 'new';
 
                             return (
-                                <g key={t.id} className="transition-group">
-                                    {/* Main curved path */}
-                                    <path
-                                        d={pathD}
-                                        fill="none"
-                                        stroke={color}
-                                        strokeWidth="2.5"
-                                        markerEnd={`url(#${arrowId})`}
-                                        className="transition-all"
-                                    />
-                                    {/* Invisible wider path for easier hover detection */}
-                                    <path
-                                        d={pathD}
-                                        fill="none"
-                                        stroke="transparent"
-                                        strokeWidth="20"
-                                        className="pointer-events-auto cursor-pointer"
-                                    />
-                                    {/* Delete button at midpoint */}
-                                    <g
-                                        className="pointer-events-auto cursor-pointer opacity-0 hover:opacity-100 transition-opacity"
-                                        onClick={() => removeTransition(t.id)}
-                                    >
-                                        <circle
-                                            cx={midX}
-                                            cy={midY}
-                                            r="10"
-                                            fill="#ef4444"
-                                            className="drop-shadow-sm"
-                                        />
-                                        <text
-                                            x={midX}
-                                            y={midY + 4}
-                                            textAnchor="middle"
-                                            fill="white"
-                                            fontSize="12"
-                                            fontWeight="bold"
-                                        >
-                                            ×
-                                        </text>
-                                    </g>
-                                </g>
-                            );
-                        })}
-                        {/* Drawing Line */}
-                        {isDrawingMode && drawingStartNodeId && (
-                            <line
-                                x1={nodes.find(n => n.id === drawingStartNodeId)?.x! + 90}
-                                y1={nodes.find(n => n.id === drawingStartNodeId)?.y! + 30}
-                                x2={mousePos.x}
-                                y2={mousePos.y}
-                                stroke="#6366f1"
-                                strokeWidth="2"
-                                strokeDasharray="5,5"
-                            />
-                        )}
-                    </svg>
-
-                    {/* Render Nodes */}
-                    {nodes.map((node, nodeIndex) => {
-                        // Determine node colors based on SLA BEHAVIOR (not category)
-                        // 🟢 Green = SLA RUN, 🟡 Yellow = SLA PAUSE, 🔴 Red = SLA STOP
-                        let nodeColors = '';
-                        let slaBadgeText = '';
-
-                        if (node.slaBehavior === 'run') {
-                            nodeColors = 'bg-green-50 border-green-300';
-                            slaBadgeText = 'Running';
-                        } else if (node.slaBehavior === 'pause') {
-                            nodeColors = 'bg-yellow-50 border-yellow-300';
-                            slaBadgeText = 'Paused';
-                        } else {
-                            nodeColors = 'bg-red-50 border-red-300';
-                            slaBadgeText = 'Stopped';
-                        }
-
-                        // Check if this is the first/start node (first in list or "New" status)
-                        const isStartNode = nodeIndex === 0 || node.statusCode?.toLowerCase() === 'new';
-
-                        return (
-                            <div
-                                key={node.id}
-                                onMouseDown={(e) => { e.stopPropagation(); setDraggedNodeId(node.id); }}
-                                onClick={() => {
-                                    if (isDrawingMode) {
-                                        if (!drawingStartNodeId) setDrawingStartNodeId(node.id);
-                                        else handleNodeClick(node.id);
-                                    }
-                                }}
-                                style={{ left: node.x, top: node.y }}
-                                className={`absolute w-[180px] z-10 rounded-xl shadow-sm border-2 transition-all group
+                                <div
+                                    key={node.id}
+                                    onMouseDown={(e) => { e.stopPropagation(); setDraggedNodeId(node.id); }}
+                                    onClick={() => {
+                                        if (isDrawingMode) {
+                                            if (!drawingStartNodeId) setDrawingStartNodeId(node.id);
+                                            else handleNodeClick(node.id);
+                                        }
+                                    }}
+                                    style={{ left: node.x, top: node.y }}
+                                    className={`absolute w-[180px] z-10 rounded-xl shadow-sm border-2 transition-all group
                                     ${nodeColors}
                                     ${drawingStartNodeId === node.id ? 'ring-2 ring-indigo-500 ring-offset-2' : ''}
                                     ${isDrawingMode ? 'cursor-crosshair' : 'cursor-move hover:shadow-md'}
                                 `}
-                            >
-                                {/* Start Badge */}
-                                {isStartNode && (
-                                    <div className="absolute -top-3 left-3 px-2 py-0.5 bg-green-600 text-white text-[10px] font-bold rounded">
-                                        Start
-                                    </div>
-                                )}
-
-                                {/* Final Badge */}
-                                {node.isFinal && (
-                                    <div className="absolute -top-3 right-3 px-2 py-0.5 bg-red-600 text-white text-[10px] font-bold rounded">
-                                        Final
-                                    </div>
-                                )}
-
-                                <div className="p-3 pt-4">
-                                    <div className="flex justify-between items-start">
-                                        <div className="flex items-center gap-2">
-                                            <GripVertical size={12} className="text-gray-300 opacity-50" />
-                                            <span className="font-bold text-sm text-gray-800">{node.statusName}</span>
+                                >
+                                    {/* Start Badge */}
+                                    {isStartNode && (
+                                        <div className="absolute -top-3 left-3 px-2 py-0.5 bg-green-600 text-white text-[10px] font-bold rounded">
+                                            Start
                                         </div>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); handleRemoveNode(node.id); }}
-                                            className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                                        >
-                                            <X size={14} />
-                                        </button>
-                                    </div>
-                                    <div className="flex items-center gap-2 mt-2">
-                                        {/* Category Badge */}
-                                        <span className="text-[10px] capitalize font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-600">
-                                            {node.category}
-                                        </span>
-                                        {/* SLA Badge (optional, smaller) */}
-                                        {node.slaBehavior === 'pause' && (
-                                            <span className="text-[9px] uppercase font-bold text-yellow-600">
-                                                ⏸ Paused
+                                    )}
+
+                                    {/* Final Badge */}
+                                    {node.isFinal && (
+                                        <div className="absolute -top-3 right-3 px-2 py-0.5 bg-red-600 text-white text-[10px] font-bold rounded">
+                                            Final
+                                        </div>
+                                    )}
+
+                                    <div className="p-3 pt-4">
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex items-center gap-2">
+                                                <GripVertical size={12} className="text-gray-300 opacity-50" />
+                                                <span className="font-bold text-sm text-gray-800">{node.statusName}</span>
+                                            </div>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleRemoveNode(node.id); }}
+                                                className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-2">
+                                            {/* Category Badge */}
+                                            <span className="text-[10px] capitalize font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+                                                {node.category}
                                             </span>
-                                        )}
-                                        {isDrawingMode && drawingStartNodeId === node.id && (
-                                            <span className="text-[10px] text-indigo-600 font-bold animate-pulse">Source</span>
-                                        )}
+                                            {/* SLA Badge (optional, smaller) */}
+                                            {node.slaBehavior === 'pause' && (
+                                                <span className="text-[9px] uppercase font-bold text-yellow-600">
+                                                    ⏸ Paused
+                                                </span>
+                                            )}
+                                            {isDrawingMode && drawingStartNodeId === node.id && (
+                                                <span className="text-[10px] text-indigo-600 font-bold animate-pulse">Source</span>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        );
-                    })}
+                            );
+                        })}
 
-                    {nodes.length === 0 && (
-                        <div className="absolute inset-0 flex items-center justify-center text-gray-400 pointer-events-none">
-                            <div className="text-center">
-                                <Layout size={48} className="mx-auto mb-2 opacity-20" />
-                                <p>Canvas is empty.</p>
-                                <p className="text-sm">Select statuses from the left sidebar to start.</p>
+                        {nodes.length === 0 && (
+                            <div className="absolute inset-0 flex items-center justify-center text-gray-400 pointer-events-none">
+                                <div className="text-center">
+                                    <Layout size={48} className="mx-auto mb-2 opacity-20" />
+                                    <p>Canvas is empty.</p>
+                                    <p className="text-sm">Select statuses from the left sidebar to start.</p>
+                                </div>
                             </div>
+                        )}
+
+                        {/* Bottom Info Banner */}
+                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg px-4 py-2 shadow-sm flex items-center gap-2 text-gray-600 text-sm">
+                            <span className="text-yellow-500">💡</span>
+                            <span>
+                                <strong>Template Mode:</strong> Everything shown here is for reference only. Actual workflows will be configured when this template is applied in{' '}
+                                <span className="text-indigo-600 font-medium">Workflow Mapping</span>.
+                            </span>
                         </div>
-                    )}
-
-                    {/* Bottom Info Banner */}
-                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg px-4 py-2 shadow-sm flex items-center gap-2 text-gray-600 text-sm">
-                        <span className="text-yellow-500">💡</span>
-                        <span>
-                            <strong>Template Mode:</strong> Everything shown here is for reference only. Actual workflows will be configured when this template is applied in{' '}
-                            <span className="text-indigo-600 font-medium">Workflow Mapping</span>.
-                        </span>
                     </div>
                 </div>
             </div>
@@ -779,7 +786,7 @@ const WorkflowTemplate = () => {
     // Form Data
     const [formData, setFormData] = useState({
         name: '',
-        category: 'IT',
+        category: 'General',
         description: '',
         version: 1,
         is_active: false
@@ -1023,7 +1030,7 @@ const WorkflowTemplate = () => {
                     templates={templates}
                     loading={loading}
                     onCreate={() => {
-                        setFormData({ name: '', category: 'IT', description: '', version: 1, is_active: false });
+                        setFormData({ name: '', category: 'General', description: '', version: 1, is_active: false });
                         setView('create');
                     }}
                     onEdit={handleEditClick}
@@ -1045,9 +1052,10 @@ const WorkflowTemplate = () => {
                         </div>
                         <div className="flex gap-4">
                             <div className="flex-1">
-                                <label className="block text-sm font-medium mb-1">Category</label>
+                                <label className="block text-sm font-medium mb-1">Template Scope</label>
                                 <select className="w-full p-2 border rounded" value={formData.category} onChange={e => setFormData({ ...formData, category: e.target.value })}>
-                                    <option>IT</option><option>HR</option><option>Finance</option><option>General</option>
+                                    <option value="General">General</option>
+                                    <option value="Custom">Custom</option>
                                 </select>
                             </div>
                             <div className="flex-1">
@@ -1066,8 +1074,24 @@ const WorkflowTemplate = () => {
                             <textarea className="w-full p-2 border rounded" rows={3} value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} />
                         </div>
                         <div className="flex items-center gap-2">
-                            <input type="checkbox" checked={formData.is_active} onChange={e => setFormData({ ...formData, is_active: e.target.checked })} />
-                            <label>Active</label>
+                            <input type="checkbox" id="is_active" checked={formData.is_active} onChange={e => setFormData({ ...formData, is_active: e.target.checked })} />
+                            <label htmlFor="is_active">Active</label>
+                        </div>
+
+                        {/* Scope Description */}
+                        <div className="mt-4 text-sm text-gray-600">
+                            <div className="flex items-start gap-2">
+                                <span className="mt-0.5 text-gray-400">ⓘ</span>
+                                <div>
+                                    <p className="mb-1">Define the scope for this workflow template.</p>
+                                    {formData.category === 'General' && (
+                                        <p><span className="font-semibold text-gray-800">General:</span> This template is reusable and suitable for any department or scenario.</p>
+                                    )}
+                                    {formData.category === 'Custom' && (
+                                        <p><span className="font-semibold text-gray-800">Custom:</span> This template is tailored for specific department or use case.</p>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div className="flex justify-end gap-2 mt-6">

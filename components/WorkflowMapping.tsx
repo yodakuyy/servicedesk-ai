@@ -264,7 +264,9 @@ const WorkflowMapping: React.FC = () => {
                 .insert({
                     company_id: 1, // Default company, adjust if needed
                     department_id: dept.id,
-                    workflow_name: `${dept.name} Workflow`,
+                    workflow_name: selectedTemplateId
+                        ? dept.name + ' Workflow|template:' + selectedTemplateId
+                        : dept.name + ' Workflow',
                     is_active: true
                 })
                 .select()
@@ -290,16 +292,18 @@ const WorkflowMapping: React.FC = () => {
                 if (statusErr) throw statusErr;
 
                 // 2b. Insert statuses into department workflow (workflow_statuses table)
+                // Note: workflow_statuses.workflow_template_id references workflow_templates, not department_workflows
+                // So we use selectedTemplateId (the actual template ID)
                 if (templateStatuses && templateStatuses.length > 0) {
                     const statusInserts = templateStatuses.map(s => ({
-                        workflow_template_id: newWorkflow.workflow_id, // This goes to workflow_statuses for dept
+                        workflow_template_id: selectedTemplateId, // FK to workflow_templates
                         status_id: s.status_id,
                         sort_order: s.sort_order
                     }));
 
                     const { data: insertedStatuses, error: insertErr } = await supabase
                         .from('workflow_statuses')
-                        .insert(statusInserts)
+                        .upsert(statusInserts, { onConflict: 'workflow_template_id,status_id', ignoreDuplicates: true })
                         .select();
 
                     if (insertErr) throw insertErr;
@@ -338,7 +342,14 @@ const WorkflowMapping: React.FC = () => {
 
             setShowEnableModal(false);
             setSelectedTemplateId('');
-            fetchDepartments(); // Refresh dropdown
+
+            // Refresh departments list
+            await fetchDepartments();
+
+            // Auto-select the newly created workflow to show it on canvas immediately
+            if (newWorkflow) {
+                setSelectedDepartment(newWorkflow.workflow_id);
+            }
         } catch (error: any) {
             console.error('Error enabling workflow:', error);
             showToast('error', error.message || 'Failed to enable workflow');
@@ -432,26 +443,68 @@ const WorkflowMapping: React.FC = () => {
     const fetchWorkflowStatuses = async (workflowId: string) => {
         setLoadingWorkflowStatuses(true);
         try {
-            const { data, error } = await supabase
-                .from('workflow_statuses')
-                .select(`
-                    workflow_status_id,
-                    workflow_template_id,
-                    status_id,
-                    ticket_statuses (
-                        status_name,
-                        status_code,
-                        status_category,
-                        is_final,
-                        sla_behavior
-                    )
-                `)
-                .eq('workflow_template_id', workflowId);
+            // Get the selected department's workflow info
+            const selectedWorkflow = departments.find(d => d.workflow_id === workflowId);
 
-            if (error) throw error;
+            // Extract template ID from workflow_name if present (format: "Name|template:uuid")
+            let templateId: string | null = null;
+            if (selectedWorkflow?.workflow_name?.includes('|template:')) {
+                templateId = selectedWorkflow.workflow_name.split('|template:')[1];
+            }
+
+            let data: any[] = [];
+
+            // If workflow uses a template, load from workflow_template_statuses
+            if (templateId) {
+                const { data: templateData, error } = await supabase
+                    .from('workflow_template_statuses')
+                    .select(`
+                        workflow_template_status_id,
+                        workflow_template_id,
+                        status_id,
+                        ticket_statuses (
+                            status_name,
+                            status_code,
+                            status_category,
+                            is_final,
+                            sla_behavior
+                        )
+                    `)
+                    .eq('workflow_template_id', templateId);
+
+                if (error) throw error;
+
+                // Map to expected structure
+                data = (templateData || []).map((item: any) => ({
+                    workflow_status_id: item.workflow_template_status_id,
+                    workflow_template_id: item.workflow_template_id,
+                    status_id: item.status_id,
+                    ticket_statuses: item.ticket_statuses
+                }));
+            } else {
+                // Fallback: try loading from workflow_statuses (legacy)
+                const { data: legacyData, error } = await supabase
+                    .from('workflow_statuses')
+                    .select(`
+                        workflow_status_id,
+                        workflow_template_id,
+                        status_id,
+                        ticket_statuses (
+                            status_name,
+                            status_code,
+                            status_category,
+                            is_final,
+                            sla_behavior
+                        )
+                    `)
+                    .eq('workflow_template_id', workflowId);
+
+                if (error) throw error;
+                data = legacyData || [];
+            }
 
             // Transform the data to flatten the joined table
-            const transformedData: WorkflowStatus[] = (data || []).map((item: any) => ({
+            const transformedData: WorkflowStatus[] = data.map((item: any) => ({
                 workflow_status_id: item.workflow_status_id,
                 workflow_id: item.workflow_template_id,
                 status_id: item.status_id,
@@ -478,24 +531,73 @@ const WorkflowMapping: React.FC = () => {
         if (!selectedDepartment) return;
 
         try {
-            // 1. Fetch workflow_statuses dengan JOIN ke ticket_statuses
-            const { data: statusData, error: statusError } = await supabase
-                .from('workflow_statuses')
-                .select(`
-                    workflow_status_id,
-                    workflow_template_id,
-                    status_id,
-                    ticket_statuses (
-                        status_name,
-                        status_code,
-                        status_category,
-                        is_final,
-                        sla_behavior
-                    )
-                `)
-                .eq('workflow_template_id', selectedDepartment);
+            // Get the selected department's workflow info
+            const selectedWorkflow = departments.find(d => d.workflow_id === selectedDepartment);
 
-            if (statusError) throw statusError;
+            // Extract template ID from workflow_name if present (format: "Name|template:uuid")
+            let templateId: string | null = null;
+            if (selectedWorkflow?.workflow_name?.includes('|template:')) {
+                templateId = selectedWorkflow.workflow_name.split('|template:')[1];
+            }
+
+            let statusData: any[] = [];
+
+            // If workflow uses a template, load from workflow_template_statuses
+            if (templateId) {
+                const { data, error } = await supabase
+                    .from('workflow_template_statuses')
+                    .select(`
+                        workflow_template_status_id,
+                        workflow_template_id,
+                        status_id,
+                        sort_order,
+                        position_x,
+                        position_y,
+                        ticket_statuses (
+                            status_name,
+                            status_code,
+                            status_category,
+                            is_final,
+                            sla_behavior
+                        )
+                    `)
+                    .eq('workflow_template_id', templateId)
+                    .order('sort_order');
+
+                if (error) throw error;
+
+                // Map to same structure as workflow_statuses
+                statusData = (data || []).map((item: any) => ({
+                    workflow_status_id: item.workflow_template_status_id,
+                    workflow_template_id: item.workflow_template_id,
+                    status_id: item.status_id,
+                    position_x: item.position_x,
+                    position_y: item.position_y,
+                    ticket_statuses: item.ticket_statuses
+                }));
+
+                console.log('Loaded from template:', templateId, statusData.length, 'statuses');
+            } else {
+                // Fallback: try loading from workflow_statuses (legacy)
+                const { data, error } = await supabase
+                    .from('workflow_statuses')
+                    .select(`
+                        workflow_status_id,
+                        workflow_template_id,
+                        status_id,
+                        ticket_statuses (
+                            status_name,
+                            status_code,
+                            status_category,
+                            is_final,
+                            sla_behavior
+                        )
+                    `)
+                    .eq('workflow_template_id', selectedDepartment);
+
+                if (error) throw error;
+                statusData = data || [];
+            }
 
             // 2. Fetch workflow_transitions
             const { data: transData, error: transError } = await supabase
@@ -505,146 +607,119 @@ const WorkflowMapping: React.FC = () => {
 
             if (transError) throw transError;
 
-            // 3. Convert workflow_statuses to WorkflowNode[] with flow-based layout
+            // 3. Convert statusData to WorkflowNode[]
+            // Use saved positions from template if available, otherwise use vertical layout
             const NODE_WIDTH = 180;
-            const NODE_HEIGHT = 60;
-            const HORIZONTAL_GAP = 80;
+            const NODE_HEIGHT = 80;
             const VERTICAL_GAP = 100;
-            const START_X = 50;
-            const START_Y = 80;
+            const START_X = 80;
+            const START_Y = 50;
+            const FINAL_COLUMN_X = 400; // X position for final statuses (right side)
 
-            // Categorize statuses for flow layout
-            const statusList = (statusData || []).map((item: any) => ({
-                ...item,
-                statusName: item.ticket_statuses?.status_name || 'Unknown',
-                statusCode: item.ticket_statuses?.status_code || '',
-                isFinal: item.ticket_statuses?.is_final || false,
-                isSystem: item.ticket_statuses?.status_category === 'system',
-                slaBehavior: item.ticket_statuses?.sla_behavior || 'run'
-            }));
-
-            // Group by flow position
-            const startStatuses = statusList.filter((s: any) =>
-                s.statusCode.toLowerCase().includes('new')
+            // Check if positions are saved in template
+            const hasPositions = statusData.some((item: any) =>
+                item.position_x !== null && item.position_y !== null
             );
-            const workingStatuses = statusList.filter((s: any) => {
-                const code = s.statusCode.toLowerCase();
-                return (code.includes('open') || code.includes('assign') || code.includes('progress') || code.includes('work')) && !s.isFinal;
-            });
-            const pendingStatuses = statusList.filter((s: any) => {
-                const code = s.statusCode.toLowerCase();
-                return code.includes('pending') || code.includes('wait');
-            });
-            const resolvedStatuses = statusList.filter((s: any) => {
-                const code = s.statusCode.toLowerCase();
-                return code.includes('resolved') || code.includes('complete');
-            });
-            const finalStatuses = statusList.filter((s: any) => s.isFinal);
-
-            // Any remaining statuses
-            const allCategorized = [...startStatuses, ...workingStatuses, ...pendingStatuses, ...resolvedStatuses, ...finalStatuses];
-            const otherStatuses = statusList.filter((s: any) =>
-                !allCategorized.some((c: any) => c.workflow_status_id === s.workflow_status_id)
-            );
-
-            // Position nodes in flow layout
-            // Row 0: Start → Working → Resolved → Final (main flow)
-            // Row 1: Pending statuses (below working)
-            // Row 2: Other statuses
-
-            const createNodes = (items: any[], startX: number, startY: number, direction: 'horizontal' | 'vertical' = 'horizontal'): WorkflowNode[] => {
-                return items.map((item: any, index: number) => ({
-                    id: item.workflow_status_id,
-                    statusId: item.status_id,
-                    statusName: item.statusName,
-                    statusCode: item.statusCode,
-                    x: direction === 'horizontal' ? startX + index * (NODE_WIDTH + HORIZONTAL_GAP) : startX,
-                    y: direction === 'horizontal' ? startY : startY + index * (NODE_HEIGHT + 30),
-                    color: getStatusColorFromCode(item.statusCode),
-                    isFinal: item.isFinal,
-                    isSystem: item.isSystem
-                }));
-            };
-
-            let currentX = START_X;
-            const mainRowY = START_Y;
-            const pendingRowY = START_Y + NODE_HEIGHT + VERTICAL_GAP;
-            const otherRowY = pendingRowY + NODE_HEIGHT + VERTICAL_GAP;
 
             const allNodes: WorkflowNode[] = [];
 
-            // Main flow row: Start → Working → Resolved → Final
-            const mainFlowGroups = [
-                { items: startStatuses, label: 'start' },
-                { items: workingStatuses, label: 'working' },
-                { items: resolvedStatuses, label: 'resolved' },
-                { items: finalStatuses.filter((s: any) => !resolvedStatuses.some((r: any) => r.workflow_status_id === s.workflow_status_id)), label: 'final' }
-            ];
-
-            mainFlowGroups.forEach(group => {
-                group.items.forEach((item: any, index: number) => {
+            if (hasPositions) {
+                // Use saved positions from template
+                statusData.forEach((item: any) => {
                     allNodes.push({
                         id: item.workflow_status_id,
                         statusId: item.status_id,
-                        statusName: item.statusName,
-                        statusCode: item.statusCode,
-                        x: currentX,
-                        y: mainRowY,
-                        color: getStatusColorFromCode(item.statusCode),
-                        isFinal: item.isFinal,
-                        isSystem: item.isSystem
+                        statusName: item.ticket_statuses?.status_name || 'Unknown',
+                        statusCode: item.ticket_statuses?.status_code || '',
+                        x: item.position_x || START_X,
+                        y: item.position_y || START_Y,
+                        color: getStatusColorFromCode(item.ticket_statuses?.status_code || ''),
+                        isFinal: item.ticket_statuses?.is_final || false,
+                        isSystem: item.ticket_statuses?.status_category === 'system'
                     });
-                    currentX += NODE_WIDTH + HORIZONTAL_GAP;
                 });
-            });
+            } else {
+                // Generate vertical layout (like Workflow Template)
+                // Separate main flow and final statuses
+                const mainFlowStatuses = statusData.filter((item: any) =>
+                    !item.ticket_statuses?.is_final ||
+                    item.ticket_statuses?.status_code?.toLowerCase().includes('closed')
+                ).sort((a: any, b: any) => {
+                    // Sort by logical order: New -> Open -> Progress -> Resolved -> Closed
+                    const order = ['new', 'open', 'assign', 'progress', 'work', 'resolved', 'complete', 'closed'];
+                    const aCode = a.ticket_statuses?.status_code?.toLowerCase() || '';
+                    const bCode = b.ticket_statuses?.status_code?.toLowerCase() || '';
+                    const aIndex = order.findIndex(o => aCode.includes(o));
+                    const bIndex = order.findIndex(o => bCode.includes(o));
+                    return (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
+                });
 
-            // Pending row (below, centered under working)
-            const pendingStartX = START_X + (NODE_WIDTH + HORIZONTAL_GAP); // Start after "New"
-            pendingStatuses.forEach((item: any, index: number) => {
-                // Skip if already in main flow
-                if (allNodes.some(n => n.id === item.workflow_status_id)) return;
-                allNodes.push({
-                    id: item.workflow_status_id,
-                    statusId: item.status_id,
-                    statusName: item.statusName,
-                    statusCode: item.statusCode,
-                    x: pendingStartX + index * (NODE_WIDTH + HORIZONTAL_GAP),
-                    y: pendingRowY,
-                    color: getStatusColorFromCode(item.statusCode),
-                    isFinal: item.isFinal,
-                    isSystem: item.isSystem
-                });
-            });
+                const finalStatuses = statusData.filter((item: any) =>
+                    item.ticket_statuses?.is_final &&
+                    !item.ticket_statuses?.status_code?.toLowerCase().includes('closed')
+                );
 
-            // Other statuses (third row)
-            otherStatuses.forEach((item: any, index: number) => {
-                if (allNodes.some(n => n.id === item.workflow_status_id)) return;
-                allNodes.push({
-                    id: item.workflow_status_id,
-                    statusId: item.status_id,
-                    statusName: item.statusName,
-                    statusCode: item.statusCode,
-                    x: START_X + index * (NODE_WIDTH + HORIZONTAL_GAP),
-                    y: otherRowY,
-                    color: getStatusColorFromCode(item.statusCode),
-                    isFinal: item.isFinal,
-                    isSystem: item.isSystem
+                // Position main flow vertically on left side
+                mainFlowStatuses.forEach((item: any, index: number) => {
+                    allNodes.push({
+                        id: item.workflow_status_id,
+                        statusId: item.status_id,
+                        statusName: item.ticket_statuses?.status_name || 'Unknown',
+                        statusCode: item.ticket_statuses?.status_code || '',
+                        x: START_X,
+                        y: START_Y + index * (NODE_HEIGHT + VERTICAL_GAP),
+                        color: getStatusColorFromCode(item.ticket_statuses?.status_code || ''),
+                        isFinal: item.ticket_statuses?.is_final || false,
+                        isSystem: item.ticket_statuses?.status_category === 'system'
+                    });
                 });
-            });
+
+                // Position final statuses (like Canceled, Rejected) on right side
+                finalStatuses.forEach((item: any, index: number) => {
+                    allNodes.push({
+                        id: item.workflow_status_id,
+                        statusId: item.status_id,
+                        statusName: item.ticket_statuses?.status_name || 'Unknown',
+                        statusCode: item.ticket_statuses?.status_code || '',
+                        x: FINAL_COLUMN_X,
+                        y: START_Y + 150 + index * (NODE_HEIGHT + VERTICAL_GAP), // Start a bit lower on right
+                        color: getStatusColorFromCode(item.ticket_statuses?.status_code || ''),
+                        isFinal: item.ticket_statuses?.is_final || false,
+                        isSystem: item.ticket_statuses?.status_category === 'system'
+                    });
+                });
+            }
 
             // 4. Convert workflow_transitions to Transition[]
-            // Need to map from_status_id/to_status_id back to workflow_status_id (node id)
+            // Map from_status_id/to_status_id to workflow_status_id (node id)
             const statusIdToNodeId = new Map<string, string>();
-            (statusData || []).forEach((item: any) => {
+            statusData.forEach((item: any) => {
                 statusIdToNodeId.set(item.status_id, item.workflow_status_id);
             });
 
-            const workflowTransitions: Transition[] = (transData || []).map((item: any) => ({
-                id: item.transition_id,
+            // Also load transitions from template if using template
+            let transitionsToUse = transData || [];
+            if (templateId && (!transData || transData.length === 0)) {
+                // Load transitions from template
+                const { data: templateTransData } = await supabase
+                    .from('workflow_template_transitions')
+                    .select('*')
+                    .eq('workflow_template_id', templateId);
+
+                if (templateTransData && templateTransData.length > 0) {
+                    transitionsToUse = templateTransData.map((t: any) => ({
+                        ...t,
+                        transition_id: t.workflow_template_transition_id
+                    }));
+                }
+            }
+
+            const workflowTransitions: Transition[] = transitionsToUse.map((item: any) => ({
+                id: item.transition_id || item.workflow_template_transition_id,
                 fromNodeId: statusIdToNodeId.get(item.from_status_id) || '',
                 toNodeId: statusIdToNodeId.get(item.to_status_id) || '',
                 conditionLabel: item.condition?.label
-            })).filter(t => t.fromNodeId && t.toNodeId); // Filter out invalid transitions
+            })).filter((t: Transition) => t.fromNodeId && t.toNodeId);
 
             // 5. Update state
             setNodes(allNodes);
@@ -1035,7 +1110,7 @@ const WorkflowMapping: React.FC = () => {
                         >
                             {departments.map(dept => (
                                 <option key={dept.workflow_id} value={dept.workflow_id}>
-                                    {dept.workflow_name}
+                                    {dept.workflow_name.split('|template:')[0]}
                                 </option>
                             ))}
                         </select>
@@ -1064,18 +1139,19 @@ const WorkflowMapping: React.FC = () => {
                 </div>
             </div>
 
-            {/* Action Bar */}
-            <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3">
-                <button
-                    onClick={() => setShowTransitionModal(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
-                >
-                    <Plus size={16} />
-                    Add Transition
-                </button>
-                <div className="flex-1" />
-
-            </div>
+            {/* Action Bar - Only show when workflow has nodes */}
+            {selectedDepartment && nodes.length > 0 && (
+                <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3">
+                    <button
+                        onClick={() => setShowTransitionModal(true)}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
+                    >
+                        <Plus size={16} />
+                        Add Transition
+                    </button>
+                    <div className="flex-1" />
+                </div>
+            )}
 
             {/* Main Content */}
             <div className="flex-1 flex overflow-hidden">
@@ -1156,55 +1232,127 @@ const WorkflowMapping: React.FC = () => {
                             })}
                         </svg>
 
-                        {/* Nodes */}
-                        {nodes.map(node => (
-                            <div
-                                key={node.id}
-                                className={`absolute flex items-center gap-2 px-4 py-2 rounded-lg shadow-md cursor-move select-none ${node.color} text-white`}
-                                style={{
-                                    left: node.x,
-                                    top: node.y,
-                                    zIndex: draggingNode === node.id ? 10 : 2,
-                                    minWidth: '150px'
-                                }}
-                                onMouseDown={(e) => handleNodeDragStart(node.id, e)}
-                                onClick={() => connectingFrom && handleConnectEnd(node.id)}
-                            >
-                                <span className="font-medium text-sm truncate flex-1">{node.statusName}</span>
-                                <div className="flex items-center gap-1">
-                                    {node.isFinal && (
-                                        <Lock size={12} className="opacity-70" title="Final status" />
-                                    )}
-                                    {!node.isFinal && (
-                                        <button
-                                            onClick={(e) => handleConnectStart(node.id, e)}
-                                            className={`p-1 rounded hover:bg-white/20 transition-colors ${connectingFrom === node.id ? 'bg-white/30' : ''}`}
-                                            title="Connect to another status"
-                                        >
-                                            <ArrowRight size={14} />
-                                        </button>
-                                    )}
-                                    {!node.isSystem && (
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); removeNode(node.id); }}
-                                            className="p-1 rounded hover:bg-white/20 transition-colors"
-                                            title="Remove from workflow"
-                                        >
-                                            <X size={14} />
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
+                        {/* Nodes - Styled like Workflow Template */}
+                        {nodes.map((node, index) => {
+                            // Determine if this is Start (first non-final in main flow) or Final
+                            const isStart = index === 0 && !node.isFinal;
+                            const bgColorMap: Record<string, string> = {
+                                'bg-blue-500': 'bg-blue-50 border-blue-300',
+                                'bg-indigo-500': 'bg-indigo-50 border-indigo-300',
+                                'bg-green-500': 'bg-green-50 border-green-300',
+                                'bg-yellow-500': 'bg-yellow-50 border-yellow-300',
+                                'bg-emerald-400': 'bg-emerald-50 border-emerald-300',
+                                'bg-gray-600': 'bg-gray-100 border-gray-400',
+                                'bg-red-500': 'bg-red-50 border-red-300',
+                                'bg-purple-500': 'bg-purple-50 border-purple-300'
+                            };
+                            const textColorMap: Record<string, string> = {
+                                'bg-blue-500': 'text-blue-800',
+                                'bg-indigo-500': 'text-indigo-800',
+                                'bg-green-500': 'text-green-800',
+                                'bg-yellow-500': 'text-yellow-800',
+                                'bg-emerald-400': 'text-emerald-800',
+                                'bg-gray-600': 'text-gray-800',
+                                'bg-red-500': 'text-red-800',
+                                'bg-purple-500': 'text-purple-800'
+                            };
+                            const cardStyle = bgColorMap[node.color] || 'bg-gray-50 border-gray-300';
+                            const textStyle = textColorMap[node.color] || 'text-gray-800';
 
-                        {/* Empty State */}
+                            return (
+                                <div
+                                    key={node.id}
+                                    className={`absolute rounded-xl shadow-md cursor-move select-none border-2 ${cardStyle} transition-all hover:shadow-lg`}
+                                    style={{
+                                        left: node.x,
+                                        top: node.y,
+                                        zIndex: draggingNode === node.id ? 10 : 2,
+                                        minWidth: '160px',
+                                        padding: '12px 16px'
+                                    }}
+                                    onMouseDown={(e) => handleNodeDragStart(node.id, e)}
+                                    onClick={() => connectingFrom && handleConnectEnd(node.id)}
+                                >
+                                    {/* Start Badge */}
+                                    {isStart && (
+                                        <div className="absolute -top-3 left-3 px-2 py-0.5 bg-green-500 text-white text-xs font-bold rounded">
+                                            Start
+                                        </div>
+                                    )}
+
+                                    {/* Final Badge */}
+                                    {node.isFinal && (
+                                        <div className="absolute -top-3 right-3 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded">
+                                            Final
+                                        </div>
+                                    )}
+
+                                    {/* Status Name */}
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <div className={`w-2 h-2 rounded-full ${node.color}`} />
+                                        <span className={`font-semibold text-sm ${textStyle}`}>{node.statusName}</span>
+                                    </div>
+
+                                    {/* Category Label */}
+                                    <div className="text-xs text-gray-500">
+                                        {node.isSystem ? 'System' : 'Agent'}
+                                    </div>
+
+                                    {/* Action buttons */}
+                                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                        {!node.isFinal && (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleConnectStart(node.id, e); }}
+                                                className={`p-1 rounded hover:bg-black/10 transition-colors ${connectingFrom === node.id ? 'bg-black/10' : ''}`}
+                                                title="Connect to another status"
+                                            >
+                                                <ArrowRight size={14} className="text-gray-500" />
+                                            </button>
+                                        )}
+                                        {!node.isSystem && (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); removeNode(node.id); }}
+                                                className="p-1 rounded hover:bg-red-100 transition-colors"
+                                                title="Remove from workflow"
+                                            >
+                                                <X size={14} className="text-gray-400 hover:text-red-500" />
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+
+                        {/* Empty State - Contextual based on workflow status */}
                         {nodes.length === 0 && (
                             <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="text-center text-gray-400">
-                                    <Settings size={48} className="mx-auto mb-3 opacity-50" />
-                                    <p className="text-lg font-medium">No workflow configured</p>
-                                    <p className="text-sm">Drag statuses from the right panel to start building</p>
-                                </div>
+                                {!selectedDepartment || departments.length === 0 ? (
+                                    /* No department workflow exists */
+                                    <div className="text-center max-w-md px-8">
+                                        <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                            <AlertTriangle size={40} className="text-amber-500" />
+                                        </div>
+                                        <h3 className="text-xl font-bold text-gray-800 mb-2">No Workflow Enabled</h3>
+                                        <p className="text-gray-500 mb-6">
+                                            Enable a workflow template for a department to start configuring status flow.
+                                        </p>
+                                        <button
+                                            onClick={() => setShowEnableModal(true)}
+                                            className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors font-medium shadow-lg shadow-indigo-200"
+                                        >
+                                            <Zap size={18} />
+                                            Enable Workflow for Department
+                                        </button>
+                                    </div>
+                                ) : (
+                                    /* Workflow exists but canvas is empty */
+                                    <div className="text-center text-gray-400">
+                                        <Settings size={48} className="mx-auto mb-3 opacity-50" />
+                                        <p className="text-lg font-medium">Workflow is empty</p>
+                                        <p className="text-sm">Drag statuses from the right panel to start building</p>
+                                        <p className="text-xs mt-2 text-gray-300">Or select a template when enabling workflow</p>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -1217,140 +1365,142 @@ const WorkflowMapping: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Right Panel - Available Statuses */}
-                <div className="w-72 bg-white border-l border-gray-200 p-4 overflow-y-auto">
-                    <h3 className="font-bold text-gray-800 mb-1">Available Statuses</h3>
-                    <p className="text-xs text-gray-500 mb-4">Drag to canvas to add to workflow</p>
+                {/* Right Panel - Available Statuses (Only show when workflow is active) */}
+                {selectedDepartment && departments.length > 0 && (
+                    <div className="w-72 bg-white border-l border-gray-200 p-4 overflow-y-auto">
+                        <h3 className="font-bold text-gray-800 mb-1">Available Statuses</h3>
+                        <p className="text-xs text-gray-500 mb-4">Drag to canvas to add to workflow</p>
 
-                    <div className="space-y-3">
-                        {/* System Statuses Group */}
-                        <div className="border border-gray-200 rounded-lg overflow-hidden">
-                            <button
-                                onClick={() => toggleGroup('system')}
-                                className="w-full flex items-center justify-between px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors"
-                            >
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-gray-400" />
-                                    <span className="text-sm font-semibold text-gray-700">System Statuses</span>
-                                    <span className="text-xs text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded-full">
-                                        {systemStatuses.length}
-                                    </span>
-                                </div>
-                                {expandedGroups.system ? (
-                                    <ChevronUp size={16} className="text-gray-400" />
-                                ) : (
-                                    <ChevronDown size={16} className="text-gray-400" />
-                                )}
-                            </button>
-                            {expandedGroups.system && (
-                                <div className="p-2 space-y-1.5 bg-white">
-                                    {systemStatuses.length > 0 ? (
-                                        systemStatuses.map(status => (
-                                            <div
-                                                key={status.status_id}
-                                                draggable
-                                                onDragStart={() => handleDragStart(status)}
-                                                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border border-gray-100 cursor-grab hover:bg-gray-50 hover:border-gray-200 transition-colors ${draggedStatus?.status_id === status.status_id ? 'opacity-50' : ''}`}
-                                            >
-                                                <GripVertical size={12} className="text-gray-300" />
-                                                <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(status)}`} />
-                                                <span className="flex-1 text-sm font-medium text-gray-700 truncate">{status.status_name}</span>
-                                                {status.is_final && (
-                                                    <Lock size={11} className="text-gray-400" title="Final status" />
-                                                )}
-                                            </div>
-                                        ))
+                        <div className="space-y-3">
+                            {/* System Statuses Group */}
+                            <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                <button
+                                    onClick={() => toggleGroup('system')}
+                                    className="w-full flex items-center justify-between px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-gray-400" />
+                                        <span className="text-sm font-semibold text-gray-700">System Statuses</span>
+                                        <span className="text-xs text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded-full">
+                                            {systemStatuses.length}
+                                        </span>
+                                    </div>
+                                    {expandedGroups.system ? (
+                                        <ChevronUp size={16} className="text-gray-400" />
                                     ) : (
-                                        <p className="text-xs text-gray-400 text-center py-2">No system statuses available</p>
+                                        <ChevronDown size={16} className="text-gray-400" />
                                     )}
+                                </button>
+                                {expandedGroups.system && (
+                                    <div className="p-2 space-y-1.5 bg-white">
+                                        {systemStatuses.length > 0 ? (
+                                            systemStatuses.map(status => (
+                                                <div
+                                                    key={status.status_id}
+                                                    draggable
+                                                    onDragStart={() => handleDragStart(status)}
+                                                    className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border border-gray-100 cursor-grab hover:bg-gray-50 hover:border-gray-200 transition-colors ${draggedStatus?.status_id === status.status_id ? 'opacity-50' : ''}`}
+                                                >
+                                                    <GripVertical size={12} className="text-gray-300" />
+                                                    <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(status)}`} />
+                                                    <span className="flex-1 text-sm font-medium text-gray-700 truncate">{status.status_name}</span>
+                                                    {status.is_final && (
+                                                        <Lock size={11} className="text-gray-400" title="Final status" />
+                                                    )}
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <p className="text-xs text-gray-400 text-center py-2">No system statuses available</p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Agent Statuses Group */}
+                            <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                <button
+                                    onClick={() => toggleGroup('agent')}
+                                    className="w-full flex items-center justify-between px-3 py-2.5 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                                        <span className="text-sm font-semibold text-gray-700">Agent Statuses</span>
+                                        <span className="text-xs text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded-full">
+                                            {agentStatuses.length}
+                                        </span>
+                                    </div>
+                                    {expandedGroups.agent ? (
+                                        <ChevronUp size={16} className="text-gray-400" />
+                                    ) : (
+                                        <ChevronDown size={16} className="text-gray-400" />
+                                    )}
+                                </button>
+                                {expandedGroups.agent && (
+                                    <div className="p-2 space-y-1.5 bg-white">
+                                        {agentStatuses.length > 0 ? (
+                                            agentStatuses.map(status => (
+                                                <div
+                                                    key={status.status_id}
+                                                    draggable
+                                                    onDragStart={() => handleDragStart(status)}
+                                                    className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border border-gray-100 cursor-grab hover:bg-gray-50 hover:border-gray-200 transition-colors ${draggedStatus?.status_id === status.status_id ? 'opacity-50' : ''}`}
+                                                >
+                                                    <GripVertical size={12} className="text-gray-300" />
+                                                    <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(status)}`} />
+                                                    <span className="flex-1 text-sm font-medium text-gray-700 truncate">{status.status_name}</span>
+                                                    {status.is_final && (
+                                                        <Lock size={11} className="text-gray-400" title="Final status" />
+                                                    )}
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <p className="text-xs text-gray-400 text-center py-2">No agent statuses available</p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* All statuses in use message */}
+                            {availableStatuses.length === 0 && (
+                                <div className="text-center py-8 text-gray-400">
+                                    <Info size={24} className="mx-auto mb-2 opacity-50" />
+                                    <p className="text-sm">All statuses are in use</p>
                                 </div>
                             )}
                         </div>
 
-                        {/* Agent Statuses Group */}
-                        <div className="border border-gray-200 rounded-lg overflow-hidden">
-                            <button
-                                onClick={() => toggleGroup('agent')}
-                                className="w-full flex items-center justify-between px-3 py-2.5 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                            >
+                        {/* Legend */}
+                        <div className="mt-6 pt-4 border-t border-gray-100">
+                            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Color Legend</h4>
+                            <div className="space-y-2 text-xs">
                                 <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-indigo-500" />
-                                    <span className="text-sm font-semibold text-gray-700">Agent Statuses</span>
-                                    <span className="text-xs text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded-full">
-                                        {agentStatuses.length}
-                                    </span>
+                                    <div className="w-3 h-3 rounded-full bg-gray-400" />
+                                    <span className="text-gray-600">System / Neutral</span>
                                 </div>
-                                {expandedGroups.agent ? (
-                                    <ChevronUp size={16} className="text-gray-400" />
-                                ) : (
-                                    <ChevronDown size={16} className="text-gray-400" />
-                                )}
-                            </button>
-                            {expandedGroups.agent && (
-                                <div className="p-2 space-y-1.5 bg-white">
-                                    {agentStatuses.length > 0 ? (
-                                        agentStatuses.map(status => (
-                                            <div
-                                                key={status.status_id}
-                                                draggable
-                                                onDragStart={() => handleDragStart(status)}
-                                                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border border-gray-100 cursor-grab hover:bg-gray-50 hover:border-gray-200 transition-colors ${draggedStatus?.status_id === status.status_id ? 'opacity-50' : ''}`}
-                                            >
-                                                <GripVertical size={12} className="text-gray-300" />
-                                                <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(status)}`} />
-                                                <span className="flex-1 text-sm font-medium text-gray-700 truncate">{status.status_name}</span>
-                                                {status.is_final && (
-                                                    <Lock size={11} className="text-gray-400" title="Final status" />
-                                                )}
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <p className="text-xs text-gray-400 text-center py-2">No agent statuses available</p>
-                                    )}
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full bg-blue-500" />
+                                    <span className="text-gray-600">Ready / Active</span>
                                 </div>
-                            )}
-                        </div>
-
-                        {/* All statuses in use message */}
-                        {availableStatuses.length === 0 && (
-                            <div className="text-center py-8 text-gray-400">
-                                <Info size={24} className="mx-auto mb-2 opacity-50" />
-                                <p className="text-sm">All statuses are in use</p>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Legend */}
-                    <div className="mt-6 pt-4 border-t border-gray-100">
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Color Legend</h4>
-                        <div className="space-y-2 text-xs">
-                            <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full bg-gray-400" />
-                                <span className="text-gray-600">System / Neutral</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full bg-blue-500" />
-                                <span className="text-gray-600">Ready / Active</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full bg-green-500" />
-                                <span className="text-gray-600">Working / Progress</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full bg-yellow-500" />
-                                <span className="text-gray-600">Waiting / Pending</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full bg-red-500" />
-                                <span className="text-gray-600">Termination</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full bg-purple-500" />
-                                <span className="text-gray-600">Special (Reopen)</span>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full bg-green-500" />
+                                    <span className="text-gray-600">Working / Progress</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full bg-yellow-500" />
+                                    <span className="text-gray-600">Waiting / Pending</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full bg-red-500" />
+                                    <span className="text-gray-600">Termination</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full bg-purple-500" />
+                                    <span className="text-gray-600">Special (Reopen)</span>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
+                )}
             </div>
 
             {/* Add Transition Modal */}
