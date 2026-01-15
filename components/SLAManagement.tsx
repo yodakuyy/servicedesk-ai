@@ -506,16 +506,18 @@ const SLAManagement: React.FC = () => {
                                         {getSLATypeBadge(sla.sla_type)}
                                     </td>
                                     <td className="px-6 py-4 text-center">
-                                        <button
-                                            onClick={() => handleToggleActive(sla)}
-                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${sla.is_active ? 'bg-indigo-600' : 'bg-gray-200'
-                                                }`}
-                                        >
-                                            <span
-                                                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${sla.is_active ? 'translate-x-6' : 'translate-x-1'
-                                                    }`}
-                                            />
-                                        </button>
+                                        <div className="flex flex-col items-center">
+                                            <button
+                                                onClick={() => handleToggleActive(sla)}
+                                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${sla.is_active ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-300 hover:bg-gray-400'}`}
+                                                title={sla.is_active ? 'Click to deactivate' : 'Click to activate'}
+                                            >
+                                                <span
+                                                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${sla.is_active ? 'translate-x-6' : 'translate-x-1'}`}
+                                                />
+                                            </button>
+                                            <span className="text-[10px] text-gray-400 mt-1">{sla.is_active ? 'Active' : 'Inactive'}</span>
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center gap-1.5">

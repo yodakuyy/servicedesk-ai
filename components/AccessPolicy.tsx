@@ -749,7 +749,7 @@ const AccessPolicy: React.FC = () => {
                             <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Applies To</th>
                             <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Scope</th>
                             <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
-                            <th className="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                            <th className="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider" title="Click toggle to activate/deactivate">Status ⟲</th>
                             <th className="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">ACTIONS</th>
                         </tr>
                     </thead>
@@ -772,9 +772,15 @@ const AccessPolicy: React.FC = () => {
                                 <td className="px-6 py-4"><span className="text-sm text-gray-600">{getScopeSummary(policy.conditions)}</span></td>
                                 <td className="px-6 py-4"><span className="text-sm text-gray-600">{getActionsSummary(policy.actions)}</span></td>
                                 <td className="px-6 py-4 text-center" onClick={(e) => { e.stopPropagation(); togglePolicyStatus(policy.id, policy.status); }}>
-                                    <button className={`px-3 py-1.5 rounded-full text-xs font-bold ${policy.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>
-                                        {policy.status === 'active' ? 'Active' : 'Inactive'}
+                                    <button
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${policy.status === 'active' ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-300 hover:bg-gray-400'}`}
+                                        title={policy.status === 'active' ? 'Click to deactivate' : 'Click to activate'}
+                                    >
+                                        <span
+                                            className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${policy.status === 'active' ? 'translate-x-6' : 'translate-x-1'}`}
+                                        />
                                     </button>
+                                    <p className="text-[10px] text-gray-400 mt-1">{policy.status === 'active' ? 'Active' : 'Inactive'}</p>
                                 </td>
                                 <td className="px-6 py-4 text-center">
                                     <button

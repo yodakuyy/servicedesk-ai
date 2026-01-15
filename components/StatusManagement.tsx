@@ -200,6 +200,30 @@ const StatusManagement: React.FC = () => {
         }
     };
 
+    const handleToggleActive = async (status: Status) => {
+        if (status.status_category === 'system') return; // Can't toggle system statuses
+
+        try {
+            const { error } = await supabase
+                .from('ticket_statuses')
+                .update({ is_active: !status.is_active })
+                .eq('status_id', status.status_id);
+
+            if (error) throw error;
+
+            // Update local state
+            setStatuses(prev =>
+                prev.map(s => s.status_id === status.status_id
+                    ? { ...s, is_active: !s.is_active }
+                    : s
+                )
+            );
+        } catch (error: any) {
+            console.error('Error toggling status:', error);
+            alert('Error toggling status: ' + error.message);
+        }
+    };
+
     const handleDragStart = (index: number) => {
         setDraggedIndex(index);
     };

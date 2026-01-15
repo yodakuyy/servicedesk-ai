@@ -343,9 +343,12 @@ const EscalationRules: React.FC = () => {
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 text-center">
-                                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${rule.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
-                                            {rule.is_active ? <><PlayCircle size={12} />Active</> : 'Inactive'}
-                                        </span>
+                                        <div className="flex flex-col items-center">
+                                            <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${rule.is_active ? 'bg-green-500' : 'bg-gray-300'}`}>
+                                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${rule.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
+                                            </div>
+                                            <span className="text-[10px] text-gray-400 mt-1">{rule.is_active ? 'Active' : 'Inactive'}</span>
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -435,8 +438,15 @@ const EscalationRules: React.FC = () => {
                         </div>
                         <div className="md:col-span-2">
                             <label className="flex items-center gap-3 cursor-pointer">
-                                <input type="checkbox" checked={formData.is_active} onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })} className="w-4 h-4 rounded border-gray-300 text-indigo-600" />
-                                <span className="text-sm font-medium text-gray-700">Rule is Active</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setFormData({ ...formData, is_active: !formData.is_active })}
+                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${formData.is_active ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-300 hover:bg-gray-400'}`}
+                                    title={formData.is_active ? 'Click to deactivate' : 'Click to activate'}
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${formData.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
+                                </button>
+                                <span className="text-sm font-medium text-gray-700">Rule is {formData.is_active ? 'Active' : 'Inactive'}</span>
                             </label>
                         </div>
                     </div>
