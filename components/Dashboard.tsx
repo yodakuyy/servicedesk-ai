@@ -46,6 +46,9 @@ import StatusManagement from './StatusManagement';
 import WorkflowMapping from './WorkflowMapping';
 import WorkflowTemplate from './WorkflowTemplate';
 import AccessPolicy from './AccessPolicy';
+import SLAManagement from './SLAManagement';
+import SLAPolicies from './SLAPolicies';
+import EscalationRules from './EscalationRules';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -445,13 +448,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
       return <AccessPolicy />;
     }
 
-    if (currentView === 'service-request-fields' || currentView === 'sla-management' || currentView === 'portal-highlights' || currentView === 'sla-policies' || currentView === 'escalation-rules' || currentView === 'auto-assignment' || currentView === 'auto-close-rules' || currentView === 'notifications') {
+    if (currentView === 'sla-management') {
+      return <SLAManagement />;
+    }
+
+    if (currentView === 'sla-policies') {
+      return <SLAPolicies />;
+    }
+
+    if (currentView === 'escalation-rules') {
+      return <EscalationRules />;
+    }
+
+    if (currentView === 'service-request-fields' || currentView === 'portal-highlights' || currentView === 'auto-assignment' || currentView === 'auto-close-rules' || currentView === 'notifications') {
       const titleMap: any = {
         'service-request-fields': 'Service Request Fields',
-        'sla-management': 'SLA Management',
         'portal-highlights': 'Portal Highlights',
-        'sla-policies': 'SLA Policies',
-        'escalation-rules': 'Escalation Rules',
         'auto-assignment': 'Auto Assignment',
         'auto-close-rules': 'Auto Close Rules',
         'notifications': 'Notifications'
