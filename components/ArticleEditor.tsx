@@ -238,7 +238,8 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                 summary: article.summary,
                 category_id: article.category_id || null,
                 visibility: article.visibility,
-                status: 'draft',
+                // Preserve published status, otherwise set to draft
+                status: article.status === 'published' ? 'published' : 'draft',
                 content: contentJson,
                 is_ai_enabled: article.is_ai_enabled,
                 article_type: article.article_type,
@@ -283,8 +284,10 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
             // Premium Toast Notification
             Swal.fire({
                 icon: 'success',
-                title: 'Draft Saved',
-                text: 'Your article has been saved to drafts.',
+                title: article.status === 'published' ? 'Article Updated' : 'Draft Saved',
+                text: article.status === 'published'
+                    ? 'Your changes have been published.'
+                    : 'Your article has been saved to drafts.',
                 toast: true,
                 position: 'top-end',
                 showConfirmButton: false,
@@ -408,7 +411,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                         className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm disabled:opacity-50"
                     >
                         {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                        Save Draft
+                        {article.status === 'published' ? 'Update Article' : 'Save Draft'}
                     </button>
 
                     <button
@@ -589,8 +592,8 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                                             type="button"
                                             onClick={() => handleChange('article_type', type.value)}
                                             className={`flex items-center gap-2 px-3 py-2.5 border rounded-xl text-sm transition-all text-left ${article.article_type === type.value
-                                                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                                                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                                                ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                                                : 'border-gray-200 text-gray-600 hover:border-gray-300'
                                                 }`}
                                         >
                                             <span className="text-lg">{type.icon}</span>
