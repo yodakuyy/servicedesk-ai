@@ -306,9 +306,19 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
                     border-radius: 8px;
                     margin: 8px 0;
                 }
-                .ProseMirror ul,
+                .ProseMirror ul {
+                    padding-left: 1.5rem;
+                    list-style-type: disc;
+                }
                 .ProseMirror ol {
                     padding-left: 1.5rem;
+                    list-style-type: decimal;
+                }
+                .ProseMirror li {
+                    margin-bottom: 0.25rem;
+                }
+                .ProseMirror li p {
+                    margin: 0;
                 }
                 .ProseMirror blockquote {
                     border-left: 3px solid #e5e7eb;

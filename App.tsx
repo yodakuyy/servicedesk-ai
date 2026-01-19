@@ -5,9 +5,28 @@ import LoginSection from './components/LoginSection';
 import VisualSection from './components/VisualSection';
 import DepartmentSelection from './components/DepartmentSelection';
 import Dashboard from './components/Dashboard';
+import RequesterKBPortal from './components/RequesterKBPortal';
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<'login' | 'departments' | 'dashboard'>('login');
+  const [currentView, setCurrentView] = useState<'login' | 'departments' | 'dashboard' | 'kb-portal'>('login');
+
+  // Check URL hash for direct portal access
+  useEffect(() => {
+    const checkHash = () => {
+      if (window.location.hash === '#kb-portal' || window.location.hash === '#/kb-portal') {
+        setCurrentView('kb-portal');
+      }
+    };
+
+    checkHash();
+    window.addEventListener('hashchange', checkHash);
+    return () => window.removeEventListener('hashchange', checkHash);
+  }, []);
+
+  // KB Portal - Public access (no login required)
+  if (currentView === 'kb-portal') {
+    return <RequesterKBPortal />;
+  }
 
   if (currentView === 'dashboard') {
     return (

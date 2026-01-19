@@ -37,6 +37,7 @@ interface ArticleData {
     category_id: string;
     visibility: 'public' | 'internal';
     status: 'draft' | 'review' | 'published' | 'archived';
+    article_type: 'how-to' | 'faq' | 'getting-started' | 'troubleshooting' | 'reference';
     // Helper fields for editor state
     content_problem: string;
     content_solution: string;
@@ -53,6 +54,7 @@ const initialArticle: ArticleData = {
     category_id: '',
     visibility: 'internal',
     status: 'draft',
+    article_type: 'troubleshooting',
     content_problem: '',
     content_solution: '',
     content_verification: '',
@@ -61,6 +63,14 @@ const initialArticle: ArticleData = {
     is_ai_enabled: true,
     reviewer_feedback: '',
 };
+
+const ARTICLE_TYPES = [
+    { value: 'how-to', label: 'How-To Guide', description: 'Step-by-step tutorials', icon: '📖' },
+    { value: 'faq', label: 'FAQ', description: 'Question & Answer format', icon: '❓' },
+    { value: 'getting-started', label: 'Getting Started', description: 'Onboarding guides', icon: '🚀' },
+    { value: 'troubleshooting', label: 'Troubleshooting', description: 'Problem-solution articles', icon: '🔧' },
+    { value: 'reference', label: 'Internal Reference', description: 'Agent-only documentation', icon: '📋' },
+];
 
 const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSave }) => {
     const [article, setArticle] = useState<ArticleData>(initialArticle);
@@ -161,6 +171,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                     tags: tagsData?.map((t: any) => t.tag) || [],
                     is_ai_enabled: articleData.is_ai_enabled ?? true,
                     reviewer_feedback: articleData.reviewer_feedback || '',
+                    article_type: articleData.article_type || 'troubleshooting',
                 });
             }
         } catch (error) {
@@ -230,6 +241,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                 status: 'draft',
                 content: contentJson,
                 is_ai_enabled: article.is_ai_enabled,
+                article_type: article.article_type,
                 updated_at: new Date().toISOString(),
             };
 
@@ -410,8 +422,8 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                 </div>
             </header>
 
-            {/* Reviewer Feedback Banner */}
-            {article.reviewer_feedback && (
+            {/* Reviewer Feedback Banner - Only show for draft status */}
+            {article.reviewer_feedback && article.status === 'draft' && (
                 <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 shrink-0">
                     <div className="flex items-start gap-3 max-w-4xl mx-auto">
                         <div className="p-2 bg-amber-100 rounded-lg shrink-0">
@@ -564,6 +576,35 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                                 </div>
                             </div>
 
+                            {/* Article Type */}
+                            <div className="space-y-1.5">
+                                <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                                    <FileText size={14} className="text-gray-400" />
+                                    Article Type <span className="text-red-500">*</span>
+                                </label>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                    {ARTICLE_TYPES.map(type => (
+                                        <button
+                                            key={type.value}
+                                            type="button"
+                                            onClick={() => handleChange('article_type', type.value)}
+                                            className={`flex items-center gap-2 px-3 py-2.5 border rounded-xl text-sm transition-all text-left ${article.article_type === type.value
+                                                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                                                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                                                }`}
+                                        >
+                                            <span className="text-lg">{type.icon}</span>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-medium truncate">{type.label}</div>
+                                                <div className="text-xs text-gray-500 truncate">{type.description}</div>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    This determines where the article appears in Help Center
+                                </p>
+                            </div>
                             {/* Tags */}
                             <div className="space-y-1.5">
                                 <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">

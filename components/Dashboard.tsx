@@ -49,6 +49,7 @@ import AccessPolicy from './AccessPolicy';
 import SLAManagement from './SLAManagement';
 import SLAPolicies from './SLAPolicies';
 import EscalationRules from './EscalationRules';
+import RequesterKBPortal from './RequesterKBPortal';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -353,7 +354,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
     }
 
     if (currentView === 'knowledge') {
-      return <KnowledgeBase />;
+      // Check if user is Requester (role_id = 4)
+      const isRequester = userProfile?.role_id === 4 || userProfile?.role_id === '4';
+      return isRequester ? <RequesterKBPortal /> : <KnowledgeBase />;
     }
 
     if (currentView === 'help-center') {
