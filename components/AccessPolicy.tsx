@@ -13,7 +13,9 @@ import {
     Loader2,
     AlertTriangle,
     CheckCircle2,
-    XCircle
+    XCircle,
+    Lock,
+    Building2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
@@ -74,6 +76,8 @@ const actionOptions = [
 const constraintOptions = [
     { id: 'business_hours', label: 'Only during Business Hours', desc: 'Policy only active during working hours', icon: Clock },
     { id: 'assigned_only', label: 'Only Assigned Tickets', desc: 'Users can only access tickets assigned to them', icon: Users },
+    { id: 'team_only', label: "Only Team's Tickets", desc: "Access limited to tickets within user's team", icon: Building2 },
+    { id: 'exclude_closed', label: 'Exclude Closed Tickets', desc: 'Policy inactive for closed/resolved tickets', icon: Lock },
     { id: 'sla_status', label: 'Only if SLA Breached', desc: 'Policy activates when SLA is breached', icon: AlertCircle },
 ];
 
@@ -361,11 +365,23 @@ const AccessPolicy: React.FC = () => {
         }
     };
 
-    const togglePolicyStatus = async (id: string, currentStatus: string) => {
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [confirmModalData, setConfirmModalData] = useState<{ id: string; name: string; newStatus: 'active' | 'inactive' } | null>(null);
+
+    const togglePolicyStatus = (id: string, name: string, currentStatus: string) => {
+        const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+        setConfirmModalData({ id, name, newStatus });
+        setShowConfirmModal(true);
+    };
+
+    const confirmStatusChange = async () => {
+        if (!confirmModalData) return;
+
         try {
-            const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
-            await supabase.from('access_policies').update({ status: newStatus }).eq('id', id);
+            await supabase.from('access_policies').update({ status: confirmModalData.newStatus }).eq('id', confirmModalData.id);
             fetchPolicies();
+            setShowConfirmModal(false);
+            setConfirmModalData(null);
         } catch (err) {
             console.error('Error toggling status:', err);
         }
@@ -771,7 +787,7 @@ const AccessPolicy: React.FC = () => {
                                 </td>
                                 <td className="px-6 py-4"><span className="text-sm text-gray-600">{getScopeSummary(policy.conditions)}</span></td>
                                 <td className="px-6 py-4"><span className="text-sm text-gray-600">{getActionsSummary(policy.actions)}</span></td>
-                                <td className="px-6 py-4 text-center" onClick={(e) => { e.stopPropagation(); togglePolicyStatus(policy.id, policy.status); }}>
+                                <td className="px-6 py-4 text-center" onClick={(e) => { e.stopPropagation(); togglePolicyStatus(policy.id, policy.name, policy.status); }}>
                                     <button
                                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${policy.status === 'active' ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-300 hover:bg-gray-400'}`}
                                         title={policy.status === 'active' ? 'Click to deactivate' : 'Click to activate'}
@@ -844,6 +860,47 @@ const AccessPolicy: React.FC = () => {
                                 {saving ? <Loader2 size={16} className="animate-spin" /> : currentStep === 5 ? (
                                     <><Check size={16} /> {editingPolicy ? 'Update' : 'Create'} Policy</>
                                 ) : (<>Continue <ChevronRight size={16} /></>)}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Status Change Confirmation Modal */}
+            {showConfirmModal && confirmModalData && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 scale-100 animate-in zoom-in-95 duration-200">
+                        <div className="flex items-start gap-4">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${confirmModalData.newStatus === 'inactive' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'
+                                }`}>
+                                {confirmModalData.newStatus === 'inactive' ? <AlertTriangle size={24} /> : <CheckCircle2 size={24} />}
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800">
+                                    {confirmModalData.newStatus === 'active' ? 'Activate Policy?' : 'Deactivate Policy?'}
+                                </h3>
+                                <p className="text-sm text-gray-600 mt-2 leading-relaxed">
+                                    {confirmModalData.newStatus === 'active'
+                                        ? `Are you sure you want to activate "${confirmModalData.name}"? This will enable access for matching users.`
+                                        : `Are you sure you want to deactivate "${confirmModalData.name}"? Users matching this policy might lose access immediately.`}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button
+                                onClick={() => setShowConfirmModal(false)}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmStatusChange}
+                                className={`px-4 py-2 text-sm font-medium text-white rounded-lg shadow-sm transition-all ${confirmModalData.newStatus === 'active'
+                                    ? 'bg-green-600 hover:bg-green-700 hover:shadow-green-200'
+                                    : 'bg-red-600 hover:bg-red-700 hover:shadow-red-200'
+                                    }`}
+                            >
+                                {confirmModalData.newStatus === 'active' ? 'Yes, Activate' : 'Yes, Deactivate'}
                             </button>
                         </div>
                     </div>
