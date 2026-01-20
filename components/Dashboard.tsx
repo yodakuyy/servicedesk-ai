@@ -50,6 +50,8 @@ import SLAManagement from './SLAManagement';
 import SLAPolicies from './SLAPolicies';
 import EscalationRules from './EscalationRules';
 import RequesterKBPortal from './RequesterKBPortal';
+import AgentTicketView from './AgentTicketView';
+import RequesterTicketManager from './RequesterTicketManager';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -147,6 +149,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
   const [profileUser, setProfileUser] = useState<any>(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [previousViewBeforeProfile, setPreviousViewBeforeProfile] = useState<'user-dashboard' | 'profile'>('user-dashboard');
+  const [editingSlaPolicyId, setEditingSlaPolicyId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const toggleSettingsSub = (key: keyof typeof settingsSubOpen) => {
@@ -367,9 +370,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
       return <OutOfOffice viewMode={currentView === 'team-availability' ? 'supervisor' : 'agent'} />;
     }
 
-    // User Incidents Data (yang ada di screenshot)
+    // User Incidents Data (Requester View Manager)
     if (currentView === 'my-tickets') {
-      return <UserTicketList onNavigate={(view: any) => setCurrentView(view)} onViewTicket={(id) => handleViewTicket(id, 'my-tickets')} userName={userProfile?.full_name} />;
+      return <RequesterTicketManager userName={userProfile?.full_name} />;
     }
 
     // NEW: Empty Placeholder for Service Requests
@@ -385,17 +388,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
       );
     }
 
-    // NEW: Empty Placeholder for My Tickets (different from User Incidents)
+    // NEW: Agent View for My Tickets
     if (currentView === 'user-incidents') {
-      return (
-        <div className="p-8 flex flex-col items-center justify-center h-full text-center">
-          <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
-            <FileText size={32} className="text-indigo-400" />
-          </div>
-          <h3 className="text-lg font-bold text-gray-800 mb-2">My Tickets</h3>
-          <p className="text-gray-500 max-w-md">This module is currently under development. It will display tickets created by the current user.</p>
-        </div>
-      );
+      return <AgentTicketView />;
     }
 
     // NEW: Empty Placeholder for Escalated Tickets
@@ -452,11 +447,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
     }
 
     if (currentView === 'sla-management') {
-      return <SLAManagement />;
+      return (
+        <SLAManagement
+          onEditPolicy={(id: string) => {
+            setEditingSlaPolicyId(id);
+            setCurrentView('sla-policies');
+          }}
+        />
+      );
     }
 
     if (currentView === 'sla-policies') {
-      return <SLAPolicies />;
+      return (
+        <SLAPolicies
+          initialPolicyId={editingSlaPolicyId}
+          onClearInitial={() => setEditingSlaPolicyId(null)}
+        />
+      );
     }
 
     if (currentView === 'escalation-rules') {

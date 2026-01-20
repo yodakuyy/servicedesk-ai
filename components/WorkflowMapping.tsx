@@ -1405,7 +1405,7 @@ const WorkflowMapping: React.FC = () => {
                                                     <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(status)}`} />
                                                     <span className="flex-1 text-sm font-medium text-gray-700 truncate">{status.status_name}</span>
                                                     {status.is_final && (
-                                                        <Lock size={11} className="text-gray-400" title="Final status" />
+                                                        <span title="Final status"><Lock size={11} className="text-gray-400" /></span>
                                                     )}
                                                 </div>
                                             ))
@@ -1449,7 +1449,7 @@ const WorkflowMapping: React.FC = () => {
                                                     <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(status)}`} />
                                                     <span className="flex-1 text-sm font-medium text-gray-700 truncate">{status.status_name}</span>
                                                     {status.is_final && (
-                                                        <Lock size={11} className="text-gray-400" title="Final status" />
+                                                        <span title="Final status"><Lock size={11} className="text-gray-400" /></span>
                                                     )}
                                                 </div>
                                             ))

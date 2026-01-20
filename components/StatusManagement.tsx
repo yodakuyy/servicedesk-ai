@@ -414,7 +414,7 @@ const StatusManagement: React.FC = () => {
                                 </td>
                                 <td className="px-4 py-4 text-right">
                                     {status.status_category === 'system' ? (
-                                        <Lock size={16} className="text-gray-400 inline" title="System status - cannot edit" />
+                                        <span title="System status - cannot edit"><Lock size={16} className="text-gray-400 inline" /></span>
                                     ) : (
                                         <button
                                             onClick={() => handleOpenModal(status)}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, FileText, Book, HelpCircle, Eye, Info, X, AlertCircle, Package, Bot, Send, MessageSquare, ArrowRight, CheckCircle, Clock, Search, Filter, Calendar, User } from 'lucide-react';
+import { Plus, FileText, Book, HelpCircle, Eye, Info, X, AlertCircle, Package, Bot, Send, MessageSquare, ArrowRight, CheckCircle, Clock, Search, Filter, Calendar, User, Activity } from 'lucide-react';
 
 interface Ticket {
     id: string;
@@ -84,7 +84,7 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
     );
 
     return (
-        <div className="p-8 max-w-7xl mx-auto space-y-8">
+        <div className="p-8 w-full mx-auto space-y-8">
             {/* Header */}
             <div className="space-y-1">
                 <h1 className="text-3xl font-bold text-gray-900">Hi, {userName || 'User'}!</h1>
@@ -92,9 +92,10 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
             </div>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-5 gap-4">
                 {[
                     { label: 'OPEN', value: '53', sub: '+19 from yesterday', color: 'text-blue-600', bg: 'bg-blue-50', iconBg: 'bg-blue-100', icon: AlertCircle },
+                    { label: 'IN PROGRESS', value: '41', sub: '+12 from yesterday', color: 'text-purple-600', bg: 'bg-white', iconBg: 'bg-purple-100', icon: Activity },
                     { label: 'PENDING', value: '32', sub: '+19 from yesterday', color: 'text-orange-500', bg: 'bg-white', iconBg: 'bg-orange-100', icon: Clock },
                     { label: 'RESOLVED', value: '12', sub: '+19 from yesterday', color: 'text-green-600', bg: 'bg-white', iconBg: 'bg-green-100', icon: CheckCircle },
                     { label: 'CLOSED', value: '76', sub: '+23 from yesterday', color: 'text-gray-700', bg: 'bg-white', iconBg: 'bg-gray-100', icon: Package },

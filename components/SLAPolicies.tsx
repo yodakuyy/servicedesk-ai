@@ -98,7 +98,12 @@ const conditionOperators = [
     { value: 'not_in', label: 'Not In' }
 ];
 
-const SLAPolicies: React.FC = () => {
+interface SLAPoliciesProps {
+    initialPolicyId?: string | null;
+    onClearInitial?: () => void;
+}
+
+const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearInitial }) => {
     const [view, setView] = useState<'list' | 'editor'>('list');
     const [policies, setPolicies] = useState<SLAPolicy[]>([]);
     const [loading, setLoading] = useState(true);
@@ -177,22 +182,36 @@ const SLAPolicies: React.FC = () => {
                     // Get targets for this policy
                     const policyTargets = targetsData?.filter((t: any) => t.sla_policy_id === policy.id) || [];
 
+                    // Helper to parse time
+                    const parseTime = (minutes: number) => {
+                        if (!minutes) return { value: 4, unit: 'hours' as const };
+                        if (minutes % (24 * 60) === 0) return { value: minutes / (24 * 60), unit: 'days' as const };
+                        if (minutes % 60 === 0) return { value: minutes / 60, unit: 'hours' as const };
+                        return { value: minutes, unit: 'minutes' as const };
+                    };
+
                     // Transform targets to response/resolution SLA format
                     const responseSLA: SLAMetric[] = policyTargets
                         .filter((t: any) => t.sla_type === 'response')
-                        .map((t: any) => ({
-                            priority: t.priority || 'Medium',
-                            time_value: t.target_minutes ? Math.floor(t.target_minutes / 60) : t.target_hours || 4,
-                            time_unit: t.target_minutes && t.target_minutes < 60 ? 'minutes' : 'hours' as any
-                        }));
+                        .map((t: any) => {
+                            const { value, unit } = parseTime(t.target_minutes);
+                            return {
+                                priority: t.priority || 'Medium',
+                                time_value: value,
+                                time_unit: unit
+                            };
+                        });
 
                     const resolutionSLA: SLAMetric[] = policyTargets
                         .filter((t: any) => t.sla_type === 'resolution')
-                        .map((t: any) => ({
-                            priority: t.priority || 'Medium',
-                            time_value: t.target_minutes ? Math.floor(t.target_minutes / 60) : t.target_hours || 24,
-                            time_unit: t.target_minutes && t.target_minutes < 60 ? 'minutes' : 'hours' as any
-                        }));
+                        .map((t: any) => {
+                            const { value, unit } = parseTime(t.target_minutes);
+                            return {
+                                priority: t.priority || 'Medium',
+                                time_value: value,
+                                time_unit: unit
+                            };
+                        });
 
                     return {
                         id: policy.id?.toString(),
@@ -219,6 +238,18 @@ const SLAPolicies: React.FC = () => {
             setLoading(false);
         }
     };
+
+    // Handle initial policy selection (from dashboard navigation)
+    useEffect(() => {
+        if (initialPolicyId && policies.length > 0 && view === 'list') {
+            const policyToEdit = policies.find(p => p.id === initialPolicyId);
+            if (policyToEdit) {
+                console.log('Auto-opening policy for edit:', policyToEdit.name);
+                handleEdit(policyToEdit);
+                if (onClearInitial) onClearInitial(); // Clear ID to prevent re-opening if data refreshes
+            }
+        }
+    }, [initialPolicyId, policies, view, onClearInitial]);
 
     const handleCreateNew = () => {
         setSelectedPolicy(null);
@@ -341,7 +372,8 @@ const SLAPolicies: React.FC = () => {
                 company_id: formData.company_id,
                 business_hours_id: formData.business_hours_id || null,
                 is_active: formData.is_active,
-                conditions: formData.conditions
+                conditions: formData.conditions,
+                updated_at: new Date().toISOString()
             };
 
             let policyId: string;
@@ -378,7 +410,9 @@ const SLAPolicies: React.FC = () => {
                 sla_policy_id: policyId,
                 sla_type: 'response',
                 priority: sla.priority,
-                target_minutes: convertToMinutes(sla.time_value, sla.time_unit)
+                // We populate both new and legacy columns to satisfy constraints and ensure compatibility
+                target_minutes: convertToMinutes(sla.time_value, sla.time_unit),
+                response_time_minutes: convertToMinutes(sla.time_value, sla.time_unit)
             }));
 
             if (responseTargets.length > 0) {
@@ -386,7 +420,10 @@ const SLAPolicies: React.FC = () => {
                     .from('sla_targets')
                     .insert(responseTargets);
 
-                if (responseError) console.error('Error saving response targets:', responseError);
+                if (responseError) {
+                    console.error('Error saving response targets:', responseError);
+                    throw new Error(`Failed to save response targets: ${responseError.message}`);
+                }
             }
 
             // Insert resolution SLA targets (if enabled)
@@ -395,14 +432,21 @@ const SLAPolicies: React.FC = () => {
                     sla_policy_id: policyId,
                     sla_type: 'resolution',
                     priority: sla.priority,
-                    target_minutes: convertToMinutes(sla.time_value, sla.time_unit)
+                    target_minutes: convertToMinutes(sla.time_value, sla.time_unit),
+                    // For resolution targets, we satisfy the NOT NULL constraint on response_time_minutes with 0
+                    // This is a workaround until the schema constraint is relaxed
+                    response_time_minutes: 0,
+                    resolution_time_minutes: convertToMinutes(sla.time_value, sla.time_unit)
                 }));
 
                 const { error: resolutionError } = await supabase
                     .from('sla_targets')
                     .insert(resolutionTargets);
 
-                if (resolutionError) console.error('Error saving resolution targets:', resolutionError);
+                if (resolutionError) {
+                    console.error('Error saving resolution targets:', resolutionError);
+                    throw new Error(`Failed to save resolution targets: ${resolutionError.message}`);
+                }
             }
 
             // Refresh data from database

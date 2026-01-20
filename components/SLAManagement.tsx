@@ -31,14 +31,21 @@ interface SLAConfig {
     resolve_time_hours?: number;
     created_at?: string;
     updated_at?: string;
+    conditions?: any[];
 }
+
+
 
 interface Company {
     company_id: number;
     company_name: string;
 }
 
-const SLAManagement: React.FC = () => {
+interface SLAManagementProps {
+    onEditPolicy?: (id: string) => void;
+}
+
+const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
     const [slaConfigs, setSlaConfigs] = useState<SLAConfig[]>([]);
     const [companies, setCompanies] = useState<Company[]>([]);
     const [loading, setLoading] = useState(true);
@@ -143,6 +150,7 @@ const SLAManagement: React.FC = () => {
             const { data: companiesData } = await supabase
                 .from('company')
                 .select('company_id, company_name')
+                .eq('is_active', true)
                 .order('company_name');
 
             if (companiesData) {
@@ -158,26 +166,59 @@ const SLAManagement: React.FC = () => {
                 `)
                 .order('name');
 
+            // Fetch targets to get time info
+            const { data: targetsData } = await supabase
+                .from('sla_targets')
+                .select('*');
+
             if (policiesError) {
                 console.error('Error fetching SLA policies:', policiesError);
                 // Fallback to mock data
                 setSlaConfigs(mockSLAConfigs);
             } else if (policiesData) {
                 // Transform data to match interface
-                const transformedData: SLAConfig[] = policiesData.map((policy: any) => ({
-                    id: policy.id?.toString() || policy.policy_id?.toString(),
-                    sla_name: policy.name || policy.policy_name || 'Unnamed Policy',
-                    company_id: policy.company_id,
-                    company_name: policy.company?.company_name || 'Unknown',
-                    sla_type: policy.sla_type || (policy.resolution_enabled ? 'response_resolve' : 'response'),
-                    is_active: policy.is_active ?? true,
-                    used_by_count: policy.used_by_count || 0,
-                    description: policy.description || '',
-                    response_time_hours: policy.response_time_hours || policy.default_response_hours,
-                    resolve_time_hours: policy.resolution_time_hours || policy.default_resolution_hours,
-                    created_at: policy.created_at,
-                    updated_at: policy.updated_at
-                }));
+                const transformedData: SLAConfig[] = policiesData.map((policy: any) => {
+                    // Find targets for this policy
+                    const policyTargets = targetsData?.filter((t: any) => t.sla_policy_id === policy.id) || [];
+
+                    // Determine SLA Type based on targets
+                    const hasResponse = policyTargets.some((t: any) => t.sla_type === 'response');
+                    const hasResolution = policyTargets.some((t: any) => t.sla_type === 'resolution');
+                    let slaType: 'response' | 'resolve' | 'response_resolve' = 'response';
+                    if (hasResolution) slaType = 'response_resolve';
+                    else if (!hasResponse && hasResolution) slaType = 'resolve';
+
+                    // Get representative times (prefer Medium priority)
+                    const responseTarget = policyTargets.find((t: any) => t.sla_type === 'response' && t.priority === 'Medium')
+                        || policyTargets.find((t: any) => t.sla_type === 'response');
+                    const resolutionTarget = policyTargets.find((t: any) => t.sla_type === 'resolution' && t.priority === 'Medium')
+                        || policyTargets.find((t: any) => t.sla_type === 'resolution');
+
+                    // Helper to convert to hours safely
+                    const getHours = (target: any) => {
+                        if (!target) return undefined;
+                        // Use target_minutes if available (new schema), otherwise fallback
+                        const minutes = target.target_minutes;
+                        if (minutes !== undefined && minutes !== null) return minutes / 60;
+                        return undefined;
+                    };
+
+                    return {
+                        id: policy.id?.toString() || policy.policy_id?.toString(),
+                        sla_name: policy.name || policy.policy_name || 'Unnamed Policy',
+                        company_id: policy.company_id,
+                        company_name: policy.company?.company_name || 'Unknown',
+                        sla_type: slaType,
+                        is_active: policy.is_active ?? true,
+                        used_by_count: policy.used_by_count || 0,
+                        description: policy.description || '',
+                        response_time_hours: getHours(responseTarget),
+                        resolve_time_hours: getHours(resolutionTarget),
+                        created_at: policy.created_at,
+                        updated_at: policy.updated_at,
+                        conditions: policy.conditions || []
+                    };
+                });
                 setSlaConfigs(transformedData);
             }
 
@@ -189,15 +230,37 @@ const SLAManagement: React.FC = () => {
         }
     };
 
-    const handleToggleActive = async (sla: SLAConfig) => {
-        // Check if SLA is used by tickets
-        if (sla.is_active && sla.used_by_count > 0) {
-            const confirmed = confirm(
-                `This SLA is currently used by ${sla.used_by_count} tickets. Disabling it may affect ticket processing. Continue?`
-            );
-            if (!confirmed) return;
-        }
+    // ... (previous imports) ...
 
+    // Helper for relative time
+    const getTimeAgo = (dateString?: string) => {
+        if (!dateString) return 'Never';
+        const date = new Date(dateString);
+        const now = new Date();
+        const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+        if (seconds < 60) return 'Just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        if (days < 30) return `${days}d ago`;
+        const months = Math.floor(days / 30);
+        return `${months}mo ago`;
+    };
+
+    const handleToggleActive = async (sla: SLAConfig) => {
+        // Check if SLA is used by tickets and we are disabling it
+        if (sla.is_active && sla.used_by_count > 0) {
+            setPolicyToDeactivate(sla);
+            setIsDeactivateModalOpen(true);
+            return;
+        }
+        await performToggle(sla);
+    };
+
+    const performToggle = async (sla: SLAConfig) => {
         // Update state optimistically
         setSlaConfigs(prev =>
             prev.map(s =>
@@ -224,7 +287,89 @@ const SLAManagement: React.FC = () => {
         } catch (error) {
             console.error('Error updating SLA status:', error);
         }
+        setIsDeactivateModalOpen(false);
+        setPolicyToDeactivate(null);
     };
+
+    const [isDeactivateModalOpen, setIsDeactivateModalOpen] = useState(false);
+    const [policyToDeactivate, setPolicyToDeactivate] = useState<SLAConfig | null>(null);
+
+    // ... (rest of the component) ...
+
+    // Update transformedData to include conditions for tooltip
+    // In fetchData:
+    /*
+    const transformedData: SLAConfig[] = policiesData.map((policy: any) => {
+       // ... existing logic ...
+       return {
+           // ... existing fields ...
+           conditions: policy.conditions || [], // Ensure this is mapped
+           // ...
+       }
+    });
+    */
+
+    // Table Header Update:
+    /*
+    <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide">Last Update</th>
+    */
+
+    // Table Row Update:
+    /*
+    <td className="px-6 py-4">
+        <span className="text-sm text-gray-500">{getTimeAgo(sla.updated_at)}</span>
+    </td>
+    */
+
+    // Used By Cell Update (Tooltip):
+    /*
+    const getConditionTooltip = (conditions: any[]) => {
+        if (!conditions || conditions.length === 0) return 'Applied to general tickets';
+        return 'Applied to:\n' + conditions.map(c => `• ${c.field}: ${c.value}`).join('\n');
+    };
+    
+    <div className="flex items-center gap-1.5" title={getConditionTooltip(sla.conditions)}>
+       // ... existing content ...
+    </div>
+    */
+
+    // Modal JSX at the end:
+    /*
+    {isDeactivateModalOpen && policyToDeactivate && (
+         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+             <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-200">
+                 <div className="flex items-start gap-4">
+                     <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+                         <AlertTriangle size={24} className="text-amber-600" />
+                     </div>
+                     <div>
+                         <h3 className="text-lg font-bold text-gray-800">Disable SLA Policy?</h3>
+                         <p className="text-sm text-gray-600 mt-2">
+                             <span className="font-semibold text-gray-900">"{policyToDeactivate.sla_name}"</span> is currently applied to <span className="font-bold text-indigo-600">{policyToDeactivate.used_by_count} active tickets</span>.
+                         </p>
+                         <p className="text-sm text-gray-500 mt-2">
+                             Disabling this policy may stop SLA tracking for these tickets. Are you sure you want to proceed?
+                         </p>
+                     </div>
+                 </div>
+                 <div className="flex justify-end gap-3 mt-6">
+                     <button
+                         onClick={() => setIsDeactivateModalOpen(false)}
+                         className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors"
+                     >
+                         Cancel
+                     </button>
+                     <button
+                         onClick={() => performToggle(policyToDeactivate)}
+                         className="px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors"
+                     >
+                         Disable Policy
+                     </button>
+                 </div>
+             </div>
+         </div>
+    )}
+    */
 
     const handleViewDetail = (sla: SLAConfig) => {
         setSelectedSLA(sla);
@@ -233,11 +378,12 @@ const SLAManagement: React.FC = () => {
 
     const handleGoToPolicies = (sla: SLAConfig) => {
         // Navigate to SLA Policies with filter
-        console.log('Navigate to SLA Policies for:', sla.sla_name);
-        // This would typically use a navigation function
-    };
-
-    const getSLATypeBadge = (type: string) => {
+        if (onEditPolicy) {
+            onEditPolicy(sla.id);
+        } else {
+            console.log('Navigation not available. ID:', sla.id);
+        }
+    }; const getSLATypeBadge = (type: string) => {
         switch (type) {
             case 'response':
                 return (
@@ -461,13 +607,14 @@ const SLAManagement: React.FC = () => {
                             <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide">Type</th>
                             <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide text-center">Active</th>
                             <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide">Used By</th>
+                            <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide">Last Update</th>
                             <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide text-right">Action</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                         {loading ? (
                             <tr>
-                                <td colSpan={6} className="px-6 py-12 text-center">
+                                <td colSpan={7} className="px-6 py-12 text-center">
                                     <div className="flex flex-col items-center gap-3">
                                         <RefreshCw size={24} className="text-indigo-500 animate-spin" />
                                         <span className="text-gray-500">Loading SLA configurations...</span>
@@ -476,7 +623,7 @@ const SLAManagement: React.FC = () => {
                             </tr>
                         ) : paginatedSLAs.length === 0 ? (
                             <tr>
-                                <td colSpan={6} className="px-6 py-12 text-center">
+                                <td colSpan={7} className="px-6 py-12 text-center">
                                     <div className="flex flex-col items-center gap-3">
                                         <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
                                             <Settings size={28} className="text-gray-400" />
@@ -520,12 +667,20 @@ const SLAManagement: React.FC = () => {
                                         </div>
                                     </td>
                                     <td className="px-6 py-4">
-                                        <div className="flex items-center gap-1.5">
+                                        <div
+                                            className="flex items-center gap-1.5 cursor-help"
+                                            title={sla.conditions?.length ? `Applied to:\n${sla.conditions.map((c: any) => `• ${c.field === 'company_id' ? 'Department' : c.field}: ${c.value}`).join('\n')}` : 'Applied based on department'}
+                                        >
                                             <Ticket size={14} className="text-gray-400" />
                                             <span className={`text-sm font-medium ${sla.used_by_count > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>
                                                 {sla.used_by_count === 0 ? '0' : sla.used_by_count.toLocaleString()}
                                             </span>
                                             <span className="text-xs text-gray-400">tickets</span>
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <div className="flex items-center gap-1.5 text-gray-500">
+                                            <span className="text-sm font-medium">{getTimeAgo(sla.updated_at)}</span>
                                         </div>
                                     </td>
                                     <td className="px-6 py-4">
@@ -539,10 +694,11 @@ const SLAManagement: React.FC = () => {
                                             </button>
                                             <button
                                                 onClick={() => handleGoToPolicies(sla)}
-                                                className="p-2 text-gray-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                                                title="Go to Policies"
+                                                className="p-2 text-gray-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors flex items-center gap-1"
+                                                title="Go to Policies Editor"
                                             >
-                                                <ExternalLink size={16} />
+                                                <span className="text-xs font-semibold">Edit</span>
+                                                <ExternalLink size={14} />
                                             </button>
                                         </div>
                                     </td>
@@ -601,9 +757,46 @@ const SLAManagement: React.FC = () => {
                 </div>
             </div>
 
+            {/* Warning Modal for Deactivation */}
+            {isDeactivateModalOpen && policyToDeactivate && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-200">
+                        <div className="flex items-start gap-4">
+                            <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <AlertTriangle size={24} className="text-amber-600" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800">Disable SLA Policy?</h3>
+                                <p className="text-sm text-gray-600 mt-2">
+                                    <span className="font-semibold text-gray-900">"{policyToDeactivate.sla_name}"</span> is currently applied to <span className="font-bold text-indigo-600">{policyToDeactivate.used_by_count} active tickets</span>.
+                                </p>
+                                <p className="text-sm text-gray-500 mt-2">
+                                    Disabling this policy may stop SLA tracking for these tickets. Are you sure you want to proceed?
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button
+                                onClick={() => setIsDeactivateModalOpen(false)}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => performToggle(policyToDeactivate)}
+                                className="px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors"
+                            >
+                                Disable Policy
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Detail Modal (Read-Only) */}
             {isDetailModalOpen && selectedSLA && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    {/* ... (existing detail modal content remains same, just ensuring correct closing tags) ... */}
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50 to-violet-50">
                             <div>
@@ -691,8 +884,8 @@ const SLAManagement: React.FC = () => {
                                 </div>
                             </div>
 
-                            {/* Usage Stats */}
-                            <div className="flex items-center justify-between p-4 bg-indigo-50 rounded-xl border border-indigo-100">
+                            {/* Usage Stats (Enhanced with Tooltip) */}
+                            <div className="flex items-center justify-between p-4 bg-indigo-50 rounded-xl border border-indigo-100" title={selectedSLA.conditions?.length ? `Applied to:\n${selectedSLA.conditions.map((c: any) => `• ${c.field}: ${c.value}`).join('\n')}` : ''}>
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
                                         <Ticket size={20} className="text-indigo-600" />
@@ -702,6 +895,12 @@ const SLAManagement: React.FC = () => {
                                         <p className="text-lg font-bold text-indigo-800">{selectedSLA.used_by_count.toLocaleString()} tickets</p>
                                     </div>
                                 </div>
+                                {selectedSLA.conditions && selectedSLA.conditions.length > 0 && (
+                                    <div className="text-right">
+                                        <p className="text-xs text-indigo-400">Conditions</p>
+                                        <p className="text-sm font-medium text-indigo-700">{selectedSLA.conditions.length} rules</p>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
