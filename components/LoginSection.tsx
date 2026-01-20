@@ -49,6 +49,7 @@ const LoginSection: React.FC<LoginSectionProps> = ({ onLogin }) => {
       .select(`
       id,
       full_name,
+      email,
       role_id,
       company_id,
       status

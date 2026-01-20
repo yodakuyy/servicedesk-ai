@@ -22,10 +22,11 @@ const recentTickets: Ticket[] = [
 interface UserTicketListProps {
     onNavigate?: (view: string) => void;
     onViewTicket?: (ticketId: string) => void;
+    onCreateTicket?: () => void;
     userName?: string;
 }
 
-const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicket, userName }) => {
+const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicket, onCreateTicket, userName }) => {
     const [selectionType, setSelectionType] = useState<'create' | 'view' | null>(null);
     const [filter, setFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState<string>('');
@@ -116,10 +117,9 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
             </div>
 
             {/* Quick Actions Row */}
-            {/* Quick Actions Row */}
             <div className="flex justify-end">
                 <button
-                    onClick={() => setSelectionType('create')}
+                    onClick={() => onCreateTicket && onCreateTicket()}
                     className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-200 text-sm font-medium"
                 >
                     <Plus size={18} />

@@ -372,7 +372,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
 
     // User Incidents Data (Requester View Manager)
     if (currentView === 'my-tickets') {
-      return <RequesterTicketManager userName={userProfile?.full_name} />;
+      return <RequesterTicketManager userProfile={userProfile} />;
     }
 
     // NEW: Empty Placeholder for Service Requests
