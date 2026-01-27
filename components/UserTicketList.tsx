@@ -1,45 +1,106 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, FileText, Book, HelpCircle, Eye, Info, X, AlertCircle, Package, Bot, Send, MessageSquare, ArrowRight, CheckCircle, Clock, Search, Filter, Calendar, User, Activity } from 'lucide-react';
+import { Plus, CheckCircle, Clock, Package, AlertCircle, Activity, Search, Filter, Loader2 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 interface Ticket {
-    id: string;
+    id: string; // UUID from DB
+    ticket_number: string; // INC...
     subject: string;
-    status: 'Open' | 'Pending' | 'Resolved' | 'Closed';
-    slaStatus: 'Safe' | 'Warning' | 'Breached';
-    action: string;
-    lastUpdate: string;
-    created: string;
-    agent: string;
+    status: string; // from status_name
+    created_at: string;
+    description: string;
+    // agent: string; // Optional, add later if needed
 }
-
-const recentTickets: Ticket[] = [
-    { id: 'INC4568', subject: 'Email not syncing', status: 'Open', slaStatus: 'Warning', action: 'View', lastUpdate: '2h ago', created: '10/12/23', agent: 'Wesley.47' },
-    { id: 'RITM4321', subject: 'Request new mouse', status: 'Resolved', slaStatus: 'Safe', action: 'View', lastUpdate: '1d ago', created: '10/11/23', agent: 'Levinson.2' },
-    { id: 'INC4219', subject: 'App crash on login', status: 'Pending', slaStatus: 'Breached', action: 'View', lastUpdate: '3h ago', created: '10/10/23', agent: 'Adair.8' },
-    { id: 'RITM3992', subject: 'VPN access issue', status: 'Closed', slaStatus: 'Safe', action: 'View', lastUpdate: '2d ago', created: '10/09/23', agent: 'West.56' },
-];
 
 interface UserTicketListProps {
     onNavigate?: (view: string) => void;
     onViewTicket?: (ticketId: string) => void;
     onCreateTicket?: () => void;
     userName?: string;
+    userId?: string; // NEEDED for filtering
 }
 
-const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicket, onCreateTicket, userName }) => {
-    const [selectionType, setSelectionType] = useState<'create' | 'view' | null>(null);
+const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicket, onCreateTicket, userName, userId }) => {
+    // State
+    const [tickets, setTickets] = useState<Ticket[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
     const [filter, setFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState<string>('');
-    const [slaStatusFilter, setSlaStatusFilter] = useState<string>('');
-    const [agentFilter, setAgentFilter] = useState<string[]>([]);
-    const [dateFilter, setDateFilter] = useState<{ start: string; end: string } | null>(null);
-    const [isFilterOpen, setIsFilterOpen] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
+    const [isFilterOpen, setIsFilterOpen] = useState(false);
+
+    // Stats State
+    const [stats, setStats] = useState({
+        open: 0,
+        pending: 0,
+        resolved: 0,
+        closed: 0,
+        inProgress: 0
+    });
+
     const itemsPerPage = 5;
     const filterRef = useRef<HTMLDivElement>(null);
 
-    // Get unique agents
-    const agents = Array.from(new Set(recentTickets.map(t => t.agent)));
+    // Fetch Tickets from Supabase
+    useEffect(() => {
+        const fetchUserTickets = async () => {
+            setIsLoading(true);
+            try {
+                // Determine user ID to filter by. 
+                // If userId prop is missing, we might need to get it from auth session.
+                let targetUserId = userId;
+                if (!targetUserId) {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    targetUserId = user?.id;
+                }
+
+                if (!targetUserId) {
+                    console.warn("No user ID found for fetching tickets.");
+                    setIsLoading(false);
+                    return;
+                }
+
+                const { data, error } = await supabase
+                    .from('tickets')
+                    .select(`
+                        id, ticket_number, subject, description, created_at, status_id,
+                        ticket_statuses!status_id (status_name)
+                    `)
+                    .eq('requester_id', targetUserId)
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+
+                if (data) {
+                    const formattedTickets: Ticket[] = data.map((t: any) => ({
+                        id: t.id,
+                        ticket_number: t.ticket_number,
+                        subject: t.subject,
+                        description: t.description,
+                        created_at: new Date(t.created_at).toLocaleDateString() + ' ' + new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                        status: t.ticket_statuses?.status_name || 'Unknown'
+                    }));
+                    setTickets(formattedTickets);
+
+                    // Calculate Stats
+                    const newStats = {
+                        open: formattedTickets.filter(t => t.status === 'Open' || t.status === 'New').length,
+                        pending: formattedTickets.filter(t => t.status === 'Pending').length,
+                        resolved: formattedTickets.filter(t => t.status === 'Resolved').length,
+                        closed: formattedTickets.filter(t => t.status === 'Closed').length,
+                        inProgress: formattedTickets.filter(t => t.status === 'In Progress' || t.status === 'WIP' || t.status === 'Assigned').length
+                    };
+                    setStats(newStats);
+                }
+            } catch (err) {
+                console.error("Error fetching user tickets:", err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchUserTickets();
+    }, [userId]);
 
     // Close filter when clicking outside
     useEffect(() => {
@@ -54,28 +115,15 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
         };
     }, []);
 
-    const filteredTickets = recentTickets.filter(ticket => {
+    // Filter Logic
+    const filteredTickets = tickets.filter(ticket => {
         const matchesSearch = (ticket.subject.toLowerCase().includes(filter.toLowerCase()) ||
-            ticket.id.toLowerCase().includes(filter.toLowerCase()) ||
-            ticket.agent.toLowerCase().includes(filter.toLowerCase()) ||
+            ticket.ticket_number.toLowerCase().includes(filter.toLowerCase()) ||
             ticket.status.toLowerCase().includes(filter.toLowerCase()));
 
         const matchesStatus = statusFilter === '' || ticket.status === statusFilter;
-        const matchesSla = slaStatusFilter === '' || ticket.slaStatus === slaStatusFilter;
-        const matchesAgent = agentFilter.length === 0 || agentFilter.includes(ticket.agent);
 
-        let matchesDate = true;
-        if (dateFilter) {
-            const ticketDate = new Date(ticket.created);
-            const startDate = dateFilter.start ? new Date(dateFilter.start) : null;
-            const endDate = dateFilter.end ? new Date(dateFilter.end) : null;
-
-            if (startDate && endDate) {
-                matchesDate = ticketDate >= startDate && ticketDate <= endDate;
-            }
-        }
-
-        return matchesSearch && matchesStatus && matchesSla && matchesAgent && matchesDate;
+        return matchesSearch && matchesStatus;
     });
 
     const totalPages = Math.ceil(filteredTickets.length / itemsPerPage);
@@ -95,11 +143,11 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
             {/* Stats Cards */}
             <div className="grid grid-cols-5 gap-4">
                 {[
-                    { label: 'OPEN', value: '53', sub: '+19 from yesterday', color: 'text-blue-600', bg: 'bg-blue-50', iconBg: 'bg-blue-100', icon: AlertCircle },
-                    { label: 'IN PROGRESS', value: '41', sub: '+12 from yesterday', color: 'text-purple-600', bg: 'bg-white', iconBg: 'bg-purple-100', icon: Activity },
-                    { label: 'PENDING', value: '32', sub: '+19 from yesterday', color: 'text-orange-500', bg: 'bg-white', iconBg: 'bg-orange-100', icon: Clock },
-                    { label: 'RESOLVED', value: '12', sub: '+19 from yesterday', color: 'text-green-600', bg: 'bg-white', iconBg: 'bg-green-100', icon: CheckCircle },
-                    { label: 'CLOSED', value: '76', sub: '+23 from yesterday', color: 'text-gray-700', bg: 'bg-white', iconBg: 'bg-gray-100', icon: Package },
+                    { label: 'OPEN', value: stats.open, sub: 'Active tickets', color: 'text-blue-600', bg: 'bg-blue-50', iconBg: 'bg-blue-100', icon: AlertCircle },
+                    { label: 'IN PROGRESS', value: stats.inProgress, sub: 'Being worked on', color: 'text-purple-600', bg: 'bg-white', iconBg: 'bg-purple-100', icon: Activity },
+                    { label: 'PENDING', value: stats.pending, sub: 'Waiting action', color: 'text-orange-500', bg: 'bg-white', iconBg: 'bg-orange-100', icon: Clock },
+                    { label: 'RESOLVED', value: stats.resolved, sub: 'Completed', color: 'text-green-600', bg: 'bg-white', iconBg: 'bg-green-100', icon: CheckCircle },
+                    { label: 'CLOSED', value: stats.closed, sub: 'Archived', color: 'text-gray-700', bg: 'bg-white', iconBg: 'bg-gray-100', icon: Package },
                 ].map((stat, i) => (
                     <div key={i} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between h-40 relative overflow-hidden group hover:shadow-md transition-all">
                         <div className="flex justify-between items-start mb-4">
@@ -127,9 +175,6 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                 </button>
             </div>
 
-
-
-
             {/* Incidents List Table */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="p-6 border-b border-gray-100 flex justify-between items-center">
@@ -141,7 +186,7 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                             <input
                                 type="text"
-                                placeholder="Search by ticket number, subject, or agent..."
+                                placeholder="Search by ticket number or subject..."
                                 value={filter}
                                 onChange={(e) => setFilter(e.target.value)}
                                 className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-gray-50"
@@ -169,56 +214,13 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                                             >
                                                 <option value="">All Statuses</option>
                                                 <option value="Open">Open</option>
+                                                <option value="In Progress">In Progress</option>
                                                 <option value="Pending">Pending</option>
                                                 <option value="Resolved">Resolved</option>
                                                 <option value="Closed">Closed</option>
                                             </select>
                                         </div>
-                                        {/* Date Range Filter */}
-                                        <div>
-                                            <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 px-1">Date Range</div>
-                                            <div className="space-y-3">
-                                                <div>
-                                                    <label className="text-xs text-gray-500 block mb-1.5 ml-1">Start Date</label>
-                                                    <div className="relative">
-                                                        <input
-                                                            type="date"
-                                                            className="w-full border border-gray-200 rounded-lg pl-3 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-gray-50/30"
-                                                            value={dateFilter?.start || ''}
-                                                            onChange={(e) => setDateFilter(prev => ({ ...prev, start: e.target.value, end: prev?.end || '' }))}
-                                                        />
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <label className="text-xs text-gray-500 block mb-1.5 ml-1">End Date</label>
-                                                    <div className="relative">
-                                                        <input
-                                                            type="date"
-                                                            className="w-full border border-gray-200 rounded-lg pl-3 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-gray-50/30"
-                                                            value={dateFilter?.end || ''}
-                                                            onChange={(e) => setDateFilter(prev => ({ ...prev, end: e.target.value, start: prev?.start || '' }))}
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
                                     </div>
-
-                                    {(statusFilter || slaStatusFilter || agentFilter.length > 0 || dateFilter) && (
-                                        <div className="border-t border-gray-100 p-3 bg-gray-50/50">
-                                            <button
-                                                onClick={() => {
-                                                    setStatusFilter('');
-                                                    setSlaStatusFilter('');
-                                                    setAgentFilter([]);
-                                                    setDateFilter(null);
-                                                }}
-                                                className="text-xs text-red-600 hover:text-red-700 font-bold w-full text-center py-2 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100"
-                                            >
-                                                Reset Filters
-                                            </button>
-                                        </div>
-                                    )}
                                 </div>
                             )}
                         </div>
@@ -232,21 +234,28 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                                 <th className="px-6 py-4 font-semibold text-gray-500 text-xs uppercase tracking-wider">Ticket</th>
                                 <th className="px-6 py-4 font-semibold text-gray-500 text-xs uppercase tracking-wider">Subject</th>
                                 <th className="px-6 py-4 font-semibold text-gray-500 text-xs uppercase tracking-wider">Status</th>
-                                <th className="px-6 py-4 font-semibold text-gray-500 text-xs uppercase tracking-wider">Last Update</th>
                                 <th className="px-6 py-4 font-semibold text-gray-500 text-xs uppercase tracking-wider">Created</th>
-                                <th className="px-6 py-4 font-semibold text-gray-500 text-xs uppercase tracking-wider">Agent</th>
                                 <th className="px-6 py-4 font-semibold text-gray-500 text-xs uppercase tracking-wider">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
-                            {paginatedTickets.length > 0 ? (
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                                        <div className="flex justify-center items-center gap-2">
+                                            <Loader2 className="animate-spin text-indigo-600" size={20} />
+                                            <span>Loading tickets...</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : paginatedTickets.length > 0 ? (
                                 paginatedTickets.map((ticket) => (
                                     <tr key={ticket.id} className="hover:bg-gray-50/50 transition-colors h-[52px]">
-                                        <td className="px-6 py-4 font-medium text-gray-700 text-sm">{ticket.id}</td>
-                                        <td className="px-6 py-4 text-gray-600 text-sm">{ticket.subject}</td>
+                                        <td className="px-6 py-4 font-medium text-gray-700 text-sm">{ticket.ticket_number}</td>
+                                        <td className="px-6 py-4 text-gray-600 text-sm max-w-xs truncate">{ticket.subject}</td>
                                         <td className="px-6 py-4">
                                             <span
-                                                className={`px-3 py-1 rounded-md text-xs font-bold inline-flex items-center gap-1.5 ${ticket.status === 'Open'
+                                                className={`px-3 py-1 rounded-md text-xs font-bold inline-flex items-center gap-1.5 ${ticket.status === 'Open' || ticket.status === 'New'
                                                     ? 'bg-blue-100 text-blue-700'
                                                     : ticket.status === 'Pending'
                                                         ? 'bg-orange-100 text-orange-700'
@@ -258,23 +267,21 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                                                 {ticket.status}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 text-gray-600 text-sm">{ticket.lastUpdate}</td>
-                                        <td className="px-6 py-4 text-gray-600 text-sm">{ticket.created}</td>
-                                        <td className="px-6 py-4 text-gray-600 text-sm">{ticket.agent}</td>
+                                        <td className="px-6 py-4 text-gray-600 text-sm">{ticket.created_at}</td>
                                         <td className="px-6 py-4">
                                             <button
                                                 onClick={() => onViewTicket && onViewTicket(ticket.id)}
                                                 className="text-gray-500 hover:text-gray-700 font-medium transition-colors text-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50"
                                             >
-                                                View
+                                                View Details
                                             </button>
                                         </td>
                                     </tr>
                                 ))
                             ) : (
                                 <tr>
-                                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500 text-sm">
-                                        No tickets found matching your filter.
+                                    <td colSpan={5} className="px-6 py-8 text-center text-gray-500 text-sm">
+                                        No tickets found. Create your first incident!
                                     </td>
                                 </tr>
                             )}

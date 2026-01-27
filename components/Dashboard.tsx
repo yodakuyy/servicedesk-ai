@@ -353,7 +353,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
     }
 
     if (currentView === 'incidents') {
-      return <IncidentList onViewTicket={(id) => handleViewTicket(id, 'incidents')} />;
+      // Changed: All Incidents now uses the new Agent Workspace View
+      return <AgentTicketView userProfile={userProfile} />;
     }
 
     if (currentView === 'knowledge') {
@@ -388,9 +389,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
       );
     }
 
-    // NEW: Agent View for My Tickets
+    // NEW: My Tickets (Empty Placeholder as requested)
     if (currentView === 'user-incidents') {
-      return <AgentTicketView />;
+      return (
+        <div className="p-8 flex flex-col items-center justify-center h-full text-center">
+          <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
+            <Ticket size={32} className="text-indigo-400" />
+          </div>
+          <h3 className="text-lg font-bold text-gray-800 mb-2">My Tickets</h3>
+          <p className="text-gray-500 max-w-md">This view is currently empty. Please use "All Incidents" to manage tickets.</p>
+        </div>
+      );
     }
 
     // NEW: Empty Placeholder for Escalated Tickets

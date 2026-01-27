@@ -1,499 +1,558 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     Search, Filter, Clock, AlertCircle, CheckCircle2, MoreHorizontal,
     MessageSquare, FileText, GitBranch, Shield, Send, Sparkles,
     ChevronRight, ChevronLeft, Paperclip, Mic, User, Copy, ExternalLink,
-    ThumbsUp, RefreshCw, AlertTriangle
+    ThumbsUp, RefreshCw, AlertTriangle, Loader2, Zap, X, Info, BookOpen,
+    ArrowUpRight, BarChart3
 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import RichTextEditor from './RichTextEditor';
 
-const AgentTicketView: React.FC = () => {
-    const [selectedTicketId, setSelectedTicketId] = useState<string>('INC-10231');
+interface AgentTicketViewProps {
+    userProfile?: any;
+}
+
+const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
+    // State
+    const [tickets, setTickets] = useState<any[]>([]);
+    const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+    const [selectedTicket, setSelectedTicket] = useState<any | null>(null);
     const [activeTab, setActiveTab] = useState<'conversation' | 'details' | 'workflow' | 'sla'>('conversation');
     const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
+    const [isLoading, setIsLoading] = useState(true);
+    const [messages, setMessages] = useState<any[]>([]);
+    const [newMessage, setNewMessage] = useState('');
+    const [aiInsight, setAiInsight] = useState<any>(null);
+    const [agentGroups, setAgentGroups] = useState<string[]>([]);
 
-    // Mock Data
-    const tickets = [
-        {
-            id: 'INC-10231',
-            subject: 'Login Failed – Finance System',
-            priority: 'P1',
-            status: 'Waiting Agent',
-            sla_status: 'critical', // critical, warning, safe
-            sla_time: '00:14:21',
-            requester: 'Budi Santoso',
-            updated: '10m ago'
-        },
-        {
-            id: 'INC-10230',
-            subject: 'Printer 5th Floor Jammed',
-            priority: 'P3',
-            status: 'In Progress',
-            sla_status: 'warning',
-            sla_time: '02:45:00',
-            requester: 'Sarah Lee',
-            updated: '1h ago'
-        },
-        {
-            id: 'INC-10229',
-            subject: 'WiFi Slow in Meeting Room B',
-            priority: 'P2',
-            status: 'Assigned',
-            sla_status: 'safe',
-            sla_time: '04:20:00',
-            requester: 'Mike Chen',
-            updated: '3h ago'
-        }
-    ];
+    useEffect(() => {
+        const fetchAgentGroups = async () => {
+            if (!userProfile?.id) return;
+            const { data } = await supabase.from('user_groups').select('group_id').eq('user_id', userProfile.id);
+            if (data) setAgentGroups(data.map(g => g.group_id));
+        };
+        fetchAgentGroups();
+    }, [userProfile]);
 
-    const timeline = [
-        {
-            id: 1,
-            type: 'requester',
-            author: 'Budi Santoso',
-            time: '09:10',
-            content: 'Saya tidak bisa login ke Finance System. Muncul error "Access Denied" padahal kemarin bisa.'
-        },
-        {
-            id: 2,
-            type: 'internal',
-            author: 'Agent (You)',
-            time: '09:12',
-            content: 'Kemungkinan role belum ter-assign setelah update sistem semalam.'
-        },
-        {
-            id: 3,
-            type: 'system',
-            content: 'SLA Status changed to Warning (75% time used)'
-        }
-    ];
+    useEffect(() => {
+        const fetchTickets = async () => {
+            if (agentGroups.length === 0) {
+                setIsLoading(false);
+                return;
+            }
+            setIsLoading(true);
+            const { data } = await supabase
+                .from('tickets')
+                .select(`
+                    id, ticket_number, subject, priority, created_at, assignment_group_id,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    requester:profiles!fk_tickets_requester (full_name)
+                `)
+                .in('assignment_group_id', agentGroups)
+                .order('created_at', { ascending: false });
+
+            if (data) {
+                setTickets(data);
+                if (data.length > 0 && !selectedTicketId) setSelectedTicketId(data[0].id);
+            }
+            setIsLoading(false);
+        };
+        if (agentGroups.length > 0) fetchTickets();
+    }, [agentGroups]);
+
+    useEffect(() => {
+        if (!selectedTicketId) return;
+        const fetchDetails = async () => {
+            const { data: ticket } = await supabase
+                .from('tickets')
+                .select(`
+                    *,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_categories (name),
+                    services (name),
+                    requester:profiles!fk_tickets_requester (full_name, email),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (name)
+                `)
+                .eq('id', selectedTicketId)
+                .single();
+            setSelectedTicket(ticket);
+
+            const { data: aiData } = await supabase.from('ticket_ai_insights').select('*').eq('ticket_id', selectedTicketId).single();
+            setAiInsight(aiData);
+
+            const { data: msgs } = await supabase
+                .from('ticket_messages')
+                .select('*, sender:profiles!sender_id(full_name)')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: true });
+
+            if (msgs) {
+                setMessages(msgs.map(m => ({
+                    ...m,
+                    content: m.message_content,
+                    sender_name: m.sender?.full_name || (m.sender_type === 'requester' ? 'User' : 'Agent')
+                })));
+            }
+        };
+        fetchDetails();
+    }, [selectedTicketId]);
+
+    const handleSendMessage = async () => {
+        if (!newMessage.trim() || !selectedTicketId) return;
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            await supabase.from('ticket_messages').insert({
+                ticket_id: selectedTicketId,
+                sender_id: user.id,
+                sender_type: 'agent',
+                message_content: newMessage
+            });
+            setNewMessage('');
+            const { data: msgs } = await supabase
+                .from('ticket_messages')
+                .select('*, sender:profiles!sender_id(full_name)')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: true });
+            if (msgs) {
+                setMessages(msgs.map(m => ({
+                    ...m,
+                    content: m.message_content,
+                    sender_name: m.sender?.full_name || 'Agent'
+                })));
+            }
+        } catch (err) { console.error(err); }
+    };
 
     return (
-        <div className="h-full w-full flex bg-white font-sans overflow-hidden border-t border-gray-200">
-            {/* LEFT PANEL - Ticket List */}
-            <div className="w-80 flex-shrink-0 border-r border-gray-200 flex flex-col bg-slate-50">
-                {/* Header */}
-                <div className="p-4 border-b border-gray-200 bg-white">
-                    <div className="relative mb-3">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                        <input
-                            type="text"
-                            placeholder="Search ticket..."
-                            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                        />
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <button className="flex items-center gap-2 text-xs font-semibold text-gray-700 bg-gray-100 px-3 py-1.5 rounded-md hover:bg-gray-200 transition-colors">
-                            <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                            My Tickets
-                            <ChevronHeader />
-                        </button>
-                        <button className="text-gray-500 hover:text-gray-700 p-1">
-                            <Filter size={16} />
-                        </button>
+        <div className="flex h-full bg-[#f8f9fa] font-sans overflow-hidden text-[#333]">
+
+            {/* 1. LEFT PANEL - Ticket List */}
+            <div className="w-[320px] flex flex-col border-r border-gray-200 bg-white">
+                <div className="p-3 border-b border-gray-100 flex items-center justify-between">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-2.5 top-2.5 text-gray-400" size={14} />
+                        <input type="text" placeholder="Search Incidents..." className="w-full bg-gray-50 border border-gray-100 rounded-md py-1.5 pl-8 pr-3 text-xs focus:ring-1 focus:ring-blue-500/20" />
                     </div>
                 </div>
 
-                {/* List */}
                 <div className="flex-1 overflow-y-auto">
                     {tickets.map(ticket => (
                         <div
                             key={ticket.id}
                             onClick={() => setSelectedTicketId(ticket.id)}
-                            className={`p-4 border-b border-gray-100 cursor-pointer hover:bg-white transition-colors ${selectedTicketId === ticket.id ? 'bg-white border-l-4 border-l-indigo-600 shadow-sm' : 'border-l-4 border-l-transparent'
-                                }`}
+                            className={`px-4 py-3 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedTicketId === ticket.id ? 'bg-blue-50/50' : ''}`}
                         >
                             <div className="flex justify-between items-start mb-1">
                                 <div className="flex items-center gap-2">
-                                    <SLAIndicator status={ticket.sla_status} />
-                                    <span className="font-bold text-xs text-indigo-600">{ticket.id}</span>
+                                    <div className={`w-2 h-2 rounded-full ${ticket.priority === 'High' ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]'}`} />
+                                    <span className="font-bold text-xs text-blue-600">{ticket.ticket_number}</span>
                                 </div>
-                                <span className="text-[10px] text-gray-400">{ticket.updated}</span>
+                                <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">4m ago</span>
                             </div>
-                            <h4 className="text-sm font-semibold text-gray-800 mb-2 line-clamp-2 leading-tight">
+                            <h4 className="text-[13px] font-semibold text-gray-700 line-clamp-1 mb-1 leading-snug">
                                 {ticket.subject}
                             </h4>
-                            <div className="flex justify-between items-end">
+                            <div className="flex justify-between items-center text-[11px] font-medium">
+                                <span className="text-gray-400 truncate max-w-[120px]">{ticket.requester?.full_name || 'Anonymous'}</span>
                                 <div className="flex items-center gap-2">
-                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${ticket.priority === 'P1' ? 'bg-red-50 text-red-700 border-red-100' :
-                                        ticket.priority === 'P2' ? 'bg-orange-50 text-orange-700 border-orange-100' :
-                                            'bg-blue-50 text-blue-700 border-blue-100'
-                                        }`}>
-                                        {ticket.priority}
-                                    </span>
-                                    <span className="text-[10px] text-gray-500">{ticket.status}</span>
-                                </div>
-                                <div className={`flex items-center gap-1 text-xs font-mono font-medium ${ticket.sla_status === 'critical' ? 'text-red-600' :
-                                    ticket.sla_status === 'warning' ? 'text-orange-500' : 'text-green-600'
-                                    }`}>
-                                    <Clock size={10} />
-                                    {ticket.sla_time}
+                                    <span className="text-red-500 font-bold tracking-tighter text-[10px]">00:14:21</span>
                                 </div>
                             </div>
+                            <div className="mt-1 text-[10px] text-gray-400 italic">{ticket.ticket_statuses?.status_name}</div>
                         </div>
                     ))}
                 </div>
             </div>
 
-            {/* CENTER PANEL - Ticket Detail */}
-            <div className="flex-1 flex flex-col min-w-0 bg-white">
-                {/* 1. Ticket Header */}
-                <div className="p-5 border-b border-gray-100">
-                    <div className="flex justify-between items-start mb-3">
-                        <div>
-                            <div className="flex items-center gap-3 mb-1">
-                                <h1 className="text-xl font-bold text-gray-900">INC-10231</h1>
-                                <span className="text-gray-300">|</span>
-                                <h1 className="text-xl font-bold text-gray-900">Login Failed – Finance System</h1>
+            {/* 2. CENTER PANEL - Incident Detail */}
+            {selectedTicket ? (
+                <div className="flex-1 flex flex-col min-w-0 bg-white">
+                    {/* Header Section */}
+                    <div className="p-6 border-b border-gray-100">
+                        <div className="flex justify-between items-start mb-4">
+                            <div className="flex-1">
+                                <h1 className="text-xl font-black text-gray-800 mb-2">
+                                    {selectedTicket.ticket_number} &nbsp; {selectedTicket.subject}
+                                </h1>
+                                <div className="flex items-center gap-3">
+                                    <span className="px-2.5 py-1 bg-red-100 text-red-600 rounded text-[10px] font-black tracking-widest uppercase border border-red-200">
+                                        P1 - Critical
+                                    </span>
+                                    <span className="px-2.5 py-1 bg-amber-100 text-amber-600 rounded text-[10px] font-black tracking-widest uppercase border border-amber-200">
+                                        {selectedTicket.ticket_statuses?.status_name}
+                                    </span>
+                                </div>
                             </div>
-                            <div className="flex items-center gap-3">
-                                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-bold bg-pink-100 text-pink-700 border border-pink-200">
-                                    <AlertCircle size={12} />
-                                    P1 - Critical
-                                </span>
-                                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">
-                                    Waiting Agent
-                                </span>
+                            <div className="flex gap-2">
+                                <button className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 rounded-lg shadow-md shadow-indigo-100 hover:bg-indigo-700 transition-all">Assign to me</button>
+                                <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg border border-gray-200"><MoreHorizontal size={16} /></button>
                             </div>
                         </div>
-                        <div className="flex gap-2">
-                            <button className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">
-                                Assign to me
-                            </button>
-                            <button className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                                <MoreHorizontal size={20} />
-                            </button>
-                        </div>
-                    </div>
 
-                    {/* SLA Progress Bar */}
-                    <div className="bg-gray-50 rounded-lg p-3 border border-gray-100 flex items-center gap-4">
-                        <div className="flex-1">
-                            <div className="flex justify-between text-xs mb-1">
-                                <span className="font-semibold text-gray-600">Response SLA</span>
-                                <span className="font-bold text-red-600">75% Used</span>
+                        {/* Real SLA Bar */}
+                        <div className="mt-6 flex flex-col gap-1.5">
+                            <div className="flex justify-between text-[11px] font-bold">
+                                <span className="text-gray-400 font-black uppercase tracking-widest">Response SLA</span>
+                                <div className="flex items-center gap-3">
+                                    <span className="text-red-500">75% Used</span>
+                                    <span className="text-gray-900 bg-gray-100 px-2 py-0.5 rounded flex items-center gap-1">
+                                        <Clock size={10} /> 00:01:23
+                                    </span>
+                                </div>
                             </div>
-                            <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
-                                <div className="h-full bg-gradient-to-r from-green-500 via-yellow-400 to-red-500 w-[75%] rounded-full"></div>
+                            <div className="h-2.5 w-full bg-gray-100 rounded-full overflow-hidden flex shadow-inner">
+                                <div className="h-full bg-green-500 border-r border-white/20" style={{ width: '45%' }} />
+                                <div className="h-full bg-amber-500 border-r border-white/20" style={{ width: '30%' }} />
+                                <div className="h-full bg-gray-200" style={{ width: '25%' }} />
                             </div>
-                        </div>
-                        <div className="flex items-center gap-2 text-red-600 font-bold font-mono text-sm bg-white px-3 py-1 rounded border border-red-100 shadow-sm">
-                            <Clock size={14} />
-                            00:14:21
                         </div>
                     </div>
-                </div>
 
-                {/* 2. Tabs Navigation */}
-                <div className="flex border-b border-gray-200 px-4">
-                    <TabItem active={activeTab === 'conversation'} onClick={() => setActiveTab('conversation')} icon={MessageSquare} label="Conversation" />
-                    <TabItem active={activeTab === 'details'} onClick={() => setActiveTab('details')} icon={FileText} label="Details" />
-                    <TabItem active={activeTab === 'workflow'} onClick={() => setActiveTab('workflow')} icon={GitBranch} label="Workflow" />
-                    <TabItem active={activeTab === 'sla'} onClick={() => setActiveTab('sla')} icon={Shield} label="SLA" />
-                </div>
+                    {/* Navigation Tabs */}
+                    <div className="flex border-b border-gray-100 px-6">
+                        <TabItem active={activeTab === 'conversation'} onClick={() => setActiveTab('conversation')} icon={MessageSquare} label="Conversation" />
+                        <TabItem active={activeTab === 'details'} onClick={() => setActiveTab('details')} icon={FileText} label="Details" />
+                        <TabItem active={activeTab === 'workflow'} onClick={() => setActiveTab('workflow')} icon={GitBranch} label="Work Flow" />
+                        <TabItem active={activeTab === 'sla'} onClick={() => setActiveTab('sla')} icon={Clock} label="SLA" />
+                    </div>
 
-                {/* 3. Panel Content */}
-                <div className="flex-1 overflow-y-auto bg-slate-50/50 p-6 relative">
-                    {/* Conversation View */}
-                    {activeTab === 'conversation' && (
-                        <div className="max-w-3xl mx-auto pb-40">
-                            <div className="space-y-6">
-                                {timeline.map((msg) => (
-                                    <div key={msg.id} className={`flex gap-4 ${msg.type === 'internal' ? 'bg-yellow-50/50 p-4 rounded-xl border border-yellow-100' : ''}`}>
-                                        {msg.type !== 'system' && (
-                                            <div className="flex-shrink-0">
-                                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${msg.type === 'internal' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-600'}`}>
-                                                    {msg.author?.charAt(0)}
-                                                </div>
-                                            </div>
-                                        )}
-
+                    {/* Panel Content Area */}
+                    <div className="flex-1 overflow-y-auto bg-white p-6 relative custom-scrollbar">
+                        {activeTab === 'conversation' && (
+                            <div className="space-y-8 max-w-4xl mx-auto pb-10">
+                                {selectedTicket.description && (
+                                    <div className="flex gap-4 group">
+                                        <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-[11px] font-black flex-shrink-0 text-white shadow-lg shadow-indigo-100">
+                                            {selectedTicket.requester?.full_name?.charAt(0) || 'U'}
+                                        </div>
                                         <div className="flex-1">
-                                            {msg.type === 'system' ? (
-                                                <div className="flex items-center justify-center gap-2 text-xs text-gray-400 my-2">
-                                                    <div className="h-px bg-gray-200 w-12"></div>
-                                                    <span>{msg.content}</span>
-                                                    <div className="h-px bg-gray-200 w-12"></div>
-                                                </div>
-                                            ) : (
-                                                <div>
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <span className="font-bold text-sm text-gray-900">{msg.author}</span>
-                                                        <span className="text-xs text-gray-500">{msg.time}</span>
-                                                        {msg.type === 'internal' && (
-                                                            <span className="text-[10px] font-bold bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded border border-yellow-200">INTERNAL NOTE</span>
-                                                        )}
-                                                    </div>
-                                                    <p className="text-sm text-gray-800 leading-relaxed">{msg.content}</p>
-                                                </div>
-                                            )}
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <span className="text-[13px] font-black text-gray-900">{selectedTicket.requester?.full_name}</span>
+                                                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{new Date(selectedTicket.created_at).toLocaleString()}</span>
+                                                <span className="bg-indigo-50 text-indigo-600 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-indigo-100 flex items-center gap-1">
+                                                    <FileText size={10} /> Initial Issue
+                                                </span>
+                                            </div>
+                                            <div className="bg-white p-5 rounded-2xl border-2 border-indigo-50 shadow-sm text-[14px] text-gray-700 leading-relaxed font-medium transition-all hover:border-indigo-100">
+                                                <div className="prose prose-indigo prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: selectedTicket.description }} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {messages.map((msg) => (
+                                    <div key={msg.id} className="flex gap-4">
+                                        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 ${msg.sender_type === 'agent' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                                            {msg.sender_name?.charAt(0) || 'U'}
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-[13px] font-bold text-gray-800">{msg.sender_name}</span>
+                                                <span className="text-[10px] text-gray-400 font-bold uppercase">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                                {msg.sender_type === 'agent' && <span className="bg-amber-100 text-amber-700 text-[9px] px-1 font-black uppercase rounded ml-2">Internal Note</span>}
+                                            </div>
+                                            <div className={`text-[13.5px] text-gray-600 leading-relaxed font-medium prose prose-sm max-w-none ${msg.sender_type === 'agent' ? 'bg-amber-50/30 p-4 rounded-xl border border-amber-100/50' : ''}`} dangerouslySetInnerHTML={{ __html: msg.content }} />
                                         </div>
                                     </div>
                                 ))}
-                            </div>
-                        </div>
-                    )}
 
-                    {/* Details View */}
-                    {activeTab === 'details' && (
-                        <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                            <div className="space-y-4">
-                                <DetailRow label="Category" value="Access Issue > Permission Denied" editable />
-                                <DetailRow label="Impact" value="High" badge="red" />
-                                <DetailRow label="Urgency" value="High" badge="red" />
-                                <DetailRow label="Department" value="Finance" />
-                                <DetailRow label="Service" value="Finance System" />
-                                <DetailRow label="Requester" value="Budi Santoso" />
+                                {/* System Divider */}
+                                <div className="flex items-center gap-4 py-6 opacity-40">
+                                    <div className="h-px bg-gray-200 flex-1" />
+                                    <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Ticket Status changed to Waiting Agent by Yogi Danis</span>
+                                    <div className="h-px bg-gray-200 flex-1" />
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        )}
 
-                    {/* Workflow View */}
-                    {activeTab === 'workflow' && (
-                        <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-8">
-                            <div className="space-y-0 relative">
-                                <div className="absolute left-[15px] top-4 bottom-4 w-0.5 bg-gray-100"></div>
-                                <WorkflowStep status="completed" title="Ticket Created" date="Today, 09:10" />
-                                <WorkflowStep status="completed" title="Assigned to Group DIT" date="Today, 09:11" />
-                                <WorkflowStep status="active" title="Verify Access" date="In Progress" />
-                                <WorkflowStep status="pending" title="Apply Fix" />
-                                <WorkflowStep status="pending" title="User Confirmation" />
-                                <WorkflowStep status="pending" title="Resolved" />
+                        {activeTab === 'details' && (
+                            <div className="grid grid-cols-2 gap-8 max-w-4xl mx-auto">
+                                <div className="space-y-4">
+                                    <DetailRow label="Category" value={selectedTicket.ticket_categories?.name || '-'} />
+                                    <DetailRow label="Impact" value="Enterprise" />
+                                    <DetailRow label="Urgency" value="High" />
+                                    <DetailRow label="Affected Service" value={selectedTicket.services?.name || '-'} />
+                                </div>
+                                <div className="space-y-4">
+                                    <DetailRow label="Requester" value={selectedTicket.requester?.full_name} />
+                                    <DetailRow label="Email" value={selectedTicket.requester?.email} />
+                                    <DetailRow label="Assignee" value={selectedTicket.assigned_agent?.full_name || 'Unassigned'} />
+                                </div>
                             </div>
-                            <div className="mt-8 pt-6 border-t border-gray-100 flex gap-3">
-                                <button className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Move Next</button>
-                                <button className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Request Approval</button>
-                            </div>
-                        </div>
-                    )}
+                        )}
 
-                    {/* SLA Tab */}
-                    {activeTab === 'sla' && (
-                        <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                            <h3 className="font-bold text-gray-800 mb-4">Applied Policy: Finance P1 SLA</h3>
-                            <div className="space-y-4">
-                                <div className="p-4 rounded-lg bg-green-50 border border-green-100 flex justify-between items-center">
-                                    <div className="flex items-center gap-3">
-                                        <CheckCircle2 className="text-green-600" />
-                                        <div>
-                                            <p className="font-semibold text-gray-800">First Response</p>
-                                            <p className="text-xs text-gray-500">Target: 15 mins</p>
+                        {activeTab === 'workflow' && (
+                            <div className="max-w-3xl mx-auto py-4">
+                                <div className="space-y-8">
+                                    {[
+                                        { step: 'Identification', date: selectedTicket.created_at, status: 'completed', desc: 'Incident logged via Portal' },
+                                        { step: 'Classification', date: selectedTicket.created_at, status: 'completed', desc: 'Priority set to P1 - Critical' },
+                                        { step: 'Investigation', date: null, status: 'current', desc: 'Currently being handled by ' + (selectedTicket?.assigned_agent?.full_name || 'Service Desk') },
+                                        { step: 'Resolution', date: null, status: 'pending', desc: 'Awaiting solution confirmation' },
+                                        { step: 'Closure', date: null, status: 'pending', desc: 'Final review and documentation' }
+                                    ].map((item, idx) => (
+                                        <div key={idx} className="flex gap-6 relative">
+                                            {idx !== 4 && <div className="absolute left-[13px] top-6 bottom-[-32px] w-0.5 bg-gray-100" />}
+                                            <div className={`w-7 h-7 rounded-sm flex items-center justify-center z-10 ${item.status === 'completed' ? 'bg-green-100 text-green-600' :
+                                                item.status === 'current' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' :
+                                                    'bg-gray-50 text-gray-300 border border-gray-100'
+                                                }`}>
+                                                {item.status === 'completed' ? <CheckCircle2 size={14} /> : <div className="text-[10px] font-black">{idx + 1}</div>}
+                                            </div>
+                                            <div className="flex-1 pb-4">
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <h4 className={`text-sm font-black uppercase tracking-widest ${item.status === 'pending' ? 'text-gray-300' : 'text-gray-800'}`}>{item.step}</h4>
+                                                    {item.date && <span className="text-[10px] font-bold text-gray-400">{new Date(item.date).toLocaleString()}</span>}
+                                                </div>
+                                                <p className={`text-xs ${item.status === 'pending' ? 'text-gray-300' : 'text-gray-500 font-medium'}`}>{item.desc}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'sla' && (
+                            <div className="max-w-4xl mx-auto space-y-6">
+                                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 flex items-center justify-between">
+                                    <div>
+                                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">Applied SLA Policy</h4>
+                                        <div className="text-lg font-black text-slate-800">Standard Enterprise - P1 Priority</div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Status</div>
+                                        <span className="px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-black border border-red-100">AT RISK</span>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-6">
+                                    <SLACard
+                                        label="First Response"
+                                        target="15 Minutes"
+                                        actual="12m 45s"
+                                        status="met"
+                                    />
+                                    <SLACard
+                                        label="Resolution"
+                                        target="4 Hours"
+                                        actual="3h 14m 21s (Elapsed)"
+                                        status="running"
+                                    />
+                                </div>
+
+                                <div className="pt-6 border-t border-gray-100">
+                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">Milestones History</h4>
+                                    <div className="space-y-3">
+                                        <div className="flex justify-between text-xs font-bold py-2 border-b border-gray-50">
+                                            <span className="text-gray-500">Ticket Created</span>
+                                            <span className="text-gray-800">{new Date(selectedTicket.created_at).toLocaleTimeString()}</span>
+                                        </div>
+                                        <div className="flex justify-between text-xs font-bold py-2 border-b border-gray-50">
+                                            <span className="text-gray-500">SLA Response Counter Started</span>
+                                            <span className="text-gray-800">{new Date(selectedTicket.created_at).toLocaleTimeString()}</span>
+                                        </div>
+                                        <div className="flex justify-between text-xs font-bold py-2">
+                                            <span className="text-gray-500">First Response Met</span>
+                                            <span className="text-green-600">SUCCESS</span>
                                         </div>
                                     </div>
-                                    <span className="text-sm font-bold text-green-700">Met (00:10:00)</span>
                                 </div>
-                                <div className="p-4 rounded-lg bg-amber-50 border border-amber-100 flex justify-between items-center">
-                                    <div className="flex items-center gap-3">
-                                        <Clock className="text-amber-600 animate-pulse" />
-                                        <div>
-                                            <p className="font-semibold text-gray-800">Resolution</p>
-                                            <p className="text-xs text-gray-500">Target: 4 hours</p>
-                                        </div>
-                                    </div>
-                                    <span className="text-sm font-bold text-amber-700">Running (14 mins left)</span>
-                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Bottom Composer */}
+                    {activeTab === 'conversation' && (
+                        <div className="p-6 border-t border-gray-100 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.02)]">
+                            <div className="flex gap-5 mb-4 border-b border-gray-50">
+                                <button className="text-xs font-black uppercase tracking-widest text-indigo-600 border-b-2 border-indigo-600 pb-3">Reply</button>
+                                <button className="text-xs font-black uppercase tracking-widest text-gray-400 hover:text-gray-500 pb-3 transition-colors">Internal Note</button>
+                            </div>
+                            <RichTextEditor
+                                content={newMessage}
+                                onChange={setNewMessage}
+                                placeholder="Type your response..."
+                                minHeight="80px"
+                            />
+                            <div className="flex justify-between items-center mt-4">
+                                <button className="flex items-center gap-2 text-indigo-600 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-all">
+                                    <Sparkles size={14} fill="currentColor" /> Insert AI Suggestion
+                                </button>
+                                <button
+                                    onClick={handleSendMessage}
+                                    className="flex items-center gap-3 bg-indigo-600 text-white px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all"
+                                >
+                                    <Send size={14} /> Send Reply
+                                </button>
                             </div>
                         </div>
                     )}
                 </div>
+            ) : (
+                <div className="flex-1 flex items-center justify-center bg-gray-50 text-gray-400 font-bold italic">Loading incident workspace...</div>
+            )}
 
-
-                {activeTab === 'conversation' && (
-                    <div className="p-4 bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10">
-                        <div className="flex gap-2 mb-2">
-                            <button className="text-sm font-bold text-gray-800 border-b-2 border-indigo-600 px-2 py-1">Reply</button>
-                            <button className="text-sm font-medium text-gray-500 hover:text-gray-700 px-2 py-1">Internal Note</button>
-                        </div>
-                        <div className="relative">
-                            <textarea
-                                className="w-full h-24 p-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 resize-none text-sm"
-                                placeholder="Type your response..."
-                            ></textarea>
-                            <div className="absolute bottom-3 right-3 flex gap-2">
-                                <button className="p-1.5 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"><Paperclip size={16} /></button>
-                                <button className="p-1.5 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"><Mic size={16} /></button>
-                            </div>
-                        </div>
-                        <div className="flex justify-between items-center mt-3">
-                            <button className="flex items-center gap-2 text-indigo-600 text-xs font-bold hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors border border-dashed border-indigo-200">
-                                <Sparkles size={14} />
-                                Insert AI Suggestion
-                            </button>
-                            <button className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 font-medium text-sm transition-colors">
-                                <Send size={16} />
-                                Send Reply
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* RIGHT PANEL - AI Copilot */}
-            <div className={`transition-all duration-300 ease-in-out border-l border-gray-200 bg-white flex flex-col ${isRightPanelOpen ? 'w-80' : 'w-12 overflow-hidden'}`}>
-                {/* Header */}
-                <div className="p-4 border-b border-gray-200 bg-indigo-50/30 flex justify-between items-center">
-                    {isRightPanelOpen ? (
-                        <div className="flex items-center gap-2">
-                            <Sparkles className="text-indigo-600" size={18} />
-                            <h2 className="font-bold text-gray-800">AI Copilot</h2>
-                            <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-bold border border-green-200">
-                                High Conf.
-                            </span>
-                        </div>
-                    ) : (
-                        <div className="flex flex-col items-center gap-4 w-full pt-2">
-                            <button onClick={() => setIsRightPanelOpen(true)}><Sparkles className="text-indigo-600" size={20} /></button>
+            {/* 3. RIGHT PANEL - AI COPILOT */}
+            <div className={`transition-all duration-300 border-l border-gray-200 bg-white flex flex-col ${isRightPanelOpen ? 'w-[360px]' : 'w-12 overflow-hidden'}`}>
+                <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+                    {isRightPanelOpen && (
+                        <div className="flex items-center gap-2 text-indigo-600">
+                            <Sparkles size={18} fill="currentColor" />
+                            <h2 className="font-black text-xs uppercase tracking-widest">AI Copilot</h2>
+                            <span className="text-[9px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded border border-green-100 font-black">Active</span>
                         </div>
                     )}
-                    <button onClick={() => setIsRightPanelOpen(!isRightPanelOpen)} className="text-gray-400 hover:text-gray-600">
-                        {isRightPanelOpen ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+                    <button onClick={() => setIsRightPanelOpen(!isRightPanelOpen)} className="p-2 text-gray-300 hover:text-indigo-600 transition-colors">
+                        {isRightPanelOpen ? <ChevronRight size={18} /> : <Sparkles size={18} />}
                     </button>
                 </div>
 
                 {isRightPanelOpen && (
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                        {/* 1. Summary */}
-                        <AICard title="Ticket Summary" icon={FileText} className="bg-slate-50 border-slate-100">
-                            <ul className="list-disc list-outside ml-4 space-y-1 text-xs text-gray-700">
-                                <li>User cannot login to Finance System.</li>
-                                <li>Error indicates <strong>permission issue</strong>.</li>
-                                <li>Incident affects Finance department.</li>
-                            </ul>
-                            <button className="mt-3 w-full text-xs font-medium text-indigo-600 border border-indigo-200 rounded py-1.5 hover:bg-indigo-50">
-                                Apply to Description
-                            </button>
+                    <div className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar">
+                        <div className="flex justify-between items-center text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">
+                            <span>Diagnostic Engine</span>
+                            <span className="text-blue-500">Confidence: High</span>
+                        </div>
+
+                        {/* Summary Card */}
+                        <AICard title="Ticket Summary" icon={FileText}>
+                            <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                                <ul className="text-xs text-slate-600 space-y-2 list-disc pl-4 font-medium leading-relaxed">
+                                    <li>User cannot login to Finance System since 09:10.</li>
+                                    <li>Error indicates "permission denied" error.</li>
+                                    <li>Incident affects Finance department specifically.</li>
+                                </ul>
+                                <button className="mt-4 w-full text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline">Apply To Description</button>
+                            </div>
                         </AICard>
 
-                        {/* 2. Suggestion */}
-                        <AICard title="Suggested Classification" icon={Shield} className="bg-blue-50/50 border-blue-100">
-                            <div className="space-y-2 mb-3">
+                        {/* Classification Card */}
+                        <AICard title="Suggested Classification" icon={Shield}>
+                            <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-3">
                                 <div className="flex justify-between text-xs">
-                                    <span className="text-gray-500">Category</span>
-                                    <span className="font-medium">Access &gt; Perm. Denied</span>
+                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">Category</span>
+                                    <span className="text-gray-800 font-black">Access → Perms Denied</span>
                                 </div>
                                 <div className="flex justify-between text-xs">
-                                    <span className="text-gray-500">Priority</span>
-                                    <span className="font-bold text-red-600">P1 (Critical)</span>
+                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">Priority</span>
+                                    <span className="text-red-500 font-black">P1 - Critical</span>
                                 </div>
-                            </div>
-                            <div className="flex gap-2">
-                                <button className="flex-1 bg-indigo-600 text-white text-xs py-1.5 rounded hover:bg-indigo-700">Apply</button>
-                                <button className="flex-1 bg-white border border-gray-200 text-gray-600 text-xs py-1.5 rounded hover:bg-gray-50">Edit</button>
+                                <div className="grid grid-cols-2 gap-2 mt-2">
+                                    <button className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm">Apply</button>
+                                    <button className="py-2.5 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100">Edit</button>
+                                </div>
                             </div>
                         </AICard>
 
-                        {/* 3. Suggested Reply */}
-                        <AICard title="Suggested Reply" icon={MessageSquare} className="bg-purple-50/50 border-purple-100">
-                            <p className="text-xs text-gray-700 italic border-l-2 border-purple-300 pl-2 mb-3">
-                                "Halo Pak Budi, kami sedang melakukan pengecekan akses akun Anda. Mohon konfirmasi apakah error muncul di semua menu?"
-                            </p>
-                            <div className="flex gap-2">
-                                <button className="flex-1 flex items-center justify-center gap-1 bg-white border border-gray-200 text-gray-700 text-xs py-1.5 rounded hover:bg-gray-50">
-                                    <ThumbsUp size={12} /> Insert
+                        {/* Suggested Reply Card */}
+                        <AICard title="Suggested Reply" icon={Zap}>
+                            <div className="bg-green-50/30 p-4 rounded-xl border border-green-100 space-y-3">
+                                <p className="text-[12px] text-gray-700 italic font-medium leading-relaxed">
+                                    "Halo Pak Budi, kami sedang cek akses akun Anda. Mohon konfirmasi apakah error muncul di semua menu atau hanya laporan?"
+                                </p>
+                                <div className="flex gap-2">
+                                    <button className="flex-1 py-2 bg-white text-green-700 text-[10px] font-black uppercase tracking-widest rounded-lg border border-green-200 flex items-center justify-center gap-2 shadow-sm">
+                                        <Copy size={12} /> Insert
+                                    </button>
+                                    <button className="flex-1 py-2 bg-white text-gray-400 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 flex items-center justify-center gap-2">
+                                        <RefreshCw size={12} /> Rewrite
+                                    </button>
+                                </div>
+                            </div>
+                        </AICard>
+
+                        {/* Knowledge Card */}
+                        <AICard title="Knowledge & KB" icon={BookOpen}>
+                            <div className="space-y-3">
+                                <button className="w-full text-left p-3 rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/20 text-indigo-600 transition-all flex items-center justify-between group">
+                                    <span className="text-xs font-black truncate pr-4">System How-To: Reset Finance Role</span>
+                                    <ArrowUpRight size={14} className="opacity-0 group-hover:opacity-100 flex-shrink-0" />
                                 </button>
-                                <button className="flex-1 flex items-center justify-center gap-1 bg-white border border-gray-200 text-gray-700 text-xs py-1.5 rounded hover:bg-gray-50">
-                                    <RefreshCw size={12} /> Rewrite
+                                <button className="w-full text-left p-3 rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/20 text-indigo-600 transition-all flex items-center justify-between group">
+                                    <span className="text-xs font-black truncate pr-4">User Guide: Login Finance System</span>
+                                    <ArrowUpRight size={14} className="opacity-0 group-hover:opacity-100 flex-shrink-0" />
                                 </button>
                             </div>
                         </AICard>
 
-                        {/* 4. Knowledge */}
-                        <AICard title="Knowledge Base" icon={ExternalLink} className="bg-green-50/50 border-green-100">
-                            <div className="space-y-2">
-                                <div className="flex items-start gap-2">
-                                    <ExternalLink size={12} className="mt-1 text-indigo-500" />
-                                    <a href="#" className="text-xs text-indigo-600 hover:underline">System How-To: Reset Finance Role</a>
+                        {/* SLA Risk Card */}
+                        <AICard title="SLA Risk Analysis" icon={BarChart3}>
+                            <div className="bg-red-50/30 p-4 rounded-xl border border-red-100 space-y-4">
+                                <div className="flex justify-between items-center font-black">
+                                    <span className="text-[10px] text-gray-400 uppercase tracking-widest">Breach Risk</span>
+                                    <span className="text-red-500 text-xs tracking-tighter">87% - CRITICAL</span>
                                 </div>
-                                <div className="flex items-start gap-2">
-                                    <ExternalLink size={12} className="mt-1 text-indigo-500" />
-                                    <a href="#" className="text-xs text-indigo-600 hover:underline">User Guide: Login Finance System</a>
+                                <div className="h-2 w-full bg-white rounded-full overflow-hidden shadow-inner">
+                                    <div className="h-full bg-red-500" style={{ width: '87%' }} />
                                 </div>
+                                <ul className="text-[10px] text-gray-500 font-bold space-y-1 mt-2">
+                                    <li>• Time elapsed: 14m (75% SLA)</li>
+                                    <li>• No agent response yet</li>
+                                </ul>
                             </div>
-                        </AICard>
-
-                        {/* 5. SLA Risk */}
-                        <AICard title="SLA Risk Analysis" icon={AlertTriangle} className="bg-red-50/50 border-red-100">
-                            <div className="flex items-center gap-2 mb-2">
-                                <span className="text-xs font-bold text-red-700">Risk: High (87%)</span>
-                                <div className="h-1.5 w-16 bg-gray-200 rounded-full">
-                                    <div className="h-full bg-red-500 w-[87%] rounded-full"></div>
-                                </div>
-                            </div>
-                            <ul className="list-disc ml-4 text-[10px] text-gray-600">
-                                <li>Waiting requester response</li>
-                                <li>Resolution SLA &lt; 15 minutes left</li>
-                            </ul>
                         </AICard>
                     </div>
                 )}
             </div>
+
+            <style dangerouslySetInnerHTML={{
+                __html: `
+                .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+                .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: #e0e0e0; border-radius: 10px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #ced4da; }
+            `}} />
         </div>
     );
 };
 
-// --- Sub Components ---
-
-const ChevronHeader = () => <svg className="w-3 h-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>;
-
-const SLAIndicator: React.FC<{ status: string }> = ({ status }) => {
-    if (status === 'critical') return <div className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-sm animate-pulse"></div>;
-    if (status === 'warning') return <div className="w-2.5 h-2.5 rounded-full bg-orange-400 shadow-sm"></div>;
-    return <div className="w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm"></div>;
-};
+// --- SUB COMPONENTS ---
 
 const TabItem: React.FC<{ active: boolean, onClick: () => void, icon: any, label: string }> = ({ active, onClick, icon: Icon, label }) => (
     <button
         onClick={onClick}
-        className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${active ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
+        className={`py-3.5 px-6 flex items-center gap-2 text-xs font-black uppercase tracking-[0.1em] transition-all relative ${active ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}
     >
-        <Icon size={16} />
-        {label}
+        <Icon size={14} fill={active ? "currentColor" : "none"} className={active ? "opacity-20 absolute left-4 blur-[2px]" : ""} />
+        <span className="relative z-10">{label}</span>
+        {active && <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-600 rounded-t-full shadow-[0_-2px_8px_rgba(79,70,229,0.3)]" />}
     </button>
 );
 
-const DetailRow: React.FC<{ label: string, value: string, editable?: boolean, badge?: string }> = ({ label, value, editable, badge }) => (
-    <div className="flex border-b border-gray-50 pb-2 last:border-0 last:pb-0">
-        <span className="w-32 text-sm text-gray-500 font-medium">{label}</span>
-        <div className="flex-1 flex justify-between items-center group">
-            {badge ? (
-                <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${badge === 'red' ? 'bg-red-100 text-red-700' : 'bg-gray-100'}`}>{value}</span>
-            ) : (
-                <span className="text-sm text-gray-900 font-medium">{value}</span>
-            )}
-            {editable && (
-                <button className="text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <div className="w-6 h-6 flex items-center justify-center rounded hover:bg-indigo-50">
-                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
-                    </div>
-                </button>
-            )}
+const DetailRow: React.FC<{ label: string, value: string }> = ({ label, value }) => (
+    <div className="flex flex-col gap-1 py-1.5 border-b border-gray-50 last:border-0">
+        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{label}</span>
+        <span className="text-[13px] font-bold text-gray-800">{value || '-'}</span>
+    </div>
+);
+
+const SLACard: React.FC<{ label: string, target: string, actual: string, status: 'met' | 'breached' | 'running' }> = ({ label, target, actual, status }) => (
+    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+        <div className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">{label}</div>
+        <div className="space-y-4">
+            <div className="flex justify-between text-xs font-bold">
+                <span className="text-gray-400">Target</span>
+                <span className="text-gray-800">{target}</span>
+            </div>
+            <div className="flex justify-between text-xs font-black">
+                <span className="text-gray-400 font-bold">{status === 'running' ? 'Elapsed' : 'Actual'}</span>
+                <span className={status === 'met' ? 'text-green-600' : status === 'breached' ? 'text-red-600' : 'text-amber-600'}>{actual}</span>
+            </div>
+            <div className="h-1.5 w-full bg-gray-50 rounded-full overflow-hidden mt-2">
+                <div className={`h-full ${status === 'met' ? 'bg-green-500' : status === 'breached' ? 'bg-red-500' : 'bg-amber-500'}`} style={{ width: status === 'met' ? '100%' : '75%' }} />
+            </div>
         </div>
     </div>
 );
 
-const WorkflowStep: React.FC<{ status: 'completed' | 'active' | 'pending', title: string, date?: string }> = ({ status, title, date }) => (
-    <div className="flex gap-4 relative mb-6 last:mb-0">
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 z-10 border-2 ${status === 'completed' ? 'bg-indigo-600 border-indigo-600 text-white' :
-            status === 'active' ? 'bg-white border-indigo-600 text-indigo-600 animate-pulse' :
-                'bg-white border-gray-200 text-gray-300'
-            }`}>
-            {status === 'completed' ? <CheckCircle2 size={16} /> :
-                status === 'active' ? <div className="w-2.5 h-2.5 bg-indigo-600 rounded-full"></div> :
-                    <div className="w-2.5 h-2.5 bg-gray-200 rounded-full"></div>
-            }
-        </div>
-        <div>
-            <h4 className={`text-sm font-bold ${status === 'pending' ? 'text-gray-400' : 'text-gray-900'}`}>{title}</h4>
-            {date && <p className="text-xs text-gray-500 mt-0.5">{date}</p>}
-        </div>
-    </div>
-);
-
-const AICard: React.FC<{ title: string, icon: any, children: React.ReactNode, className?: string }> = ({ title, icon: Icon, children, className }) => (
-    <div className={`p-4 rounded-xl border ${className}`}>
-        <div className="flex items-center gap-2 mb-3">
-            <Icon size={14} className="text-gray-500" />
-            <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wide">{title}</h3>
+const AICard: React.FC<{ title: string, icon: any, children: React.ReactNode }> = ({ title, icon: Icon, children }) => (
+    <div className="space-y-3 group">
+        <div className="flex items-center gap-2 pl-1">
+            <Icon size={14} className="text-gray-400 group-hover:text-indigo-500 transition-colors" />
+            <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-500">{title}</h4>
         </div>
         {children}
     </div>

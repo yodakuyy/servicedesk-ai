@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, HelpCircle, Paperclip, Sparkles, Send, ChevronRight, X, Info } from 'lucide-react';
+import { ArrowLeft, HelpCircle, Paperclip, Sparkles, Send, ChevronRight, X, Info, AlertCircle, Monitor, Wifi, Box, MoreHorizontal } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import RichTextEditor from './RichTextEditor';
 
 interface RequesterCreateIncidentProps {
     onBack?: () => void;
@@ -8,7 +10,7 @@ interface RequesterCreateIncidentProps {
 }
 
 const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBack, onSubmit, userProfile }) => {
-    // Section 1: Who is affected?
+    // Section 1: Who is affected? (Requested For)
     const [affectedUser, setAffectedUser] = useState<'myself' | 'someone_else'>('myself');
     const [someoneElseDetails, setSomeoneElseDetails] = useState({
         fullName: '',
@@ -16,7 +18,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
         department: ''
     });
 
-    // User's department (fetched from company table)
+    // User's department (Free text now)
     const [myDepartment, setMyDepartment] = useState('');
 
     // Section 2: What's the problem?
@@ -24,52 +26,102 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
     const [description, setDescription] = useState('');
     const [showAINotice, setShowAINotice] = useState(false);
 
-    // Section 3: Optional Details
-    const [isOptionalDetailsExpanded, setIsOptionalDetailsExpanded] = useState(false);
-    const [service, setService] = useState('');
+    // Section 3: Classification (Issue Type)
+    // Mapping keys: 'software', 'hardware', 'network', 'other'
+    const [issueType, setIssueType] = useState<string>('');
     const [attachment, setAttachment] = useState<File | null>(null);
 
     // Submission State
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [openStatusId, setOpenStatusId] = useState<string | null>(null);
 
-    // Fetch department name from company table
+    // AI & Categorization State
+    const [aiInsight, setAiInsight] = useState<{
+        suggested_category_id: string; // Still useful for metrics/AI
+        confidence_level: 'high' | 'medium' | 'low';
+        summary: string;
+    } | null>(null);
+
+    // Dynamic Group IDs fetched from DB
+    const [groupIds, setGroupIds] = useState<{ [key: string]: string }>({});
+
+    // Fetch 'Open' Status ID AND Assignment Groups
     useEffect(() => {
-        const fetchDepartment = async () => {
-            if (userProfile?.company_id) {
-                try {
-                    const { supabase } = await import('../lib/supabase');
-                    const { data } = await supabase
-                        .from('company')
-                        .select('company_name')
-                        .eq('company_id', userProfile.company_id)
-                        .single();
+        const initData = async () => {
+            // 1. Fetch Status ID
+            const { data: statusData, error: statusError } = await supabase
+                .from('ticket_statuses')
+                .select('status_id')
+                .eq('status_name', 'Open')
+                .single();
 
-                    if (data) {
-                        setMyDepartment(data.company_name);
-                    }
-                } catch (error) {
-                    console.error('Error fetching department:', error);
-                }
+            if (statusData) {
+                setOpenStatusId(statusData.status_id);
+            } else {
+                console.error("Critical: 'Open' status not found in DB", statusError);
+                setErrorMessage("System configuration error: Could not find 'Open' status.");
+            }
+
+            // 2. Fetch Assignment Groups (Dynamic)
+            const { data: groupsData } = await supabase
+                .from('groups')
+                .select('id, name');
+
+            if (groupsData) {
+                const mapping: { [key: string]: string } = {};
+                groupsData.forEach((g: any) => {
+                    // Flexible matching
+                    const name = g.name.toLowerCase();
+                    if (name.includes('software') || name.includes('application')) mapping['SOFTWARE'] = g.id;
+                    if (name.includes('endpoint') || name.includes('hardware') || name.includes('network')) mapping['ENDPOINT'] = g.id;
+                });
+                setGroupIds(mapping);
+            }
+        };
+        initData();
+    }, []);
+
+    // AI Analysis Simulation (Runs when description changes) - used for Insights
+    useEffect(() => {
+        const analyzeTicket = () => {
+            if (description.length < 10) return;
+
+            // Simple Keyword Matching just to provide initial AI context in DB
+            // This does NOT control routing anymore (Routing is User Selected via Issue Type)
+            const text = `${subject} ${description}`.toLowerCase();
+            let summary = "User reported an issue.";
+            let confidence = 'medium';
+
+            if (text.includes('software') || text.includes('app') || text.includes('error')) {
+                summary = "Likely a software issue based on keywords.";
+            } else if (text.includes('laptop') || text.includes('monitor') || text.includes('mouse')) {
+                summary = "Likely a hardware issue based on keywords.";
+            } else if (text.includes('wifi') || text.includes('internet') || text.includes('connect')) {
+                summary = "Likely a network issue based on keywords.";
+            }
+
+            setAiInsight({
+                suggested_category_id: '', // We don't force category ID here anymore
+                confidence_level: confidence as any,
+                summary: summary
+            });
+
+            // Trigger UI notice based on simplistic AI result
+            if (text.includes('password') || text.includes('login')) {
+                setShowAINotice(true);
+            } else {
+                setShowAINotice(false);
             }
         };
 
-        fetchDepartment();
-    }, [userProfile?.company_id]);
+        const timer = setTimeout(analyzeTicket, 1000); // Debounce 1s
+        return () => clearTimeout(timer);
+    }, [description, subject]);
+
 
     // Handlers
-    const handleDescriptionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        const val = e.target.value;
-        setDescription(val);
-
-        // Simple trigger for AI Notice mock
-        if (val.toLowerCase().includes('login') || val.toLowerCase().includes('password')) {
-            setShowAINotice(true);
-        } else {
-            setShowAINotice(false);
-        }
-    };
-
     const handleSomeoneElseChange = (field: string, value: string) => {
         setSomeoneElseDetails(prev => ({ ...prev, [field]: value }));
     };
@@ -77,34 +129,107 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSubmitting(true);
+        setErrorMessage(null);
 
-        // Mock API call
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        if (!openStatusId) {
+            setErrorMessage("Cannot submit: System status configuration missing.");
+            setIsSubmitting(false);
+            return;
+        }
 
-        setIsSuccess(true);
+        try {
+            // Determine Assignment Group based on Issue Type
+            let assignedGroupId = null;
 
-        // Wait for success animation
-        setTimeout(() => {
-            if (onSubmit) {
-                onSubmit({
-                    affectedUser,
-                    affectedUserDetails: affectedUser === 'myself' ? { ...userProfile, department: myDepartment } : someoneElseDetails,
-                    subject,
-                    description,
-                    service,
-                    attachment
-                });
+            // Use IDs fetched from Real DB
+            if (issueType === 'software') {
+                assignedGroupId = groupIds['SOFTWARE'] || null;
+            } else if (issueType === 'hardware' || issueType === 'network') {
+                assignedGroupId = groupIds['ENDPOINT'] || null;
             }
-        }, 1500);
+            // If group not found, it stays null (Dispatcher will handle)
+
+            // Prepare Description with "On Behalf Of" details if applicable
+            let finalDescription = description;
+            if (affectedUser === 'someone_else') {
+                finalDescription = `**Reported on behalf of:** ${someoneElseDetails.fullName} (${someoneElseDetails.email})\n` +
+                    (someoneElseDetails.department ? `**Department:** ${someoneElseDetails.department}\n` : '') +
+                    `\n----------------------------------------\n\n` +
+                    description;
+            }
+
+            // 1. Create Ticket in DB
+            const ticketPayload = {
+                subject: subject,
+                description: finalDescription,
+                status_id: openStatusId, // FK Reference
+                ticket_number: `INC-${Math.floor(Math.random() * 100000)}`, // Random Number
+                priority: 'medium', // Default, AI can update later
+                requester_id: userProfile?.id, // FK
+                created_by: userProfile?.id, // FK
+                ticket_type: 'incident',
+                assignment_group_id: assignedGroupId, // Re-enabled after RLS fix
+            };
+
+            const { data: ticketData, error: ticketError } = await supabase
+                .from('tickets')
+                .insert(ticketPayload)
+                .select()
+                .single();
+
+            if (ticketError) {
+                console.error("Supabase Ticket Insert Error:", ticketError);
+                throw ticketError;
+            }
+
+            // 2. Insert AI Insights (Still valuable for Agent)
+            if (aiInsight && ticketData) {
+                await supabase
+                    .from('ticket_ai_insights')
+                    .insert({
+                        ticket_id: ticketData.id,
+                        summary: aiInsight.summary,
+                        confidence_level: aiInsight.confidence_level,
+                        // suggested_priority: 'medium' // Might be Enum or wrong column
+                    });
+            }
+
+            setIsSuccess(true);
+
+            // Wait for success animation
+            setTimeout(() => {
+                if (onSubmit) {
+                    const affectedUserDetails = affectedUser === 'myself' ? { ...userProfile, department: myDepartment } : someoneElseDetails;
+                    onSubmit({
+                        ticketId: ticketData?.id,
+                        affectedUser,
+                        affectedUserDetails,
+                        subject,
+                        description,
+                        // service, // Removing service state usage if not needed
+                        attachment
+                    });
+                }
+            }, 1500);
+
+        } catch (error: any) {
+            console.error("Error submitting incident:", error);
+            setIsSubmitting(false);
+            setErrorMessage(error.message || "Failed to submit ticket. Please try again.");
+        }
     };
 
     // Validation
     const isSubjectValid = subject.trim().length > 0;
-    const isDescriptionValid = description.trim().length > 0;
+    // Description validation checks if string is not empty or just standard HTML tags
+    const isDescriptionValid = description.trim().length > 0 && description !== '<p></p>';
+
     const isSomeoneElseValid = affectedUser === 'myself' ||
         (someoneElseDetails.fullName.trim().length > 0 && someoneElseDetails.email.trim().length > 0);
+    // Issue Type IS NOW MANDATORY
+    const isIssueTypeValid = issueType !== '';
 
-    const isSubmitDisabled = !isSubjectValid || !isDescriptionValid || !isSomeoneElseValid || isSubmitting;
+    const isSubmitDisabled = !isSubjectValid || !isDescriptionValid || !isSomeoneElseValid || !isIssueTypeValid || isSubmitting;
 
     if (isSuccess) {
         return (
@@ -114,8 +239,9 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 </div>
                 <h2 className="text-3xl font-bold text-gray-900 mb-2">Incident Submitted!</h2>
                 <p className="text-gray-500 text-lg max-w-md text-center">
-                    We have received your report. Redirecting you to the ticket details...
+                    We have received your report and routed it to the correct team.
                 </p>
+                <p className="text-sm text-gray-400 mt-4">Redirecting you to ticket details...</p>
             </div>
         );
     }
@@ -128,8 +254,6 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
         ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-500/20'
         : 'bg-white border-gray-200 hover:bg-gray-50';
 
-    const optionalChevronClassName = isOptionalDetailsExpanded ? 'rotate-90' : '';
-
     return (
         <div className="max-w-3xl mx-auto p-8 space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Top Navigation */}
@@ -139,7 +263,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                     className="flex items-center gap-2 hover:text-gray-800 transition-colors"
                 >
                     <ArrowLeft size={16} />
-                    Back to My Tickets
+                    Back to Incidents List
                 </button>
                 <button className="flex items-center gap-2 hover:text-indigo-600 transition-colors">
                     <HelpCircle size={16} />
@@ -149,9 +273,9 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
 
             <form onSubmit={handleSubmit} className="space-y-10">
 
-                {/* 1. Who is affected? */}
+                {/* 1. Requested For */}
                 <section className="space-y-4">
-                    <h2 className="text-xl font-bold text-gray-900">Who is affected by this issue?</h2>
+                    <h2 className="text-xl font-bold text-gray-900">Requested For</h2>
                     <div className="flex flex-col sm:flex-row gap-4">
                         <label className={`flex-1 flex items-center gap-3 p-4 border rounded-xl cursor-pointer transition-all ${myselfClassName}`}>
                             <input
@@ -162,7 +286,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                                 onChange={() => setAffectedUser('myself')}
                                 className="w-5 h-5 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                             />
-                            <span className="font-semibold text-gray-900">Myself</span>
+                            <span className="font-semibold text-gray-900">Me</span>
                         </label>
                         <label className={`flex-1 flex items-center gap-3 p-4 border rounded-xl cursor-pointer transition-all ${someoneElseClassName}`}>
                             <input
@@ -173,7 +297,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                                 onChange={() => setAffectedUser('someone_else')}
                                 className="w-5 h-5 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                             />
-                            <span className="font-semibold text-gray-900">Someone else</span>
+                            <span className="font-semibold text-gray-900">Requested For</span>
                         </label>
                     </div>
 
@@ -182,7 +306,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                         <div className="p-6 bg-gray-50 border border-gray-100 rounded-xl space-y-4 animate-in fade-in slide-in-from-top-2">
                             <div className="grid md:grid-cols-2 gap-4">
                                 <div className="space-y-1.5">
-                                    <label className="text-sm font-semibold text-gray-700">Full Name <span className="text-red-500">*</span></label>
+                                    <label className="text-sm font-semibold text-gray-700">Full Name</label>
                                     <input
                                         type="text"
                                         className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-100 text-gray-600 cursor-not-allowed focus:outline-none"
@@ -191,7 +315,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                                     />
                                 </div>
                                 <div className="space-y-1.5">
-                                    <label className="text-sm font-semibold text-gray-700">Email Address <span className="text-red-500">*</span></label>
+                                    <label className="text-sm font-semibold text-gray-700">Email Address</label>
                                     <input
                                         type="email"
                                         className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-100 text-gray-600 cursor-not-allowed focus:outline-none"
@@ -201,21 +325,25 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                                 </div>
                             </div>
                             <div className="space-y-1.5">
-                                <label className="text-sm font-semibold text-gray-700">Department</label>
+                                <label className="text-sm font-semibold text-gray-700">Department <span className="text-gray-400 font-normal">(Optional)</span></label>
                                 <input
                                     type="text"
-                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-100 text-gray-600 cursor-not-allowed focus:outline-none"
-                                    value={myDepartment || ''}
-                                    placeholder="Loading..."
-                                    readOnly
+                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white"
+                                    value={myDepartment}
+                                    onChange={(e) => setMyDepartment(e.target.value)}
+                                    placeholder="e.g. Finance"
                                 />
                             </div>
                         </div>
                     )}
 
-                    {/* Expand inline if someone else */}
+                    {/* Show Inputs if Other User */}
                     {affectedUser === 'someone_else' && (
-                        <div className="p-6 bg-gray-50 border border-gray-100 rounded-xl space-y-4 animate-in fade-in slide-in-from-top-2">
+                        <div className="p-6 bg-gray-50 border border-indigo-100 rounded-xl space-y-4 animate-in fade-in slide-in-from-top-2 ring-1 ring-indigo-500/20">
+                            <div className="flex items-center gap-2 text-indigo-800 bg-indigo-50 p-3 rounded-lg text-sm mb-2">
+                                <Info size={16} />
+                                <span>Please provide details of the person you are requesting for.</span>
+                            </div>
                             <div className="grid md:grid-cols-2 gap-4">
                                 <div className="space-y-1.5">
                                     <label className="text-sm font-semibold text-gray-700">Full Name <span className="text-red-500">*</span></label>
@@ -236,11 +364,6 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                                         value={someoneElseDetails.email}
                                         onChange={(e) => handleSomeoneElseChange('email', e.target.value)}
                                     />
-                                    {someoneElseDetails.email.includes('@') && (
-                                        <p className="text-xs text-green-600 flex items-center gap-1 animate-in fade-in">
-                                            <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span> Valid email format
-                                        </p>
-                                    )}
                                 </div>
                             </div>
                             <div className="space-y-1.5">
@@ -257,11 +380,90 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                     )}
                 </section>
 
-                {/* 2. What's the problem? */}
+                {/* 2. Issue Type (NEW & REQUIRED) */}
+                <section className="space-y-4">
+                    <h2 className="text-xl font-bold text-gray-900">What type of issue is this? <span className="text-red-500">*</span></h2>
+                    <div className="grid gap-3">
+                        <label className={`flex items-start gap-4 p-4 border rounded-xl cursor-pointer transition-all hover:bg-gray-50 ${issueType === 'software' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-500/20' : 'border-gray-200'}`}>
+                            <input
+                                type="radio"
+                                name="issueType"
+                                value="software"
+                                checked={issueType === 'software'}
+                                onChange={(e) => setIssueType(e.target.value)}
+                                className="mt-1 w-5 h-5 text-indigo-600 border-gray-300 focus:ring-indigo-500 flex-shrink-0"
+                            />
+                            <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Monitor size={18} className="text-indigo-600" />
+                                    <span className="font-semibold text-gray-900">Software / Application Issue</span>
+                                </div>
+                                <p className="text-sm text-gray-500">Problems with apps, systems, software errors, or installation.</p>
+                            </div>
+                        </label>
+
+                        <label className={`flex items-start gap-4 p-4 border rounded-xl cursor-pointer transition-all hover:bg-gray-50 ${issueType === 'hardware' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-500/20' : 'border-gray-200'}`}>
+                            <input
+                                type="radio"
+                                name="issueType"
+                                value="hardware"
+                                checked={issueType === 'hardware'}
+                                onChange={(e) => setIssueType(e.target.value)}
+                                className="mt-1 w-5 h-5 text-indigo-600 border-gray-300 focus:ring-indigo-500 flex-shrink-0"
+                            />
+                            <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Box size={18} className="text-orange-600" />
+                                    <span className="font-semibold text-gray-900">Hardware / Device Problem</span>
+                                </div>
+                                <p className="text-sm text-gray-500">Issues with laptop, monitor, keyboard, printer, or other physical devices.</p>
+                            </div>
+                        </label>
+
+                        <label className={`flex items-start gap-4 p-4 border rounded-xl cursor-pointer transition-all hover:bg-gray-50 ${issueType === 'network' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-500/20' : 'border-gray-200'}`}>
+                            <input
+                                type="radio"
+                                name="issueType"
+                                value="network"
+                                checked={issueType === 'network'}
+                                onChange={(e) => setIssueType(e.target.value)}
+                                className="mt-1 w-5 h-5 text-indigo-600 border-gray-300 focus:ring-indigo-500 flex-shrink-0"
+                            />
+                            <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Wifi size={18} className="text-blue-500" />
+                                    <span className="font-semibold text-gray-900">Network / Connectivity</span>
+                                </div>
+                                <p className="text-sm text-gray-500">WiFi, VPN, internet connection, or slowness problems.</p>
+                            </div>
+                        </label>
+
+                        <label className={`flex items-start gap-4 p-4 border rounded-xl cursor-pointer transition-all hover:bg-gray-50 ${issueType === 'other' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-500/20' : 'border-gray-200'}`}>
+                            <input
+                                type="radio"
+                                name="issueType"
+                                value="other"
+                                checked={issueType === 'other'}
+                                onChange={(e) => setIssueType(e.target.value)}
+                                className="mt-1 w-5 h-5 text-indigo-600 border-gray-300 focus:ring-indigo-500 flex-shrink-0"
+                            />
+                            <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <MoreHorizontal size={18} className="text-gray-500" />
+                                    <span className="font-semibold text-gray-900">Other</span>
+                                </div>
+                                <p className="text-sm text-gray-500">Not sure or doesn't fit above categories.</p>
+                            </div>
+                        </label>
+                    </div>
+                </section>
+
+
+                {/* 3. What's the problem? */}
                 <section className="space-y-6">
                     <div className="space-y-3">
                         <label htmlFor="subject" className="block text-xl font-bold text-gray-900">
-                            What's going wrong? <span className="text-red-500">*</span>
+                            Subject <span className="text-red-500">*</span>
                         </label>
                         <input
                             id="subject"
@@ -271,20 +473,21 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                             value={subject}
                             onChange={(e) => setSubject(e.target.value)}
                         />
-                        <p className="text-sm text-gray-400 font-medium">Short summary of the issue</p>
                     </div>
 
                     <div className="space-y-3 relative">
-                        <label htmlFor="description" className="block text-xl font-bold text-gray-900">
-                            Tell us more <span className="text-red-500">*</span>
+                        <label className="block text-xl font-bold text-gray-900">
+                            Description <span className="text-red-500">*</span>
                         </label>
-                        <textarea
-                            id="description"
-                            rows={6}
-                            placeholder={"Describe what happened...\n• What were you trying to do?\n• What went wrong?\n• When did this start?"}
-                            className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium placeholder:text-gray-300 shadow-sm resize-none"
-                            value={description}
-                            onChange={handleDescriptionChange}
+
+                        <RichTextEditor
+                            content={description}
+                            onChange={setDescription}
+                            placeholder="Describe what happened...
+• What were you trying to do?
+• What went wrong?
+• When did this start?"
+                            minHeight="250px"
                         />
 
                         {/* Inline AI Notice */}
@@ -295,10 +498,10 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                                 </div>
                                 <div className="flex-1">
                                     <p className="text-sm font-semibold text-gray-900 mb-1">
-                                        This looks like a login-related issue.
+                                        Tip: Don't forget to include screenshots if possible.
                                     </p>
                                     <p className="text-sm text-gray-600">
-                                        You don't need to choose a category — we'll handle it automatically.
+                                        This helps our team solve your issue faster.
                                     </p>
                                 </div>
                                 <button
@@ -311,146 +514,61 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                             </div>
                         )}
                     </div>
+
+                    {/* Attachment UI (Simplified inline) */}
+                    {/* Note: Rich Text Editor handles images inline, so this is mostly for docs now */}
+                    <div className="space-y-3">
+                        <label className="block text-sm font-bold text-gray-900">
+                            Additional File <span className="text-gray-400 font-normal ml-1">(PDF, Excel, etc)</span>
+                        </label>
+                        <label className="flex items-center gap-2 w-fit px-4 py-2.5 text-sm font-semibold text-gray-600 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 hover:text-gray-900 transition-all group">
+                            <div className="p-1.5 bg-white rounded border border-gray-200 text-gray-400 group-hover:text-indigo-500 transition-colors">
+                                <Paperclip size={14} />
+                            </div>
+                            Add document
+                            <input type="file" className="hidden" onChange={(e) => setAttachment(e.target.files ? e.target.files[0] : null)} />
+                        </label>
+                        {attachment && (
+                            <div className="text-sm text-indigo-600 font-medium flex items-center gap-2 bg-indigo-50 w-fit px-3 py-1.5 rounded-lg border border-indigo-100">
+                                <span className="w-2 h-2 rounded-full bg-indigo-500 block"></span>
+                                {attachment.name}
+                                <button
+                                    type="button"
+                                    className="ml-2 text-indigo-400 hover:text-indigo-700"
+                                    onClick={(e) => { e.preventDefault(); setAttachment(null); }}
+                                >
+                                    <X size={14} />
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </section>
 
-                {/* 3. Optional Details */}
-                <section className="bg-white rounded-xl">
-                    <button
-                        type="button"
-                        onClick={() => setIsOptionalDetailsExpanded(!isOptionalDetailsExpanded)}
-                        className="flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-indigo-600 transition-colors py-2"
-                    >
-                        <ChevronRight size={16} className={`transition-transform duration-200 ${optionalChevronClassName}`} />
-                        Add optional details
-                    </button>
-
-                    {isOptionalDetailsExpanded && (
-                        <div className="pt-4 pb-2 space-y-6 animate-in slide-in-from-top-2 fade-in pl-6 border-l-2 border-gray-100 ml-1.5">
-                            <div className="space-y-3">
-                                <label className="block text-sm font-bold text-gray-900">
-                                    Issue Type <span className="text-gray-400 font-normal ml-1">(Optional)</span>
-                                </label>
-                                <div className="space-y-2">
-                                    <label className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-all">
-                                        <input
-                                            type="radio"
-                                            name="issueType"
-                                            value="software"
-                                            checked={service === 'software'}
-                                            onChange={(e) => setService(e.target.value)}
-                                            className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                                        />
-                                        <div>
-                                            <span className="font-medium text-gray-900">Software / Application Issue</span>
-                                            <p className="text-xs text-gray-500">Problems with apps, systems, or software errors</p>
-                                        </div>
-                                    </label>
-                                    <label className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-all">
-                                        <input
-                                            type="radio"
-                                            name="issueType"
-                                            value="hardware"
-                                            checked={service === 'hardware'}
-                                            onChange={(e) => setService(e.target.value)}
-                                            className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                                        />
-                                        <div>
-                                            <span className="font-medium text-gray-900">Hardware / Device Problem</span>
-                                            <p className="text-xs text-gray-500">Laptop, monitor, keyboard, printer issues</p>
-                                        </div>
-                                    </label>
-                                    <label className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-all">
-                                        <input
-                                            type="radio"
-                                            name="issueType"
-                                            value="network"
-                                            checked={service === 'network'}
-                                            onChange={(e) => setService(e.target.value)}
-                                            className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                                        />
-                                        <div>
-                                            <span className="font-medium text-gray-900">Network / Connectivity</span>
-                                            <p className="text-xs text-gray-500">WiFi, VPN, internet connection problems</p>
-                                        </div>
-                                    </label>
-                                    <label className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-all">
-                                        <input
-                                            type="radio"
-                                            name="issueType"
-                                            value="other"
-                                            checked={service === 'other'}
-                                            onChange={(e) => setService(e.target.value)}
-                                            className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                                        />
-                                        <div>
-                                            <span className="font-medium text-gray-900">Other</span>
-                                            <p className="text-xs text-gray-500">Not sure or doesn't fit above categories</p>
-                                        </div>
-                                    </label>
-                                </div>
-                                <p className="text-xs text-gray-400 flex items-center gap-1">
-                                    <Info size={12} />
-                                    Helps us understand your issue better
-                                </p>
-                            </div>
-
-                            <div className="space-y-3">
-                                <label className="block text-sm font-bold text-gray-900">
-                                    Attachment
-                                </label>
-                                <label className="flex items-center gap-2 w-fit px-4 py-2.5 text-sm font-semibold text-gray-600 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 hover:text-gray-900 transition-all group">
-                                    <div className="p-1.5 bg-white rounded border border-gray-200 text-gray-400 group-hover:text-indigo-500 transition-colors">
-                                        <Paperclip size={14} />
-                                    </div>
-                                    Add screenshot or file
-                                    <input type="file" className="hidden" onChange={(e) => setAttachment(e.target.files ? e.target.files[0] : null)} />
-                                </label>
-                                {attachment && (
-                                    <div className="text-sm text-indigo-600 font-medium flex items-center gap-2 bg-indigo-50 w-fit px-3 py-1.5 rounded-lg border border-indigo-100">
-                                        <span className="w-2 h-2 rounded-full bg-indigo-500 block"></span>
-                                        {attachment.name}
-                                        <button
-                                            type="button"
-                                            onClick={() => setAttachment(null)}
-                                            className="ml-2 text-indigo-400 hover:text-indigo-700"
-                                        >
-                                            <X size={14} />
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
+                {/* 5. Error Message & Submit Action */}
+                <div className="pt-2 space-y-4">
+                    {/* Notice about Auto-Routing */}
+                    {issueType && (
+                        <div className="text-center text-sm text-gray-500 animate-in fade-in">
+                            Ticket will be routed to the
+                            <span className="font-bold text-indigo-600 mx-1">
+                                {issueType === 'software' ? 'Application Support Team' :
+                                    issueType === 'hardware' ? 'Endpoint Hardware Team' :
+                                        issueType === 'network' ? 'Endpoint Network Team' : 'Service Desk Dispatcher'}
+                            </span>
                         </div>
                     )}
-                </section>
 
-                {/* 4. Smart System Notice */}
-                <section className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100/50 rounded-2xl p-6">
-                    <h3 className="flex items-center gap-2 font-bold text-indigo-900 mb-4">
-                        <Sparkles size={18} className="text-indigo-600" />
-                        What happens next?
-                    </h3>
-                    <ul className="space-y-3">
-                        <li className="flex items-start gap-3 text-sm text-indigo-800/80 font-medium">
-                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 shrink-0" />
-                            We'll automatically route this to the right team
-                        </li>
-                        <li className="flex items-start gap-3 text-sm text-indigo-800/80 font-medium">
-                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 shrink-0" />
-                            Priority & response time are handled by the system
-                        </li>
-                        <li className="flex items-start gap-3 text-sm text-indigo-800/80 font-medium">
-                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 shrink-0" />
-                            You'll get updates by email
-                        </li>
-                    </ul>
-                </section>
+                    {errorMessage && (
+                        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2 animate-in slide-in-from-bottom-2">
+                            <AlertCircle size={16} />
+                            {errorMessage}
+                        </div>
+                    )}
 
-                {/* 5. Submit Action */}
-                <div className="pt-2">
                     <button
                         type="submit"
                         disabled={isSubmitDisabled}
-                        className="w-full md:w-auto px-8 py-4 bg-indigo-600 text-white rounded-xl font-bold text-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-indigo-500/30 transition-all flex items-center justify-center gap-2 group"
+                        className="w-full md:w-auto px-8 py-4 bg-indigo-600 text-white rounded-xl font-bold text-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-indigo-500/30 transition-all flex items-center justify-center gap-2 group mx-auto md:mx-0"
                     >
                         {isSubmitting ? (
                             <>

@@ -30,16 +30,13 @@ const RequesterTicketManager: React.FC<RequesterTicketManagerProps> = ({ userPro
 
     const handleSubmitIncident = (data: any) => {
         console.log("Submitted Incident Data:", data);
-        // Here you would typically call an API to create the ticket
-        // For now, we simulate success and go back to list or detail
-        // Ideally show a success message or redirect to the new ticket
-        setCurrentView('detail');
+        // Go back to list view after successful submission
+        setCurrentView('list');
     };
 
     // Render Logic
     if (currentView === 'detail') {
-        // We could pass selectedTicketId to the View if it supported dynamic data fetching
-        return <RequesterTicketView onBack={handleBack} />;
+        return <RequesterTicketView ticketId={selectedTicketId} onBack={handleBack} />;
     }
 
     if (currentView === 'create') {
