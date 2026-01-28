@@ -35,7 +35,8 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
         pending: 0,
         resolved: 0,
         closed: 0,
-        inProgress: 0
+        inProgress: 0,
+        canceled: 0
     });
 
     const itemsPerPage = 5;
@@ -88,7 +89,8 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                         pending: formattedTickets.filter(t => t.status === 'Pending').length,
                         resolved: formattedTickets.filter(t => t.status === 'Resolved').length,
                         closed: formattedTickets.filter(t => t.status === 'Closed').length,
-                        inProgress: formattedTickets.filter(t => t.status === 'In Progress' || t.status === 'WIP' || t.status === 'Assigned').length
+                        inProgress: formattedTickets.filter(t => t.status === 'In Progress' || t.status === 'WIP' || t.status === 'Assigned').length,
+                        canceled: formattedTickets.filter(t => t.status === 'Canceled').length
                     };
                     setStats(newStats);
                 }
@@ -141,13 +143,14 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
             </div>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-5 gap-4">
+            <div className="grid grid-cols-6 gap-4">
                 {[
                     { label: 'OPEN', value: stats.open, sub: 'Active tickets', color: 'text-blue-600', bg: 'bg-blue-50', iconBg: 'bg-blue-100', icon: AlertCircle },
                     { label: 'IN PROGRESS', value: stats.inProgress, sub: 'Being worked on', color: 'text-purple-600', bg: 'bg-white', iconBg: 'bg-purple-100', icon: Activity },
                     { label: 'PENDING', value: stats.pending, sub: 'Waiting action', color: 'text-orange-500', bg: 'bg-white', iconBg: 'bg-orange-100', icon: Clock },
                     { label: 'RESOLVED', value: stats.resolved, sub: 'Completed', color: 'text-green-600', bg: 'bg-white', iconBg: 'bg-green-100', icon: CheckCircle },
                     { label: 'CLOSED', value: stats.closed, sub: 'Archived', color: 'text-gray-700', bg: 'bg-white', iconBg: 'bg-gray-100', icon: Package },
+                    { label: 'CANCELED', value: stats.canceled, sub: 'Withdrawn', color: 'text-rose-600', bg: 'bg-white', iconBg: 'bg-rose-100', icon: AlertCircle },
                 ].map((stat, i) => (
                     <div key={i} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between h-40 relative overflow-hidden group hover:shadow-md transition-all">
                         <div className="flex justify-between items-start mb-4">
@@ -218,6 +221,7 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                                                 <option value="Pending">Pending</option>
                                                 <option value="Resolved">Resolved</option>
                                                 <option value="Closed">Closed</option>
+                                                <option value="Canceled">Canceled</option>
                                             </select>
                                         </div>
                                     </div>
@@ -255,13 +259,13 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                                         <td className="px-6 py-4 text-gray-600 text-sm max-w-xs truncate">{ticket.subject}</td>
                                         <td className="px-6 py-4">
                                             <span
-                                                className={`px-3 py-1 rounded-md text-xs font-bold inline-flex items-center gap-1.5 ${ticket.status === 'Open' || ticket.status === 'New'
-                                                    ? 'bg-blue-100 text-blue-700'
-                                                    : ticket.status === 'Pending'
-                                                        ? 'bg-orange-100 text-orange-700'
-                                                        : ticket.status === 'Resolved'
-                                                            ? 'bg-green-100 text-green-700'
-                                                            : 'bg-gray-100 text-gray-600'
+                                                className={`px-3 py-1 rounded-md text-xs font-black uppercase tracking-wider inline-flex items-center gap-1.5 
+                                                    ${ticket.status === 'Open' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
+                                                        ticket.status === 'In Progress' ? 'bg-purple-50 text-purple-600 border border-purple-100' :
+                                                            ticket.status === 'Pending' ? 'bg-orange-50 text-orange-600 border border-orange-100' :
+                                                                ticket.status === 'Resolved' ? 'bg-green-50 text-green-600 border border-green-100' :
+                                                                    ticket.status === 'Canceled' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
+                                                                        'bg-slate-50 text-slate-600 border border-slate-100'
                                                     }`}
                                             >
                                                 {ticket.status}

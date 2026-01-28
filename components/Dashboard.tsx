@@ -136,7 +136,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'service-requests' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'access-policy'>('dashboard');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
-  const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile'>('incidents');
+  const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile' | 'user-dashboard'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -341,15 +341,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
     }
   };
 
-  const handleViewTicket = (id: string, fromView: 'incidents' | 'my-tickets' = 'incidents') => {
+  const handleViewTicket = (id: string, fromView: 'incidents' | 'my-tickets' | 'user-dashboard' = 'incidents') => {
     setSelectedTicketId(id);
     setPreviousView(fromView);
-    setCurrentView('ticket-detail');
+    if (fromView === 'user-dashboard') {
+      setCurrentView('my-tickets');
+    } else {
+      setCurrentView('ticket-detail');
+    }
   };
 
   const renderContent = () => {
     if (currentView === 'user-dashboard') {
-      return <UserDashboard onNavigate={(view: any) => setCurrentView(view)} userName={userProfile?.full_name} />;
+      return (
+        <UserDashboard
+          onNavigate={(view: any) => setCurrentView(view)}
+          userName={userProfile?.full_name}
+          onViewTicket={(id) => handleViewTicket(id, 'user-dashboard')}
+        />
+      );
     }
 
     if (currentView === 'incidents') {
@@ -373,7 +383,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
 
     // User Incidents Data (Requester View Manager)
     if (currentView === 'my-tickets') {
-      return <RequesterTicketManager userProfile={userProfile} />;
+      return <RequesterTicketManager userProfile={userProfile} initialTicketId={previousView === 'user-dashboard' ? selectedTicketId : null} />;
     }
 
     // NEW: Empty Placeholder for Service Requests

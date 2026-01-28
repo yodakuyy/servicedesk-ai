@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     ChevronLeft, Send, Paperclip, MessageSquare, ChevronDown, ChevronUp,
-    CheckCircle2, Circle, HelpCircle, FileText, Info, Loader2
+    CheckCircle2, Circle, HelpCircle, FileText, Info, Loader2, X
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
@@ -82,14 +82,52 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                 .insert({
                     ticket_id: ticketId,
                     sender_id: user.id,
-                    sender_type: 'requester',
-                    message_content: replyText
+                    sender_role: 'requester',
+                    content: replyText,
+                    is_internal: false
                 });
 
             if (error) throw error;
 
             setReplyText('');
             await fetchMessages(); // Refresh conversation
+
+            // Auto-revert to In Progress if Resolved or Pending
+            const currentStatus = ticket.ticket_statuses?.status_name;
+            if (['Resolved', 'Pending'].includes(currentStatus)) {
+                // Fetch In Progress ID
+                const { data: statusData } = await supabase
+                    .from('ticket_statuses')
+                    .select('status_id')
+                    .eq('status_name', 'In Progress')
+                    .single();
+
+                if (statusData) {
+                    await supabase
+                        .from('tickets')
+                        .update({ status_id: statusData.status_id })
+                        .eq('id', ticketId);
+
+                    // Log activity
+                    await supabase.from('ticket_activity_log').insert({
+                        ticket_id: ticketId,
+                        actor_id: user.id,
+                        action: 'Customer replied - Ticket Reopened'
+                    });
+
+                    // Refresh ticket details locally
+                    const { data: updatedTicket } = await supabase
+                        .from('tickets')
+                        .select(`
+                            *,
+                            ticket_statuses!fk_tickets_status (status_name),
+                            agent:profiles!fk_tickets_assigned_agent (full_name)
+                        `)
+                        .eq('id', ticketId)
+                        .single();
+                    if (updatedTicket) setTicket(updatedTicket);
+                }
+            }
         } catch (err: any) {
             console.error("Error sending reply:", err);
             alert("Failed to send reply: " + err.message);
@@ -123,9 +161,9 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
     const progressSteps = [
         { label: 'Ticket Submitted', status: 'completed' },
         { label: 'Being Reviewed', status: statusName !== 'Open' ? 'completed' : 'current' },
-        { label: 'In Progress', status: ['In Progress', 'WIP', 'Assigned'].includes(statusName) ? 'current' : (['Resolved', 'Closed'].includes(statusName) ? 'completed' : 'pending') },
-        { label: 'Waiting for Confirmation', status: statusName === 'Pending' ? 'current' : (['Resolved', 'Closed'].includes(statusName) ? 'completed' : 'pending') },
-        { label: 'Resolved', status: ['Resolved', 'Closed'].includes(statusName) ? 'completed' : 'pending' }
+        { label: 'In Progress', status: ['In Progress', 'WIP', 'Assigned'].includes(statusName) ? 'current' : (['Pending', 'Resolved', 'Closed'].includes(statusName) ? 'completed' : 'pending') },
+        { label: 'Pending', status: statusName === 'Pending' ? 'current' : (['Resolved', 'Closed'].includes(statusName) ? 'completed' : 'pending') },
+        { label: 'Resolved', status: statusName === 'Resolved' ? 'current' : (statusName === 'Closed' ? 'completed' : 'pending') }
     ];
 
     return (
@@ -137,6 +175,78 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     Back to My Tickets
                 </button>
                 <div className="flex items-center gap-4">
+                    {['Open', 'In Progress'].includes(ticket.ticket_statuses?.status_name) && (
+                        <button
+                            onClick={async () => {
+                                // @ts-ignore
+                                const Swal = (await import('sweetalert2')).default;
+                                const { value: reason } = await Swal.fire({
+                                    title: 'Cancel Ticket',
+                                    input: 'textarea',
+                                    inputLabel: 'Reason for cancellation',
+                                    inputPlaceholder: 'Why are you cancelling this ticket?',
+                                    showCancelButton: true,
+                                    confirmButtonColor: '#ef4444',
+                                    confirmButtonText: 'Yes, cancel it',
+                                    inputValidator: (value) => {
+                                        if (!value) {
+                                            return 'You need to write a reason!'
+                                        }
+                                    }
+                                });
+
+                                if (reason) {
+                                    try {
+                                        setLoading(true);
+                                        // Fetch 'Canceled' status ID
+                                        const { data: statusData } = await supabase
+                                            .from('ticket_statuses')
+                                            .select('status_id')
+                                            .eq('status_name', 'Canceled')
+                                            .single();
+
+                                        if (statusData) {
+                                            // Update ticket
+                                            const { error } = await supabase
+                                                .from('tickets')
+                                                .update({ status_id: statusData.status_id })
+                                                .eq('id', ticketId);
+
+                                            if (error) throw error;
+
+                                            // Get user info for log
+                                            const { data: { user } } = await supabase.auth.getUser();
+
+                                            // Log activity
+                                            await supabase.from('ticket_activity_log').insert({
+                                                ticket_id: ticketId,
+                                                actor_id: user?.id,
+                                                action: `Ticket canceled by user. Reason: ${reason}`
+                                            });
+
+                                            // Refresh UI without reload
+                                            setTicket((prev: any) => ({
+                                                ...prev,
+                                                status_id: statusData.status_id,
+                                                ticket_statuses: { status_name: 'Canceled' }
+                                            }));
+
+                                            Swal.fire('Canceled', 'Ticket has been canceled.', 'success');
+                                        }
+                                    } catch (err: any) {
+                                        console.error('Error canceling ticket:', err);
+                                        Swal.fire('Error', 'Failed to cancel ticket', 'error');
+                                    } finally {
+                                        setLoading(false);
+                                    }
+                                }
+                            }}
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-bold transition-colors flex items-center gap-1.5"
+                        >
+                            <X size={16} />
+                            Cancel Ticket
+                        </button>
+                    )}
                     <button className="text-gray-500 hover:text-indigo-600 flex items-center gap-1.5 text-sm font-medium">
                         <HelpCircle size={18} />
                         Help Center
@@ -244,16 +354,30 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                             </div>
                         ) : (
                             messages.map((msg) => (
-                                <div key={msg.id} className={`flex gap-4 ${msg.sender_type === 'requester' ? 'flex-row-reverse' : ''}`}>
-                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${msg.sender_type === 'requester' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
-                                        {(msg.sender?.full_name || msg.sender_type).charAt(0).toUpperCase()}
+                                <div key={msg.id} className={`flex gap-3 mb-6 ${msg.sender_role === 'requester' ? 'flex-row-reverse' : 'flex-row'}`}>
+                                    {/* Avatar */}
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 shadow-sm ${msg.sender_role === 'requester' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-200 text-slate-600'}`}>
+                                        {(msg.sender?.full_name || msg.sender_role).charAt(0).toUpperCase()}
                                     </div>
-                                    <div className={`max-w-[80%] ${msg.sender_type === 'requester' ? 'text-right' : 'text-left'}`}>
-                                        <div className={`flex items-center gap-2 mb-1 ${msg.sender_type === 'requester' ? 'justify-end' : ''}`}>
-                                            <span className="font-bold text-xs text-gray-900">{msg.sender?.full_name || 'Agent'}</span>
-                                            <span className="text-[10px] text-gray-400">{new Date(msg.created_at).toLocaleTimeString()}</span>
+
+                                    <div className={`max-w-[85%] flex flex-col ${msg.sender_role === 'requester' ? 'items-end' : 'items-start'}`}>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="text-xs font-bold text-slate-700">{msg.sender?.full_name || 'Support Agent'}</span>
+                                            <span className="text-[10px] text-slate-400 font-medium">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                            {msg.sender_role !== 'requester' && (
+                                                <span className="bg-indigo-50 text-indigo-600 border border-indigo-100 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                                    Agent
+                                                </span>
+                                            )}
                                         </div>
-                                        <div className={`p-4 rounded-2xl text-sm leading-relaxed shadow-sm prose prose-sm max-w-none ${msg.sender_type === 'requester' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-gray-100 text-gray-800 rounded-tl-none'}`} dangerouslySetInnerHTML={{ __html: msg.message_content }} />
+                                        <div
+                                            className={`py-3 px-4 shadow-sm text-sm leading-relaxed prose prose-sm max-w-none 
+                                            ${msg.sender_role === 'requester'
+                                                    ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-[2px]'
+                                                    : 'bg-[#f0f2f5] text-slate-800 rounded-2xl rounded-tl-[2px] border border-slate-100'
+                                                }`}
+                                            dangerouslySetInnerHTML={{ __html: msg.content }}
+                                        />
                                     </div>
                                 </div>
                             ))

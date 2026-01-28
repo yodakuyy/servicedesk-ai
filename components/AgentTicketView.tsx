@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import {
     Search, Filter, Clock, AlertCircle, CheckCircle2, MoreHorizontal,
     MessageSquare, FileText, GitBranch, Shield, Send, Sparkles,
-    ChevronRight, ChevronLeft, Paperclip, Mic, User, Copy, ExternalLink,
+    ChevronRight, ChevronLeft, ChevronDown, Paperclip, Mic, User, Copy, ExternalLink,
     ThumbsUp, RefreshCw, AlertTriangle, Loader2, Zap, X, Info, BookOpen,
-    ArrowUpRight, BarChart3
+    ArrowUpRight, ArrowRight, BarChart3, Lock, List, Users
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
@@ -13,18 +13,34 @@ interface AgentTicketViewProps {
     userProfile?: any;
 }
 
+const workflowMap: Record<string, string[]> = {
+    'Open': ['In Progress', 'Canceled'],
+    'In Progress': ['Pending', 'Resolved', 'Canceled'],
+    'Pending': ['In Progress', 'Resolved', 'Canceled'],
+    'Resolved': ['Closed', 'In Progress'],
+    'Closed': ['In Progress'],
+    'Canceled': ['Open']
+};
+
 const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
     // State
     const [tickets, setTickets] = useState<any[]>([]);
     const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
     const [selectedTicket, setSelectedTicket] = useState<any | null>(null);
-    const [activeTab, setActiveTab] = useState<'conversation' | 'details' | 'workflow' | 'sla'>('conversation');
+    const [activeTab, setActiveTab] = useState<'conversation' | 'details' | 'workflow' | 'sla' | 'activities'>('conversation');
     const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
     const [isLoading, setIsLoading] = useState(true);
     const [messages, setMessages] = useState<any[]>([]);
     const [newMessage, setNewMessage] = useState('');
     const [aiInsight, setAiInsight] = useState<any>(null);
+    const [activityLogs, setActivityLogs] = useState<any[]>([]);
     const [agentGroups, setAgentGroups] = useState<string[]>([]);
+    const [availableStatuses, setAvailableStatuses] = useState<any[]>([]);
+    const [allGroups, setAllGroups] = useState<any[]>([]);
+    const [allAgents, setAllAgents] = useState<any[]>([]);
+    const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+    const [isAssigning, setIsAssigning] = useState(false);
+    const [isTransferring, setIsTransferring] = useState(false);
 
     useEffect(() => {
         const fetchAgentGroups = async () => {
@@ -32,7 +48,66 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
             const { data } = await supabase.from('user_groups').select('group_id').eq('user_id', userProfile.id);
             if (data) setAgentGroups(data.map(g => g.group_id));
         };
+        const fetchStatuses = async () => {
+            const { data } = await supabase.from('ticket_statuses').select('*').order('status_name');
+            if (data) setAvailableStatuses(data);
+        };
+        const fetchAllGroups = async () => {
+            const { data, error } = await supabase.from('groups').select('id, name, company_id').order('name');
+            if (error) console.error('Error fetching groups:', error);
+            if (data) setAllGroups(data);
+        };
+        const fetchAllAgents = async () => {
+            // Fetch profiles with their group and company associations
+            const { data, error } = await supabase
+                .from('user_groups')
+                .select(`
+                    user_id,
+                    group_id,
+                    profiles:user_id (id, full_name, role_id, roles:role_id(role_name)),
+                    groups:group_id (company_id)
+                `)
+                .neq('profiles.role_id', 4); // Not a Requester
+
+            if (error) {
+                console.error('Error fetching agents:', error);
+            } else {
+                // Flatten and unique agents, collecting companies and groups
+                const processedAgents = data.reduce((acc: any[], item: any) => {
+                    const profile = item.profiles;
+                    if (!profile) return acc;
+
+                    const existing = acc.find(a => a.id === profile.id);
+                    const companyId = item.groups?.company_id;
+                    const groupId = item.group_id;
+
+                    const roleName = profile.roles?.role_name || '';
+
+                    if (existing) {
+                        if (companyId && !existing.companies.includes(companyId)) {
+                            existing.companies.push(companyId);
+                        }
+                        if (groupId && !existing.group_ids.includes(groupId)) {
+                            existing.group_ids.push(groupId);
+                        }
+                    } else {
+                        acc.push({
+                            ...profile,
+                            role_name: roleName,
+                            companies: companyId ? [companyId] : [],
+                            group_ids: groupId ? [groupId] : []
+                        });
+                    }
+                    return acc;
+                }, []);
+
+                setAllAgents(processedAgents);
+            }
+        };
         fetchAgentGroups();
+        fetchStatuses();
+        fetchAllGroups();
+        fetchAllAgents();
     }, [userProfile]);
 
     useEffect(() => {
@@ -45,9 +120,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
             const { data } = await supabase
                 .from('tickets')
                 .select(`
-                    id, ticket_number, subject, priority, created_at, assignment_group_id,
+                    id, ticket_number, subject, priority, created_at, assignment_group_id, status_id,
                     ticket_statuses!fk_tickets_status (status_name),
-                    requester:profiles!fk_tickets_requester (full_name)
+                    requester:profiles!fk_tickets_requester (full_name),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name)
                 `)
                 .in('assignment_group_id', agentGroups)
                 .order('created_at', { ascending: false });
@@ -68,12 +144,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                 .from('tickets')
                 .select(`
                     *,
+                    category_id,
                     ticket_statuses!fk_tickets_status (status_name),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
-                    group:groups!assignment_group_id (name)
+                    group:groups!assignment_group_id (id, name, company_id)
                 `)
                 .eq('id', selectedTicketId)
                 .single();
@@ -91,39 +168,537 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
             if (msgs) {
                 setMessages(msgs.map(m => ({
                     ...m,
-                    content: m.message_content,
-                    sender_name: m.sender?.full_name || (m.sender_type === 'requester' ? 'User' : 'Agent')
+                    sender_name: m.sender?.full_name || (m.sender_role === 'requester' ? 'User' : 'Agent')
                 })));
             }
         };
+        const fetchActivityLogs = async () => {
+            if (!selectedTicketId) return;
+            const { data } = await supabase
+                .from('ticket_activity_log')
+                .select('*')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: false });
+            if (data) setActivityLogs(data);
+        };
         fetchDetails();
+        fetchActivityLogs();
     }, [selectedTicketId]);
 
+    const [isSending, setIsSending] = useState(false);
+
     const handleSendMessage = async () => {
-        if (!newMessage.trim() || !selectedTicketId) return;
+        const cleanMessage = newMessage.replace(/<[^>]*>/g, '').trim();
+        const hasImage = newMessage.includes('<img');
+
+        if ((!cleanMessage && !hasImage) || !selectedTicketId) return;
+
+        setIsSending(true);
         try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
-            await supabase.from('ticket_messages').insert({
+            // Priority 1: Use userProfile ID
+            // Priority 2: Use current auth session
+            let senderId = userProfile?.id;
+
+            if (!senderId) {
+                const { data: { user } } = await supabase.auth.getUser();
+                senderId = user?.id;
+            }
+
+            if (!senderId) {
+                // @ts-ignore
+                const Swal = (await import('sweetalert2')).default;
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Authentication Error',
+                    text: 'Unable to identify your agent profile. Please re-login.',
+                    confirmButtonColor: '#6366f1'
+                });
+                return;
+            }
+
+            const { error: insertError } = await supabase.from('ticket_messages').insert({
                 ticket_id: selectedTicketId,
-                sender_id: user.id,
-                sender_type: 'agent',
-                message_content: newMessage
+                sender_id: senderId,
+                sender_role: 'agent',
+                content: newMessage,
+                is_internal: false // Default to public reply for now
             });
+
+            if (insertError) throw insertError;
+
             setNewMessage('');
-            const { data: msgs } = await supabase
+
+            // Re-fetch messages
+            const { data: msgs, error: fetchError } = await supabase
                 .from('ticket_messages')
                 .select('*, sender:profiles!sender_id(full_name)')
                 .eq('ticket_id', selectedTicketId)
                 .order('created_at', { ascending: true });
+
+            if (fetchError) throw fetchError;
+
             if (msgs) {
                 setMessages(msgs.map(m => ({
                     ...m,
-                    content: m.message_content,
-                    sender_name: m.sender?.full_name || 'Agent'
+                    sender_name: m.sender?.full_name || (m.sender_role === 'requester' ? 'User' : 'Agent')
                 })));
             }
-        } catch (err) { console.error(err); }
+
+            // Auto-update status to In Progress if currently Open
+            if (selectedTicket.ticket_statuses?.status_name === 'Open') {
+                const inProgressStatus = availableStatuses.find(s => s.status_name === 'In Progress');
+                if (inProgressStatus) {
+                    await handleStatusUpdate(inProgressStatus.status_id);
+                }
+            }
+
+            // Log activity
+            await supabase.from('ticket_activity_log').insert({
+                ticket_id: selectedTicketId,
+                actor_id: senderId,
+                action: 'Agent replied to ticket'
+            });
+
+            // Refresh activity logs
+            const { data: logs } = await supabase
+                .from('ticket_activity_log')
+                .select('*')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: false });
+            if (logs) setActivityLogs(logs);
+
+            // Success feedback (optional, toast is better)
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Sent',
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 1500
+            });
+
+        } catch (err: any) {
+            console.error('Send Error:', err);
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'error',
+                title: 'Send Failed',
+                text: err.message || 'An error occurred while sending your message.',
+                confirmButtonColor: '#6366f1'
+            });
+        } finally {
+            setIsSending(false);
+        }
+    };
+
+    const handleStatusUpdate = async (newStatusId: string) => {
+        if (!selectedTicketId || isUpdatingStatus) return;
+
+        // Find status name
+        const statusObj = availableStatuses.find(s => s.status_id === newStatusId);
+        const newStatusName = statusObj?.status_name;
+        let remark = '';
+
+        // specialized handling for Pending / Resolved / Canceled
+        if (['Pending', 'Resolved', 'Canceled'].includes(newStatusName)) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            const { value: text } = await Swal.fire({
+                title: `${newStatusName} Remark`,
+                input: 'textarea',
+                inputLabel: `Please provide a reason or remark for setting status to ${newStatusName}`,
+                inputPlaceholder: 'Type your remark here...',
+                showCancelButton: true,
+                confirmButtonText: 'Update Status',
+                inputValidator: (value) => {
+                    if (!value) {
+                        return 'You need to write a remark!'
+                    }
+                }
+            });
+
+            if (!text) return; // User canceled or closed modal
+            remark = text;
+        }
+
+        setIsUpdatingStatus(true);
+        try {
+            const { error } = await supabase
+                .from('tickets')
+                .update({ status_id: newStatusId })
+                .eq('id', selectedTicketId);
+
+            if (error) throw error;
+
+            // Refetch ticket details to update UI
+            const { data: updatedTicket } = await supabase
+                .from('tickets')
+                .select(`
+                    *,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_categories (name),
+                    services (name),
+                    requester:profiles!fk_tickets_requester (full_name, email),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (name)
+                `)
+                .eq('id', selectedTicketId)
+                .single();
+
+            if (updatedTicket) {
+                setSelectedTicket(updatedTicket);
+                // Also update in the list
+                setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
+
+                // Log activity
+                let actorId = userProfile?.id;
+                if (!actorId) {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    actorId = user?.id;
+                }
+
+                const logAction = `Status changed from ${selectedTicket.ticket_statuses?.status_name} to ${updatedTicket.ticket_statuses?.status_name}${remark ? `. Remark: ${remark}` : ''}`;
+
+                await supabase.from('ticket_activity_log').insert({
+                    ticket_id: selectedTicketId,
+                    actor_id: actorId,
+                    action: logAction
+                });
+
+                // Refresh activity logs
+                const { data: logs } = await supabase
+                    .from('ticket_activity_log')
+                    .select('*')
+                    .eq('ticket_id', selectedTicketId)
+                    .order('created_at', { ascending: false });
+                if (logs) setActivityLogs(logs);
+            }
+
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Status Updated',
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 1500
+            });
+        } catch (err: any) {
+            console.error('Status Update Error:', err);
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'error',
+                title: 'Update Failed',
+                text: err.message || 'An error occurred while updating status.',
+                confirmButtonColor: '#6366f1'
+            });
+        } finally {
+            setIsUpdatingStatus(false);
+        }
+    };
+
+    const handleAssignToMe = async () => {
+        if (!selectedTicketId || isAssigning) return;
+
+        setIsAssigning(true);
+        try {
+            let actorId = userProfile?.id;
+            if (!actorId) {
+                const { data: { user } } = await supabase.auth.getUser();
+                actorId = user?.id;
+            }
+
+            if (!actorId) throw new Error("Could not find agent identity.");
+
+            const { error } = await supabase
+                .from('tickets')
+                .update({ assigned_to: actorId })
+                .eq('id', selectedTicketId);
+
+            if (error) throw error;
+
+            // Refetch ticket details to update UI
+            const { data: updatedTicket } = await supabase
+                .from('tickets')
+                .select(`
+                    *,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_categories (name),
+                    services (name),
+                    requester:profiles!fk_tickets_requester (full_name, email),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (name)
+                `)
+                .eq('id', selectedTicketId)
+                .single();
+
+            if (updatedTicket) {
+                setSelectedTicket(updatedTicket);
+                // Also update in the list
+                setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
+
+                // Log activity
+                const agentName = userProfile?.full_name || updatedTicket.assigned_agent?.full_name || 'Agent';
+                await supabase.from('ticket_activity_log').insert({
+                    ticket_id: selectedTicketId,
+                    actor_id: actorId,
+                    action: `Ticket assigned to ${agentName}`
+                });
+
+                // Refresh activity logs
+                const { data: logs } = await supabase
+                    .from('ticket_activity_log')
+                    .select('*')
+                    .eq('ticket_id', selectedTicketId)
+                    .order('created_at', { ascending: false });
+                if (logs) setActivityLogs(logs);
+            }
+
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Ticket Assigned',
+                text: 'You are now the owner of this ticket.',
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 1500
+            });
+        } catch (err: any) {
+            console.error('Assignment Error:', err);
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Assignment Failed', text: err.message });
+        } finally {
+            setIsAssigning(false);
+        }
+    };
+
+    const handleTransferGroup = async (newGroupId: string) => {
+        if (!selectedTicketId || isTransferring || !newGroupId) return;
+
+        const groupName = allGroups.find(g => g.id === newGroupId)?.name || 'New Group';
+
+        // @ts-ignore
+        const Swal = (await import('sweetalert2')).default;
+        const result = await Swal.fire({
+            title: 'Transfer Group?',
+            text: `Move this ticket to ${groupName}?`,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#6366f1',
+            cancelButtonColor: '#d33',
+            confirmButtonText: 'Yes, move it!'
+        });
+
+        if (!result.isConfirmed) return;
+
+        setIsTransferring(true);
+        try {
+            const { error } = await supabase
+                .from('tickets')
+                .update({
+                    assignment_group_id: newGroupId,
+                    assigned_to: null
+                })
+                .eq('id', selectedTicketId);
+
+            if (error) throw error;
+
+            await supabase.from('ticket_activity_log').insert({
+                ticket_id: selectedTicketId,
+                actor_id: userProfile?.id,
+                action: `Ticket transferred to group: ${groupName}`
+            });
+
+            // Refresh activity logs
+            const { data: logs } = await supabase
+                .from('ticket_activity_log')
+                .select('*')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: false });
+            if (logs) setActivityLogs(logs);
+
+            // Refresh ticket details
+            const { data: updatedTicket } = await supabase
+                .from('tickets')
+                .select(`
+                    *,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_categories (name),
+                    services (name),
+                    requester:profiles!fk_tickets_requester (full_name, email),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (id, name, company_id)
+                `)
+                .eq('id', selectedTicketId)
+                .single();
+
+            if (updatedTicket) {
+                setSelectedTicket(updatedTicket);
+                setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
+            }
+
+            Swal.fire({ icon: 'success', title: 'Transferred', timer: 1500 });
+        } catch (err: any) {
+            console.error('Transfer Error:', err);
+            Swal.fire({ icon: 'error', title: 'Transfer Failed', text: err.message });
+        } finally {
+            setIsTransferring(false);
+        }
+    };
+
+
+    const handleEscalate = async (targetId: string) => {
+        if (!selectedTicketId || isTransferring || !targetId) return;
+
+
+
+        const targetAgent = allAgents.find(a => a.id === targetId);
+        const targetName = targetAgent?.full_name || 'Agent';
+
+        // @ts-ignore
+        const Swal = (await import('sweetalert2')).default;
+        const result = await Swal.fire({
+            title: 'Escalate to L2?',
+            text: `Are you sure you want to escalate this ticket to ${targetName}?`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#fbbf24',
+            cancelButtonColor: '#d33',
+            confirmButtonText: 'Yes, escalate!'
+        });
+
+        if (!result.isConfirmed) return;
+
+        setIsTransferring(true);
+        try {
+            const { error } = await supabase
+                .from('tickets')
+                .update({ assigned_to: targetId })
+                .eq('id', selectedTicketId);
+
+            if (error) throw error;
+
+            await supabase.from('ticket_activity_log').insert({
+                ticket_id: selectedTicketId,
+                actor_id: userProfile?.id,
+                action: `Ticket escalated to L2 Agent: ${targetName}`
+            });
+
+            // Refresh activity logs
+            const { data: logs } = await supabase
+                .from('ticket_activity_log')
+                .select('*')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: false });
+            if (logs) setActivityLogs(logs);
+
+            // Refresh ticket details
+            const { data: updatedTicket } = await supabase
+                .from('tickets')
+                .select(`
+                    *,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_categories (name),
+                    services (name),
+                    requester:profiles!fk_tickets_requester (full_name, email),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (id, name, company_id)
+                `)
+                .eq('id', selectedTicketId)
+                .single();
+
+            if (updatedTicket) {
+                setSelectedTicket(updatedTicket);
+                setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
+            }
+
+            Swal.fire({ icon: 'success', title: 'Escalated', timer: 1500 });
+        } catch (err: any) {
+            console.error('Escalation Error:', err);
+            Swal.fire({ icon: 'error', title: 'Escalation Failed', text: err.message });
+        } finally {
+            setIsTransferring(false);
+        }
+    };
+
+    const handleReassign = async (targetId: string) => {
+        if (!selectedTicketId || isTransferring || !targetId) return;
+
+        const targetAgent = allAgents.find(a => a.id === targetId);
+        const targetName = targetAgent?.full_name || 'Agent';
+
+        // @ts-ignore
+        const Swal = (await import('sweetalert2')).default;
+        const result = await Swal.fire({
+            title: 'Confirm Reassignment',
+            text: `Are you sure you want to reassign this ticket to ${targetName}?`,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#10b981',
+            cancelButtonColor: '#d33',
+            confirmButtonText: 'Yes, reassign'
+        });
+
+        if (!result.isConfirmed) return;
+
+        setIsTransferring(true);
+        try {
+            const { error } = await supabase
+                .from('tickets')
+                .update({ assigned_to: targetId })
+                .eq('id', selectedTicketId);
+
+            if (error) throw error;
+
+            await supabase.from('ticket_activity_log').insert({
+                ticket_id: selectedTicketId,
+                actor_id: userProfile?.id,
+                action: `Ticket reassigned to team member: ${targetName}`
+            });
+
+            // Refresh activity logs
+            const { data: logs } = await supabase
+                .from('ticket_activity_log')
+                .select('*')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: false });
+            if (logs) setActivityLogs(logs);
+
+            // Refresh ticket details
+            const { data: updatedTicket } = await supabase
+                .from('tickets')
+                .select(`
+                    *,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_categories (name),
+                    services (name),
+                    requester:profiles!fk_tickets_requester (full_name, email),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (id, name, company_id)
+                `)
+                .eq('id', selectedTicketId)
+                .single();
+
+            if (updatedTicket) {
+                setSelectedTicket(updatedTicket);
+                setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
+            }
+
+            Swal.fire({ icon: 'success', title: 'Reassigned', timer: 1500 });
+        } catch (err: any) {
+            console.error('Reassignment Error:', err);
+            Swal.fire({ icon: 'error', title: 'Reassignment Failed', text: err.message });
+        } finally {
+            setIsTransferring(false);
+        }
     };
 
     return (
@@ -161,7 +736,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                                     <span className="text-red-500 font-bold tracking-tighter text-[10px]">00:14:21</span>
                                 </div>
                             </div>
-                            <div className="mt-1 text-[10px] text-gray-400 italic">{ticket.ticket_statuses?.status_name}</div>
+                            <div className="flex justify-between items-center mt-1.5">
+                                <div className="px-1.5 py-0.5 bg-slate-50 border border-slate-100 rounded text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                                    PIC: {ticket.assigned_agent?.full_name || 'UNASSIGNED'}
+                                </div>
+                                <div className="text-[10px] text-gray-400 italic">{ticket.ticket_statuses?.status_name}</div>
+                            </div>
                         </div>
                     ))}
                 </div>
@@ -178,16 +758,179 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                                     {selectedTicket.ticket_number} &nbsp; {selectedTicket.subject}
                                 </h1>
                                 <div className="flex items-center gap-3">
-                                    <span className="px-2.5 py-1 bg-red-100 text-red-600 rounded text-[10px] font-black tracking-widest uppercase border border-red-200">
-                                        P1 - Critical
+                                    {/* Dynamic Priority Badge */}
+                                    <span className={`px-2.5 py-1 rounded text-[10px] font-black tracking-widest uppercase border ${selectedTicket.priority?.toLowerCase() === 'high' || selectedTicket.priority?.toLowerCase() === 'urgent'
+                                        ? 'bg-red-50 text-red-600 border-red-100' :
+                                        selectedTicket.priority?.toLowerCase() === 'medium'
+                                            ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                                            'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                        }`}>
+                                        {
+                                            (() => {
+                                                const p = selectedTicket.priority?.toLowerCase() || 'low';
+                                                if (p === 'critical') return 'P1 - CRITICAL';
+                                                if (p === 'high') return 'P2 - HIGH';
+                                                if (p === 'medium') return 'P3 - MEDIUM';
+                                                return 'P4 - LOW';
+                                            })()
+                                        }
                                     </span>
-                                    <span className="px-2.5 py-1 bg-amber-100 text-amber-600 rounded text-[10px] font-black tracking-widest uppercase border border-amber-200">
-                                        {selectedTicket.ticket_statuses?.status_name}
-                                    </span>
+
+                                    {/* Improved Status Selector */}
+                                    <div className="relative group/status flex items-center">
+                                        <span className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-tighter">Status &nbsp;</span>
+                                        <div className="relative">
+                                            <select
+                                                value={selectedTicket.status_id}
+                                                disabled={isUpdatingStatus}
+                                                onChange={(e) => handleStatusUpdate(e.target.value)}
+                                                className={`appearance-none pl-3 pr-8 py-1 rounded text-[10px] font-black tracking-widest uppercase border cursor-pointer outline-none transition-all
+                                                    ${selectedTicket.ticket_statuses?.status_name === 'Open' ? 'bg-blue-50 text-blue-600 border-blue-200' :
+                                                        selectedTicket.ticket_statuses?.status_name === 'In Progress' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' :
+                                                            selectedTicket.ticket_statuses?.status_name === 'Resolved' ? 'bg-green-50 text-green-600 border-green-200' :
+                                                                selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'bg-rose-50 text-rose-600 border-rose-200' :
+                                                                    'bg-slate-50 text-slate-600 border-slate-200'}`}
+                                            >
+                                                {availableStatuses
+                                                    .filter(s => {
+                                                        const currentName = selectedTicket.ticket_statuses?.status_name;
+                                                        const allowed = workflowMap[currentName] || [];
+                                                        // Always show current status, plus allowed next steps
+                                                        // BUT ban 'Closed' from manual selection (automation only)
+                                                        return (s.status_id === selectedTicket.status_id || allowed.includes(s.status_name)) && s.status_name !== 'Closed';
+                                                    })
+                                                    .sort((a, b) => {
+                                                        // Put current status first in the dropdown for clarity
+                                                        if (a.status_id === selectedTicket.status_id) return -1;
+                                                        if (b.status_id === selectedTicket.status_id) return 1;
+                                                        return 0;
+                                                    })
+                                                    .map(status => (
+                                                        <option key={status.status_id} value={status.status_id} className="bg-white text-gray-800">
+                                                            {status.status_name}
+                                                        </option>
+                                                    ))}
+                                            </select>
+                                            <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-40">
+                                                <ChevronDown size={8} />
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div className="flex gap-2">
-                                <button className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 rounded-lg shadow-md shadow-indigo-100 hover:bg-indigo-700 transition-all">Assign to me</button>
+                                <button
+                                    onClick={handleAssignToMe}
+                                    disabled={isAssigning || selectedTicket.assigned_to === userProfile?.id}
+                                    className={`px-4 py-2 text-xs font-bold rounded-lg shadow-md transition-all flex items-center gap-2
+                                        ${selectedTicket.assigned_to === userProfile?.id
+                                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100 shadow-none cursor-default'
+                                            : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'
+                                        }`}
+                                >
+                                    {isAssigning ? (
+                                        <Loader2 size={12} className="animate-spin" />
+                                    ) : selectedTicket.assigned_to === userProfile?.id ? (
+                                        <><CheckCircle2 size={12} /> Assigned to me</>
+                                    ) : (
+                                        'Assign to me'
+                                    )}
+                                </button>
+
+                                {userProfile?.role_id === 2 && (
+                                    <div className="relative group">
+                                        <button
+                                            className={`p-2 text-gray-400 hover:text-emerald-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 ${isTransferring ? 'opacity-50' : ''}`}
+                                            title="Reassign to Team Member"
+                                        >
+                                            <Users size={16} />
+                                            <span className="text-[10px] font-black uppercase tracking-widest pr-1 text-emerald-600">Reassign</span>
+                                        </button>
+                                        <select
+                                            onChange={(e) => handleReassign(e.target.value)}
+                                            value=""
+                                            className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                        >
+                                            <option value="" disabled>Select Team Member</option>
+                                            {allAgents
+                                                .filter(a =>
+                                                    a.id !== userProfile?.id &&
+                                                    a.group_ids?.some((gid: any) => String(gid) === String(selectedTicket.assignment_group_id)) &&
+                                                    !a.role_name?.includes('Admin') &&
+                                                    !a.role_name?.includes('L2')
+                                                )
+                                                .map(agent => (
+                                                    <option key={agent.id} value={agent.id}>{agent.full_name}</option>
+                                                ))
+                                            }
+                                            {allAgents.filter(a =>
+                                                a.id !== userProfile?.id &&
+                                                a.group_ids?.some((gid: any) => String(gid) === String(selectedTicket.assignment_group_id)) &&
+                                                !a.role_name?.includes('Admin') &&
+                                                !a.role_name?.includes('L2')
+                                            ).length === 0 && (
+                                                    <option disabled>No other team members available</option>
+                                                )}
+                                        </select>
+                                    </div>
+                                )}
+
+                                <div className="relative group">
+                                    <button
+                                        className={`p-2 text-gray-400 hover:text-blue-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 ${isTransferring ? 'opacity-50' : ''}`}
+                                        title="Transfer Group"
+                                    >
+                                        <ArrowRight size={16} />
+                                        <span className="text-[10px] font-black uppercase tracking-widest pr-1">Transfer</span>
+                                    </button>
+                                    <select
+                                        onChange={(e) => handleTransferGroup(e.target.value)}
+                                        value=""
+                                        className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                    >
+                                        <option value="" disabled>Select Group</option>
+                                        {allGroups
+                                            .filter(g =>
+                                                g.id !== selectedTicket.assignment_group_id &&
+                                                g.company_id === selectedTicket.group?.company_id
+                                            )
+                                            .map(group => (
+                                                <option key={group.id} value={group.id}>{group.name}</option>
+                                            ))
+                                        }
+                                    </select>
+                                </div>
+
+                                <div className="relative group">
+                                    <button
+                                        className={`p-2 text-gray-400 hover:text-orange-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 ${isTransferring ? 'opacity-50' : ''}`}
+                                        title="Escalate to L2"
+                                    >
+                                        <ArrowUpRight size={16} />
+                                        <span className="text-[10px] font-black uppercase tracking-widest pr-1 text-orange-600">Escalate</span>
+                                    </button>
+                                    <select
+                                        onChange={(e) => handleEscalate(e.target.value)}
+                                        value=""
+                                        className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                    >
+                                        <option value="" disabled>Select L2 Agent</option>
+                                        {allAgents
+                                            .filter(a =>
+                                                a.id !== userProfile?.id &&
+                                                a.id !== selectedTicket.assigned_to &&
+                                                a.companies.includes(selectedTicket.group?.company_id) &&
+                                                a.role_name?.includes('L2')
+                                            )
+                                            .map(agent => (
+                                                <option key={agent.id} value={agent.id}>{agent.full_name} ({agent.role_name})</option>
+                                            ))
+                                        }
+                                        {allAgents.filter(a => a.companies.includes(selectedTicket.group?.company_id) && a.role_name?.includes('L2')).length === 0 && (
+                                            <option disabled>No L2 Agents found</option>
+                                        )}
+                                    </select>
+                                </div>
                                 <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg border border-gray-200"><MoreHorizontal size={16} /></button>
                             </div>
                         </div>
@@ -217,6 +960,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                         <TabItem active={activeTab === 'details'} onClick={() => setActiveTab('details')} icon={FileText} label="Details" />
                         <TabItem active={activeTab === 'workflow'} onClick={() => setActiveTab('workflow')} icon={GitBranch} label="Work Flow" />
                         <TabItem active={activeTab === 'sla'} onClick={() => setActiveTab('sla')} icon={Clock} label="SLA" />
+                        <TabItem active={activeTab === 'activities'} onClick={() => setActiveTab('activities')} icon={List} label="Activities" />
                     </div>
 
                     {/* Panel Content Area */}
@@ -232,6 +976,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                                             <div className="flex items-center gap-2 mb-2">
                                                 <span className="text-[13px] font-black text-gray-900">{selectedTicket.requester?.full_name}</span>
                                                 <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{new Date(selectedTicket.created_at).toLocaleString()}</span>
+                                                <span className="bg-slate-50 text-slate-500 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
+                                                    Requester
+                                                </span>
                                                 <span className="bg-indigo-50 text-indigo-600 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-indigo-100 flex items-center gap-1">
                                                     <FileText size={10} /> Initial Issue
                                                 </span>
@@ -243,43 +990,88 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                                     </div>
                                 )}
 
-                                {messages.map((msg) => (
-                                    <div key={msg.id} className="flex gap-4">
-                                        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 ${msg.sender_type === 'agent' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
-                                            {msg.sender_name?.charAt(0) || 'U'}
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-[13px] font-bold text-gray-800">{msg.sender_name}</span>
-                                                <span className="text-[10px] text-gray-400 font-bold uppercase">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                                {msg.sender_type === 'agent' && <span className="bg-amber-100 text-amber-700 text-[9px] px-1 font-black uppercase rounded ml-2">Internal Note</span>}
+                                {messages.map((msg) => {
+                                    const isAgent = msg.sender_role === 'agent';
+                                    const isInternal = msg.is_internal;
+
+                                    return (
+                                        <div key={msg.id} className={`flex gap-4 group animate-in fade-in slide-in-from-bottom-2 duration-300 ${isAgent ? 'flex-row-reverse' : ''}`}>
+                                            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 shadow-sm transition-transform group-hover:scale-105
+                                                ${isAgent ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                                                {msg.sender_name?.charAt(0) || 'U'}
                                             </div>
-                                            <div className={`text-[13.5px] text-gray-600 leading-relaxed font-medium prose prose-sm max-w-none ${msg.sender_type === 'agent' ? 'bg-amber-50/30 p-4 rounded-xl border border-amber-100/50' : ''}`} dangerouslySetInnerHTML={{ __html: msg.content }} />
+                                            <div className={`flex-1 flex flex-col ${isAgent ? 'items-end' : 'items-start'}`}>
+                                                <div className={`flex items-center gap-2 mb-2 ${isAgent ? 'flex-row-reverse' : ''}`}>
+                                                    <span className="text-[13px] font-black text-gray-900">{msg.sender_name}</span>
+                                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
+                                                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    </span>
+                                                    {isAgent ? (
+                                                        <span className="bg-indigo-50 text-indigo-600 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-indigo-100 flex items-center gap-1">
+                                                            Agent
+                                                        </span>
+                                                    ) : (
+                                                        <span className="bg-slate-50 text-slate-500 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
+                                                            Requester
+                                                        </span>
+                                                    )}
+                                                    {isInternal && (
+                                                        <span className="bg-amber-50 text-amber-600 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-amber-100 flex items-center gap-1">
+                                                            <Lock size={10} /> Private Note
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className={`p-4 rounded-2xl text-[14px] leading-relaxed font-medium shadow-sm transition-all
+                                                    ${isInternal
+                                                        ? 'bg-amber-50/40 border-2 border-amber-100/50 text-amber-900'
+                                                        : isAgent
+                                                            ? 'bg-white border-2 border-indigo-50 text-slate-700 hover:border-indigo-100 hover:shadow-indigo-50/50'
+                                                            : 'bg-slate-50 border border-slate-100 text-slate-700'}`}>
+                                                    <div className="prose prose-slate prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: msg.content }} />
+                                                </div>
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
 
                                 {/* System Divider */}
-                                <div className="flex items-center gap-4 py-6 opacity-40">
-                                    <div className="h-px bg-gray-200 flex-1" />
-                                    <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Ticket Status changed to Waiting Agent by Yogi Danis</span>
-                                    <div className="h-px bg-gray-200 flex-1" />
+                                <div className="flex items-center gap-4 py-8">
+                                    <div className="h-px bg-slate-100 flex-1" />
+                                    <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-300">End of History</span>
+                                    <div className="h-px bg-slate-100 flex-1" />
                                 </div>
                             </div>
                         )}
 
                         {activeTab === 'details' && (
-                            <div className="grid grid-cols-2 gap-8 max-w-4xl mx-auto">
-                                <div className="space-y-4">
-                                    <DetailRow label="Category" value={selectedTicket.ticket_categories?.name || '-'} />
-                                    <DetailRow label="Impact" value="Enterprise" />
-                                    <DetailRow label="Urgency" value="High" />
-                                    <DetailRow label="Affected Service" value={selectedTicket.services?.name || '-'} />
+                            <div className="grid grid-cols-2 gap-x-12 gap-y-8 max-w-4xl mx-auto p-4">
+                                <div>
+                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300 mb-6 border-b border-gray-100 pb-2">System Information</h4>
+                                    <div className="space-y-5">
+                                        <DetailRow label="Ticket ID" value={selectedTicket.ticket_number} />
+                                        <DetailRow label="Current Status" value={selectedTicket.ticket_statuses?.status_name} />
+                                        <DetailRow label="Priority Level" value={
+                                            (() => {
+                                                const p = selectedTicket.priority?.toLowerCase() || 'low';
+                                                if (p === 'critical') return 'P1 - Critical';
+                                                if (p === 'high') return 'P2 - High';
+                                                if (p === 'medium') return 'P3 - Medium';
+                                                return 'P4 - Low';
+                                            })()
+                                        } />
+                                        <DetailRow label="Category" value={selectedTicket.ticket_categories?.name || 'System Classification Pending'} />
+                                        <DetailRow label="Affected Service" value={selectedTicket.services?.name || '-'} />
+                                    </div>
                                 </div>
-                                <div className="space-y-4">
-                                    <DetailRow label="Requester" value={selectedTicket.requester?.full_name} />
-                                    <DetailRow label="Email" value={selectedTicket.requester?.email} />
-                                    <DetailRow label="Assignee" value={selectedTicket.assigned_agent?.full_name || 'Unassigned'} />
+                                <div>
+                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300 mb-6 border-b border-gray-100 pb-2">People & Assignment</h4>
+                                    <div className="space-y-5">
+                                        <DetailRow label="Assignment Group" value={selectedTicket.group?.name || '-'} />
+                                        <DetailRow label="Assigned Agent" value={selectedTicket.assigned_agent?.full_name || 'Unassigned'} />
+                                        <DetailRow label="Requester Name" value={selectedTicket.requester?.full_name} />
+                                        <DetailRow label="Requester Email" value={selectedTicket.requester?.email} />
+                                        <DetailRow label="Created At" value={new Date(selectedTicket.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} />
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -289,10 +1081,27 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                                 <div className="space-y-8">
                                     {[
                                         { step: 'Identification', date: selectedTicket.created_at, status: 'completed', desc: 'Incident logged via Portal' },
-                                        { step: 'Classification', date: selectedTicket.created_at, status: 'completed', desc: 'Priority set to P1 - Critical' },
-                                        { step: 'Investigation', date: null, status: 'current', desc: 'Currently being handled by ' + (selectedTicket?.assigned_agent?.full_name || 'Service Desk') },
-                                        { step: 'Resolution', date: null, status: 'pending', desc: 'Awaiting solution confirmation' },
-                                        { step: 'Closure', date: null, status: 'pending', desc: 'Final review and documentation' }
+                                        { step: 'Classification', date: selectedTicket.created_at, status: 'completed', desc: 'Priority set and Categorized' },
+                                        {
+                                            step: 'Investigation',
+                                            date: activityLogs.find(l => l.action.includes('In Progress'))?.created_at,
+                                            status: ['In Progress', 'Pending'].includes(selectedTicket.ticket_statuses?.status_name) ? 'current' :
+                                                (['Resolved', 'Closed'].includes(selectedTicket.ticket_statuses?.status_name) ? 'completed' : 'pending'),
+                                            desc: 'Currently being handled by ' + (selectedTicket?.assigned_agent?.full_name || 'Service Desk')
+                                        },
+                                        {
+                                            step: 'Resolution',
+                                            date: activityLogs.find(l => l.action.includes('Resolved'))?.created_at,
+                                            status: selectedTicket.ticket_statuses?.status_name === 'Resolved' ? 'current' :
+                                                (selectedTicket.ticket_statuses?.status_name === 'Closed' ? 'completed' : 'pending'),
+                                            desc: 'Awaiting solution confirmation'
+                                        },
+                                        {
+                                            step: 'Closure',
+                                            date: activityLogs.find(l => l.action.includes('Closed'))?.created_at,
+                                            status: selectedTicket.ticket_statuses?.status_name === 'Closed' ? 'completed' : 'pending',
+                                            desc: 'Final review and documentation'
+                                        }
                                     ].map((item, idx) => (
                                         <div key={idx} className="flex gap-6 relative">
                                             {idx !== 4 && <div className="absolute left-[13px] top-6 bottom-[-32px] w-0.5 bg-gray-100" />}
@@ -362,6 +1171,50 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                                 </div>
                             </div>
                         )}
+
+                        {activeTab === 'activities' && (
+                            <div className="max-w-4xl mx-auto space-y-4">
+                                {activityLogs.map((log) => (
+                                    <div key={log.id} className="flex gap-4 p-4 rounded-xl border border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-black text-slate-500">
+                                            {log.actor_id === userProfile?.id ? 'Y' : (log.actor_id ? 'A' : 'S')}
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="flex justify-between items-start">
+                                                <p className="text-[13px] font-bold text-slate-800">{log.action}</p>
+                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                                                    {new Date(log.created_at).toLocaleString()}
+                                                </span>
+                                            </div>
+                                            <p className="text-[11px] text-slate-400 font-medium">
+                                                Performed by {
+                                                    log.actor_id === userProfile?.id ? 'You' :
+                                                        (log.actor?.full_name ||
+                                                            allAgents.find(a => a.id === log.actor_id)?.full_name ||
+                                                            'System / Agent')
+                                                }
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {/* Static Ticket Creation Log */}
+                                <div className="flex gap-4 p-4 rounded-xl border border-slate-50 hover:bg-slate-50/50 transition-colors opacity-75">
+                                    <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-black text-slate-500">
+                                        {selectedTicket.requester?.full_name?.charAt(0) || 'R'}
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="flex justify-between items-start">
+                                            <p className="text-[13px] font-bold text-slate-800">Ticket Created</p>
+                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                                                {new Date(selectedTicket.created_at).toLocaleString()}
+                                            </span>
+                                        </div>
+                                        <p className="text-[11px] text-slate-400 font-medium">Performed by {selectedTicket.requester?.full_name || 'Requester'}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Bottom Composer */}
@@ -383,9 +1236,18 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                                 </button>
                                 <button
                                     onClick={handleSendMessage}
-                                    className="flex items-center gap-3 bg-indigo-600 text-white px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all"
+                                    disabled={isSending}
+                                    className="flex items-center gap-3 bg-indigo-600 text-white px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    <Send size={14} /> Send Reply
+                                    {isSending ? (
+                                        <>
+                                            <Loader2 size={14} className="animate-spin" /> Sending...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Send size={14} /> Send Reply
+                                        </>
+                                    )}
                                 </button>
                             </div>
                         </div>

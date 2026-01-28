@@ -1,28 +1,52 @@
 import React, { useState } from 'react';
 import { Plus, FileText, Book, HelpCircle, Eye, Info, X, AlertCircle, Package, Bot, Send, MessageSquare } from 'lucide-react';
 
+import { supabase } from '../lib/supabase';
+
 interface Ticket {
     id: string;
+    ticket_number: string;
     subject: string;
-    status: 'Open' | 'Pending' | 'Resolved' | 'Closed';
-    action: string;
+    status: string;
 }
-
-const recentTickets: Ticket[] = [
-    { id: 'INC4568', subject: 'Email not syncing', status: 'Pending', action: 'View' },
-    { id: 'RITM4321', subject: 'Request new mouse', status: 'Resolved', action: 'View' },
-    { id: 'INC4219', subject: 'App crash on login', status: 'Open', action: 'View' },
-    { id: 'RITM3992', subject: 'VPN access issue', status: 'Closed', action: 'View' },
-];
 
 interface UserDashboardProps {
     onNavigate?: (view: string) => void;
+    onViewTicket?: (ticketId: string) => void;
     userName?: string;
 }
 
-const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, userName }) => {
+const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket, userName }) => {
     const [selectionType, setSelectionType] = useState<'create' | 'view' | null>(null);
     const [isChatOpen, setIsChatOpen] = useState(false);
+    const [recentTickets, setRecentTickets] = useState<Ticket[]>([]);
+
+    React.useEffect(() => {
+        const fetchRecentTickets = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+
+            const { data } = await supabase
+                .from('tickets')
+                .select(`
+                    id, ticket_number, subject, status_id, created_at,
+                    ticket_statuses!status_id (status_name)
+                `)
+                .eq('requester_id', user.id)
+                .order('created_at', { ascending: false })
+                .limit(5);
+
+            if (data) {
+                setRecentTickets(data.map((t: any) => ({
+                    id: t.id,
+                    ticket_number: t.ticket_number,
+                    subject: t.subject,
+                    status: t.ticket_statuses?.status_name || 'Unknown'
+                })));
+            }
+        };
+        fetchRecentTickets();
+    }, []);
 
     return (
         <div className="p-8 max-w-7xl mx-auto space-y-8">
@@ -162,8 +186,8 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, userName }) =
                         <tbody className="divide-y divide-gray-50">
                             {recentTickets.map((ticket, index) => (
                                 <tr key={ticket.id} className="hover:bg-gray-50/50 transition-colors h-[52px]">
-                                    <td className="px-6 py-4 font-medium text-gray-700">{ticket.id}</td>
-                                    <td className="px-6 py-4 text-gray-600">{ticket.subject}</td>
+                                    <td className="px-6 py-4 font-medium text-gray-700">{ticket.ticket_number}</td>
+                                    <td className="px-6 py-4 text-gray-600 max-w-xs truncate">{ticket.subject}</td>
                                     <td className="px-6 py-4">
                                         <span
                                             className={`px-3 py-1.5 rounded-full text-xs font-bold inline-flex items-center gap-1.5 ${ticket.status === 'Open'
@@ -172,18 +196,24 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, userName }) =
                                                     ? 'bg-yellow-50 text-yellow-600 border border-yellow-100'
                                                     : ticket.status === 'Resolved'
                                                         ? 'bg-green-50 text-green-600 border border-green-100'
-                                                        : 'bg-gray-100 text-gray-600 border border-gray-200'
+                                                        : ticket.status === 'Canceled'
+                                                            ? 'bg-rose-50 text-rose-600 border border-rose-100'
+                                                            : 'bg-gray-100 text-gray-600 border border-gray-200'
                                                 }`}
                                         >
                                             <span className={`w-1.5 h-1.5 rounded-full ${ticket.status === 'Open' ? 'bg-blue-500' :
                                                 ticket.status === 'Pending' ? 'bg-yellow-500' :
-                                                    ticket.status === 'Resolved' ? 'bg-green-500' : 'bg-gray-500'
+                                                    ticket.status === 'Resolved' ? 'bg-green-500' :
+                                                        ticket.status === 'Canceled' ? 'bg-rose-500' : 'bg-gray-500'
                                                 }`}></span>
                                             {ticket.status}
                                         </span>
                                     </td>
                                     <td className="px-6 py-4">
-                                        <button className="text-gray-400 hover:text-indigo-600 font-medium transition-colors flex items-center gap-2 text-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:border-indigo-200 hover:bg-indigo-50">
+                                        <button
+                                            onClick={() => onViewTicket && onViewTicket(ticket.id)}
+                                            className="text-gray-400 hover:text-indigo-600 font-medium transition-colors flex items-center gap-2 text-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:border-indigo-200 hover:bg-indigo-50"
+                                        >
                                             <Eye size={14} />
                                             View
                                         </button>
