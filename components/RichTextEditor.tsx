@@ -7,7 +7,7 @@ import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
 import { supabase } from '../lib/supabase';
 // @ts-ignore
-import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
+import Swal from 'sweetalert2';
 import {
     Bold, Italic, List, ListOrdered, Quote,
     ImageIcon, Undo, Redo, Loader2
@@ -107,11 +107,11 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         try {
             const fileExt = file.name.split('.').pop() || 'png';
             const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-            const filePath = `kb-articles/${fileName}`;
+            const filePath = `chat/${fileName}`;
 
             // Upload to Supabase Storage
             const { error: uploadError } = await supabase.storage
-                .from('kb-media')
+                .from('Image_chat')
                 .upload(filePath, file);
 
             if (uploadError) {
@@ -121,7 +121,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
                     title: 'Upload Failed',
                     html: `
                         <p class="text-gray-600 mb-2">Failed to upload image.</p>
-                        <p class="text-sm text-gray-500">Please make sure the storage bucket <strong>"kb-media"</strong> exists in Supabase.</p>
+                        <p class="text-sm text-gray-500">Please make sure the storage bucket <strong>"Image_chat"</strong> exists in Supabase.</p>
                     `,
                     confirmButtonColor: '#6366f1'
                 });
@@ -130,7 +130,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
             // Get public URL
             const { data: urlData } = supabase.storage
-                .from('kb-media')
+                .from('Image_chat')
                 .getPublicUrl(filePath);
 
             const imageUrl = urlData.publicUrl;

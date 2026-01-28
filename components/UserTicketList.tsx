@@ -65,7 +65,7 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                     .from('tickets')
                     .select(`
                         id, ticket_number, subject, description, created_at, status_id,
-                        ticket_statuses!status_id (status_name)
+                        ticket_statuses!fk_tickets_status (status_name)
                     `)
                     .eq('requester_id', targetUserId)
                     .order('created_at', { ascending: false });

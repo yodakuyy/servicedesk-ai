@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+
 import {
     Search, FileText, HelpCircle, Monitor, Shield, Phone, Settings,
     ArrowLeft, Clock, ChevronRight, Loader2, ThumbsUp, ThumbsDown,
@@ -42,7 +43,19 @@ const SECTION_TYPE_MAP: { [key: string]: string } = {
 };
 
 const HelpCenter: React.FC = () => {
+    const [userRole, setUserRole] = useState<string | null>('requester');
     const [view, setView] = useState<'home' | 'categories' | 'articles' | 'detail'>('home');
+
+    useEffect(() => {
+        const checkUser = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+                if (profile) setUserRole(profile.role);
+            }
+        };
+        checkUser();
+    }, []);
     const [selectedSection, setSelectedSection] = useState<string | null>(null);
     const [selectedCategory, setSelectedCategory] = useState<CategoryWithCount | null>(null);
     const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
@@ -288,11 +301,17 @@ const HelpCenter: React.FC = () => {
                 ...article,
                 tags: tagsData?.map(t => t.tag) || []
             });
-            setView('detail');
+
+            // Only switch to full detail view if NOT in split-view mode (articles view)
+            if (view !== 'articles') {
+                setView('detail');
+            }
         } catch (error) {
             console.error('Error fetching article:', error);
             setSelectedArticle(article);
-            setView('detail');
+            if (view !== 'articles') {
+                setView('detail');
+            }
         }
     };
 
@@ -781,28 +800,18 @@ const HelpCenter: React.FC = () => {
                                             <h4 className="font-semibold text-gray-900 mb-1">Still need help?</h4>
                                             <p className="text-sm text-gray-500">If this article didn't solve your issue, create a support ticket.</p>
                                         </div>
-                                        <button
-                                            onClick={() => {
-                                                // Navigate to create ticket - you can customize this
-                                                Swal.fire({
-                                                    icon: 'info',
-                                                    title: 'Create Ticket',
-                                                    text: 'You will be redirected to create a new ticket.',
-                                                    confirmButtonColor: '#6366f1',
-                                                    confirmButtonText: 'Continue',
-                                                }).then((result: any) => {
-                                                    if (result.isConfirmed) {
-                                                        // You can trigger navigation to ticket creation here
-                                                        // For now, just show a message
-                                                        window.location.reload(); // Or navigate to ticket creation
-                                                    }
-                                                });
-                                            }}
-                                            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-all hover:scale-105 shadow-lg shadow-indigo-500/25"
-                                        >
-                                            <Plus size={18} />
-                                            Create Ticket
-                                        </button>
+                                        {userRole === 'requester' && (
+                                            <button
+                                                onClick={() => {
+                                                    window.location.hash = '#dashboard/tickets';
+                                                    window.location.reload();
+                                                }}
+                                                className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-all hover:scale-105 shadow-lg shadow-indigo-500/25"
+                                            >
+                                                <Ticket size={18} />
+                                                Create Ticket
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             </div>

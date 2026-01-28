@@ -334,6 +334,212 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
         }
     };
 
+    const handlePdfImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setLoading(true);
+        try {
+            // 1. Upload PDF to Supabase Storage
+            const fileExt = file.name.split('.').pop();
+            const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+            const filePath = `kb-documents/${fileName}`;
+
+            const { error: uploadError } = await supabase.storage
+                .from('kb-media') // Using existing bucket
+                .upload(filePath, file, {
+                    contentType: 'application/pdf',
+                    cacheControl: '3600',
+                    upsert: false
+                });
+
+            if (uploadError) throw uploadError;
+
+            // Get Public URL
+            const { data: { publicUrl } } = supabase.storage.from('kb-media').getPublicUrl(filePath);
+
+            // 2. Extract Text using PDF.js
+            // Dynamically import to avoid build issues
+            const pdfjsLib = await import('pdfjs-dist');
+            // Set worker from CDN (Use HTTPS and .mjs for v5+)
+            pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+            const arrayBuffer = await file.arrayBuffer();
+            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+            const pdf = await loadingTask.promise;
+
+            let fullText = '';
+            const maxPages = Math.min(pdf.numPages, 15); // Limit to 15 pages to prevent browser freeze
+
+            for (let i = 1; i <= maxPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map((item: any) => item.str).join(' ');
+                fullText += `<h4>Page ${i}</h4><p>${pageText}</p>`;
+            }
+
+            if (pdf.numPages > maxPages) {
+                fullText += `<p><em>... (Document truncated after ${maxPages} pages) ...</em></p>`;
+            }
+
+            // 3. Update Editor Content
+
+            // A. Extracted Text -> Solution Tab
+            const existingSolution = article.content_solution || '';
+            const extractedHtml = `
+                <div class="extracted-content">
+                    ${fullText}
+                </div>
+            `;
+            handleChange('content_solution', existingSolution + extractedHtml);
+
+            // B. PDF Card -> Notes Tab
+            const existingNotes = article.content_notes || '';
+            const pdfCardHtml = `
+                <div class="pdf-attachment mt-4 p-3 bg-white border border-gray-200 rounded-lg shadow-sm flex items-center gap-3">
+                    <div class="w-10 h-10 bg-red-50 rounded flex items-center justify-center shrink-0 text-red-500">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M10 13l-2.5 2.5 2.5 2.5"/><path d="M14 13l2.5 2.5-2.5 2.5"/></svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h4 class="font-semibold text-gray-800 text-xs truncate">Original Document: ${file.name}</h4>
+                        <a href="${publicUrl}" target="_blank" class="text-[10px] text-indigo-600 font-bold hover:underline flex items-center gap-1 mt-0.5">
+                            Download / View PDF <span class="text-gray-400">(${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+                        </a>
+                    </div>
+                </div>
+            `;
+            // Prepend PDF card to Notes (so it's at the top of notes)
+            handleChange('content_notes', pdfCardHtml + existingNotes);
+
+            // Auto-fill title if empty
+            if (!article.title) {
+                handleChange('title', file.name.replace(/\.pdf$/i, '').replace(/[-_]/g, ' '));
+            }
+
+            // Switch to Solution tab to show result
+            setActiveTab('solution');
+
+            showAlert('Import Successful', 'PDF uploaded and text extracted successfully!', 'success');
+
+        } catch (error: any) {
+            console.error('PDF Import Error:', error);
+            showAlert('Import Failed', error.message || 'Failed to process PDF', 'error');
+        } finally {
+            setLoading(false);
+            // Reset input
+            if (e.target) e.target.value = '';
+        }
+    };
+
+    // --- AI Logic Utilities ---
+
+    const extractKeywords = (text: string): string[] => {
+        const stopWords = new Set(['the', 'and', 'is', 'to', 'in', 'of', 'for', 'a', 'an', 'on', 'with', 'at', 'by', 'dan', 'yang', 'di', 'ke', 'dari', 'ini', 'itu', 'saya', 'tidak', 'bisa', 'ada', 'karena', 'jika', 'atau', 'dengan', 'untuk', 'pada', 'adalah', 'sebagai', 'sudah', 'telah']);
+        const words = text
+            .toLowerCase()
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/[^\w\s-]/g, '')
+            .split(/\s+/)
+            .filter(w => w.length > 2 && !stopWords.has(w));
+        return Array.from(new Set(words)).slice(0, 8);
+    };
+
+    const handleGenerateSummary = () => {
+        setLoading(true);
+        setTimeout(() => {
+            // 1. Combine content
+            let sourceHtml = (article.content_problem + ' ' + article.content_solution);
+
+            // 2. Intelligent PDF Parsing (Skip Attachment Header)
+            // If explicit "Extracted Content" header exists (from our PDF import), start strictly after it.
+            if (sourceHtml.includes('Extracted Content')) {
+                const parts = sourceHtml.split('Extracted Content');
+                if (parts.length > 1) {
+                    sourceHtml = parts[1];
+                }
+            }
+
+            // 3. Clean Text
+            const cleanText = sourceHtml
+                .replace(/<[^>]*>/g, ' ')       // Strip HTML tags
+                .replace(/Page \d+/g, '')       // Remove "Page 1", "Page 2" artifacts
+                .replace(/&nbsp;/g, ' ')        // Remove encoded spaces
+                .replace(/\s+/g, ' ')           // Collapse multiple spaces/newlines
+                .trim();
+
+            if (cleanText.length < 50) {
+                setLoading(false);
+                showAlert('Content Needed', 'Please write more content in Problem or Solution sections first.', 'warning');
+                return;
+            }
+
+            // 4. Create Summary (First 180 chars)
+            const summary = cleanText.substring(0, 180).trim() + (cleanText.length > 180 ? '...' : '');
+
+            handleChange('summary', summary);
+            setLoading(false);
+            showAlert('Summary Generated', 'Smart summary generated from content.', 'success');
+        }, 800);
+    };
+
+    const handleSuggestTags = () => {
+        setLoading(true);
+        setTimeout(() => {
+            const sourceText = article.title + ' ' + article.content_problem + ' ' + article.content_solution;
+            const tags = extractKeywords(sourceText);
+
+            if (tags.length > 0) {
+                // Merge with existing tags
+                const newTags = Array.from(new Set([...article.tags, ...tags]));
+                handleChange('tags', newTags);
+                setLoading(false);
+                showAlert('Tags Suggested', `AI found ${tags.length} relevant tags based on your content.`, 'success');
+            } else {
+                setLoading(false);
+                showAlert('No Unique Tags Found', 'Could not extract new keywords. Try adding more detailed content.', 'warning');
+            }
+        }, 800);
+    };
+
+    const handleCheckClarity = () => {
+        setLoading(true);
+        setTimeout(() => {
+            const text = (article.content_problem + ' ' + article.content_solution).replace(/<[^>]*>/g, ' ').trim();
+            if (text.length < 50) {
+                setLoading(false);
+                showAlert('Content Needed', 'Article is too short to analyze readability.', 'warning');
+                return;
+            }
+
+            const wordCount = text.split(/\s+/).length;
+            const sentenceCount = text.split(/[.!?]+/).length;
+
+            // Average words per sentence (Ideal: 15-20)
+            const avgWords = wordCount / (sentenceCount || 1);
+            let score = 95;
+            let feedback = "Excellent readability! Your sentences are concise and easy to understand.";
+            let icon: 'success' | 'warning' | 'error' = 'success';
+
+            if (avgWords > 25) {
+                score = 60;
+                feedback = "Sentences are too long (Avg > 25 words). Try breaking complex sentences into shorter ones for better clarity.";
+                icon = 'warning';
+            } else if (avgWords > 18) {
+                score = 75;
+                feedback = "Good, but some sentences could be shorter. Aim for 15-20 words per sentence.";
+                icon = 'success';
+            }
+
+            setLoading(false);
+            Swal.fire({
+                title: `Clarity Score: ${score}/100`,
+                text: feedback,
+                icon: icon,
+                confirmButtonColor: '#4f46e5'
+            });
+        }, 1000);
+    };
+
     const handleClose = () => {
         if (hasChanges) {
             setConfirmModal({
@@ -777,7 +983,10 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                         <div className="space-y-3">
                             <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Quick Actions</h4>
 
-                            <button className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors text-left">
+                            <button
+                                onClick={handleGenerateSummary}
+                                className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors text-left"
+                            >
                                 <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
                                     <FileText size={14} className="text-blue-600" />
                                 </div>
@@ -787,7 +996,10 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                                 </div>
                             </button>
 
-                            <button className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors text-left">
+                            <button
+                                onClick={handleSuggestTags}
+                                className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors text-left"
+                            >
                                 <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
                                     <Tag size={14} className="text-purple-600" />
                                 </div>
@@ -797,7 +1009,30 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                                 </div>
                             </button>
 
-                            <button className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors text-left">
+                            <button
+                                onClick={() => document.getElementById('pdf-upload-input')?.click()}
+                                className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors text-left group"
+                            >
+                                <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center group-hover:bg-red-200 transition-colors">
+                                    <FileText size={14} className="text-red-600" />
+                                </div>
+                                <div>
+                                    <p className="text-sm font-medium text-gray-700">Import from PDF</p>
+                                    <p className="text-xs text-gray-500">Extract text & attach</p>
+                                </div>
+                            </button>
+                            <input
+                                type="file"
+                                id="pdf-upload-input"
+                                accept="application/pdf"
+                                className="hidden"
+                                onChange={handlePdfImport}
+                            />
+
+                            <button
+                                onClick={handleCheckClarity}
+                                className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors text-left"
+                            >
                                 <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center">
                                     <CheckCircle2 size={14} className="text-amber-600" />
                                 </div>

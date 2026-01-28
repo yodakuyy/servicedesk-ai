@@ -56,6 +56,7 @@ import RequesterTicketManager from './RequesterTicketManager';
 interface DashboardProps {
   onLogout: () => void;
   onChangeDepartment: () => void;
+  initialView?: string;
 }
 
 // Data for charts/tables
@@ -122,7 +123,7 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ icon: Icon, label, active = f
   </div>
 );
 
-const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) => {
+const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, initialView }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsSubOpen, setSettingsSubOpen] = useState({
@@ -151,6 +152,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment }) =
   const [previousViewBeforeProfile, setPreviousViewBeforeProfile] = useState<'user-dashboard' | 'profile'>('user-dashboard');
   const [editingSlaPolicyId, setEditingSlaPolicyId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Handle initial view prop changes (Deep Linking)
+  useEffect(() => {
+    if (initialView) {
+      setCurrentView(initialView as any);
+    }
+  }, [initialView]);
 
   const toggleSettingsSub = (key: keyof typeof settingsSubOpen) => {
     setSettingsSubOpen(prev => ({ ...prev, [key]: !prev[key] }));

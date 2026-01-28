@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     ChevronLeft, Send, Paperclip, MessageSquare, ChevronDown, ChevronUp,
-    CheckCircle2, Circle, HelpCircle, FileText, Info, Loader2, X
+    CheckCircle2, Circle, HelpCircle, FileText, Info, Loader2, X, Lock, ExternalLink
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
@@ -44,7 +44,8 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     .select(`
                         *,
                         ticket_statuses!fk_tickets_status (status_name),
-                        agent:profiles!fk_tickets_assigned_agent (full_name)
+                        agent:profiles!fk_tickets_assigned_agent (full_name),
+                        ticket_attachments (*)
                     `)
                     .eq('id', ticketId)
                     .single();
@@ -94,6 +95,9 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
 
             // Auto-revert to In Progress if Resolved or Pending
             const currentStatus = ticket.ticket_statuses?.status_name;
+            const updates: any = { updated_at: new Date().toISOString() };
+            let shouldLogActivity = false;
+
             if (['Resolved', 'Pending'].includes(currentStatus)) {
                 // Fetch In Progress ID
                 const { data: statusData } = await supabase
@@ -103,31 +107,37 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     .single();
 
                 if (statusData) {
-                    await supabase
-                        .from('tickets')
-                        .update({ status_id: statusData.status_id })
-                        .eq('id', ticketId);
-
-                    // Log activity
-                    await supabase.from('ticket_activity_log').insert({
-                        ticket_id: ticketId,
-                        actor_id: user.id,
-                        action: 'Customer replied - Ticket Reopened'
-                    });
-
-                    // Refresh ticket details locally
-                    const { data: updatedTicket } = await supabase
-                        .from('tickets')
-                        .select(`
-                            *,
-                            ticket_statuses!fk_tickets_status (status_name),
-                            agent:profiles!fk_tickets_assigned_agent (full_name)
-                        `)
-                        .eq('id', ticketId)
-                        .single();
-                    if (updatedTicket) setTicket(updatedTicket);
+                    updates.status_id = statusData.status_id;
+                    shouldLogActivity = true;
                 }
             }
+
+            // Always update ticket (at least updated_at)
+            await supabase
+                .from('tickets')
+                .update(updates)
+                .eq('id', ticketId);
+
+            if (shouldLogActivity) {
+                // Log activity
+                await supabase.from('ticket_activity_log').insert({
+                    ticket_id: ticketId,
+                    actor_id: user.id,
+                    action: 'Customer replied - Ticket Reopened'
+                });
+            }
+
+            // Refresh ticket details locally
+            const { data: updatedTicket } = await supabase
+                .from('tickets')
+                .select(`
+                    *,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    agent:profiles!fk_tickets_assigned_agent (full_name)
+                `)
+                .eq('id', ticketId)
+                .single();
+            if (updatedTicket) setTicket(updatedTicket);
         } catch (err: any) {
             console.error("Error sending reply:", err);
             alert("Failed to send reply: " + err.message);
@@ -260,11 +270,11 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="p-6 border-b border-gray-100">
                         <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-6">
-                            <div>
+                            <div className="flex-1 min-w-0">
                                 <h1 className="text-sm font-bold text-gray-400 mb-1">{ticket.ticket_number}</h1>
-                                <h2 className="text-2xl font-bold text-gray-900">{ticket.subject}</h2>
+                                <h2 className="text-2xl font-bold text-gray-900 break-words">{ticket.subject}</h2>
                             </div>
-                            <div className="flex gap-3">
+                            <div className="flex gap-3 shrink-0 flex-wrap">
                                 <span className={`px-3 py-1 rounded-lg text-sm font-semibold border flex items-center gap-2 ${statusName === 'Open' ? 'bg-blue-50 text-blue-700 border-blue-100' :
                                     statusName === 'Resolved' ? 'bg-green-50 text-green-700 border-green-100' :
                                         'bg-orange-50 text-orange-700 border-orange-100'
@@ -317,7 +327,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                             <div className="px-6 pb-6 pt-2 border-t border-gray-100 grid md:grid-cols-2 gap-4">
                                 <InfoItem label="Ticket Number" value={ticket.ticket_number} />
                                 <InfoItem label="Created At" value={new Date(ticket.created_at).toLocaleString()} />
-                                <InfoItem label="Type" value={ticket.ticket_type} />
+                                <InfoItem label="Type" value={ticket.ticket_type ? ticket.ticket_type.charAt(0).toUpperCase() + ticket.ticket_type.slice(1) : '-'} />
                                 <InfoItem label="Assignment Group" value={ticket.assignment_group_id ? (ticket.group?.name || 'Assigned') : 'Queueing'} />
                                 <InfoItem label="PIC / Handled By" value={ticket.agent?.full_name || 'Waiting for Agent...'} />
                             </div>
@@ -335,6 +345,44 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                         className="prose prose-sm max-w-none text-gray-800 bg-gray-50 p-4 rounded-lg border border-gray-100"
                         dangerouslySetInnerHTML={{ __html: ticket.description }}
                     />
+                </div>
+
+                {/* Attachments Section */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                    <h3 className="text-sm font-bold text-gray-700 mb-4 flex items-center gap-2">
+                        <Paperclip size={16} className="text-indigo-500" />
+                        Attachments
+                    </h3>
+                    {(!ticket.ticket_attachments || ticket.ticket_attachments.length === 0) ? (
+                        <div className="text-sm text-gray-500 italic bg-gray-50 p-4 rounded-lg border border-gray-100 flex items-center gap-2">
+                            <Info size={14} />
+                            No files attached to this ticket.
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {ticket.ticket_attachments?.map((file: any, index: number) => {
+                                const fileUrl = supabase.storage.from('ticket-attachments').getPublicUrl(file.file_path).data.publicUrl;
+                                return (
+                                    <a
+                                        key={file.id || index}
+                                        href={fileUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 hover:border-indigo-200 transition-all group"
+                                    >
+                                        <div className="p-2 bg-white rounded-md border border-gray-200 text-indigo-600 group-hover:text-indigo-700">
+                                            <FileText size={18} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium text-gray-700 truncate group-hover:text-indigo-700">{file.file_name}</p>
+                                            <p className="text-xs text-gray-400">{file.mime_type || 'Unknown Type'}</p>
+                                        </div>
+                                        <ExternalLink size={14} className="text-gray-400 group-hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    </a>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
 
                 {/* Conversation Section */}
@@ -385,22 +433,38 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     </div>
 
                     {/* Reply Composer */}
-                    <div className="p-4 bg-white border-t border-gray-100 rounded-b-xl px-4 pb-6 pt-4">
-                        <RichTextEditor
-                            content={replyText}
-                            onChange={setReplyText}
-                            placeholder="Type your message here... (Paste images allowed)"
-                            minHeight="120px"
-                        />
-                        <button
-                            onClick={handleSendReply}
-                            disabled={!replyText.trim() || isSending}
-                            className="bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-all flex items-center gap-2 shadow-md shadow-indigo-100"
-                        >
-                            {isSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                            Send
-                        </button>
-                    </div>
+                    {['Closed', 'Canceled'].includes(statusName) ? (
+                        <div className="p-8 bg-gray-50 border-t border-gray-100 rounded-b-xl flex flex-col items-center justify-center text-center">
+                            <div className="w-12 h-12 bg-gray-200 text-gray-400 rounded-full flex items-center justify-center mb-3">
+                                <Lock size={24} />
+                            </div>
+                            <h3 className="text-gray-800 font-bold mb-1">
+                                This ticket is {statusName}
+                            </h3>
+                            <p className="text-gray-500 text-sm max-w-md">
+                                Replies are disabled for this ticket. If you have further updates or issues, please create a new ticket.
+                            </p>
+                        </div>
+                    ) : (
+                        <div className="p-4 bg-white border-t border-gray-100 rounded-b-xl px-4 pb-6 pt-4">
+                            <RichTextEditor
+                                content={replyText}
+                                onChange={setReplyText}
+                                placeholder="Type your message here... (Paste images allowed)"
+                                minHeight="120px"
+                            />
+                            <div className="mt-4 flex justify-end">
+                                <button
+                                    onClick={handleSendReply}
+                                    disabled={!replyText.trim() || isSending}
+                                    className="bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-all flex items-center gap-2 shadow-md shadow-indigo-100"
+                                >
+                                    {isSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                                    Send
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </main>
         </div>

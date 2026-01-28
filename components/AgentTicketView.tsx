@@ -27,7 +27,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
     const [tickets, setTickets] = useState<any[]>([]);
     const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
     const [selectedTicket, setSelectedTicket] = useState<any | null>(null);
-    const [activeTab, setActiveTab] = useState<'conversation' | 'details' | 'workflow' | 'sla' | 'activities'>('conversation');
+    const [activeTab, setActiveTab] = useState<'conversation' | 'details' | 'workflow' | 'sla' | 'activities' | 'attachments'>('conversation');
     const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
     const [isLoading, setIsLoading] = useState(true);
     const [messages, setMessages] = useState<any[]>([]);
@@ -120,13 +120,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
             const { data } = await supabase
                 .from('tickets')
                 .select(`
-                    id, ticket_number, subject, priority, created_at, assignment_group_id, status_id,
+                    id, ticket_number, subject, priority, created_at, updated_at, assignment_group_id, status_id,
                     ticket_statuses!fk_tickets_status (status_name),
                     requester:profiles!fk_tickets_requester (full_name),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name)
                 `)
                 .in('assignment_group_id', agentGroups)
-                .order('created_at', { ascending: false });
+                .order('updated_at', { ascending: false });
 
             if (data) {
                 setTickets(data);
@@ -150,7 +150,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
-                    group:groups!assignment_group_id (id, name, company_id)
+                    group:groups!assignment_group_id (id, name, company_id),
+                    ticket_attachments (*)
                 `)
                 .eq('id', selectedTicketId)
                 .single();
@@ -184,6 +185,46 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
         fetchDetails();
         fetchActivityLogs();
     }, [selectedTicketId]);
+
+    // AI Helper - Knowledge Base & History
+    const [suggestedKB, setSuggestedKB] = useState<any[]>([]);
+    const [similarTickets, setSimilarTickets] = useState<any[]>([]);
+
+    useEffect(() => {
+        const fetchAISuggestions = async () => {
+            if (!selectedTicket?.subject) return;
+
+            // Simple Keyword Extraction
+            const keywords = selectedTicket.subject.split(' ').filter((w: string) => w.length > 3);
+            if (keywords.length === 0) return;
+
+            const kbQuery = keywords.map((w: string) => `title.ilike.%${w}%,summary.ilike.%${w}%`).join(',');
+            const ticketQuery = keywords.map((w: string) => `title.ilike.%${w}%`).join(',');
+
+            // 1. Fetch KB
+            const { data: kbData } = await supabase
+                .from('kb_articles')
+                .select('id, title, summary')
+                .eq('status', 'published')
+                .or(kbQuery)
+                .limit(3);
+
+            if (kbData) setSuggestedKB(kbData);
+
+            // 2. Fetch Similar Resolved/Closed Tickets
+            const { data: ticketData } = await supabase
+                .from('incidents')
+                .select('id, title, status, created_at')
+                .in('status', ['resolved', 'closed'])
+                .neq('id', selectedTicket.id)
+                .or(ticketQuery)
+                .order('created_at', { ascending: false })
+                .limit(3);
+
+            if (ticketData) setSimilarTickets(ticketData);
+        };
+        fetchAISuggestions();
+    }, [selectedTicket?.subject, selectedTicket?.id]);
 
     const [isSending, setIsSending] = useState(false);
 
@@ -243,6 +284,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                     sender_name: m.sender?.full_name || (m.sender_role === 'requester' ? 'User' : 'Agent')
                 })));
             }
+
+            // Always update ticket updated_at to bump it to top of list
+            await supabase.from('tickets').update({ updated_at: new Date().toISOString() }).eq('id', selectedTicketId);
 
             // Auto-update status to In Progress if currently Open
             if (selectedTicket.ticket_statuses?.status_name === 'Open') {
@@ -753,9 +797,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                     {/* Header Section */}
                     <div className="p-6 border-b border-gray-100">
                         <div className="flex justify-between items-start mb-4">
-                            <div className="flex-1">
-                                <h1 className="text-xl font-black text-gray-800 mb-2">
-                                    {selectedTicket.ticket_number} &nbsp; {selectedTicket.subject}
+                            <div className="flex-1 min-w-0">
+                                <h1 className="text-xl font-black text-gray-800 mb-2 break-words">
+                                    <span className="text-gray-400 font-bold text-lg block mb-1">{selectedTicket.ticket_number}</span>
+                                    {selectedTicket.subject}
                                 </h1>
                                 <div className="flex items-center gap-3">
                                     {/* Dynamic Priority Badge */}
@@ -961,6 +1006,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                         <TabItem active={activeTab === 'workflow'} onClick={() => setActiveTab('workflow')} icon={GitBranch} label="Work Flow" />
                         <TabItem active={activeTab === 'sla'} onClick={() => setActiveTab('sla')} icon={Clock} label="SLA" />
                         <TabItem active={activeTab === 'activities'} onClick={() => setActiveTab('activities')} icon={List} label="Activities" />
+                        <TabItem active={activeTab === 'attachments'} onClick={() => setActiveTab('attachments')} icon={Paperclip} label="Attachments" />
                     </div>
 
                     {/* Panel Content Area */}
@@ -1215,6 +1261,46 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                                 </div>
                             </div>
                         )}
+
+                        {activeTab === 'attachments' && (
+                            <div className="max-w-4xl mx-auto p-4 space-y-4">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">Attached Files</h3>
+                                </div>
+                                {(!selectedTicket.ticket_attachments || selectedTicket.ticket_attachments.length === 0) ? (
+                                    <div className="text-sm text-gray-500 italic bg-gray-50 p-8 rounded-xl border border-gray-100 flex flex-col items-center justify-center gap-2 text-center">
+                                        <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-400 mb-2">
+                                            <Paperclip size={20} />
+                                        </div>
+                                        <p>No files attached to this ticket.</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {selectedTicket.ticket_attachments?.map((file: any, index: number) => {
+                                            const fileUrl = supabase.storage.from('ticket-attachments').getPublicUrl(file.file_path).data.publicUrl;
+                                            return (
+                                                <a
+                                                    key={file.id || index}
+                                                    href={fileUrl}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="flex items-center gap-4 p-4 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 hover:shadow-md transition-all group"
+                                                >
+                                                    <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                                                        <FileText size={20} />
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-bold text-gray-800 truncate group-hover:text-indigo-600">{file.file_name}</p>
+                                                        <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">{file.mime_type || 'Unknown'}</p>
+                                                    </div>
+                                                    <ExternalLink size={16} className="text-gray-300 group-hover:text-indigo-500 transition-colors" />
+                                                </a>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Bottom Composer */}
@@ -1329,14 +1415,45 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                         {/* Knowledge Card */}
                         <AICard title="Knowledge & KB" icon={BookOpen}>
                             <div className="space-y-3">
-                                <button className="w-full text-left p-3 rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/20 text-indigo-600 transition-all flex items-center justify-between group">
-                                    <span className="text-xs font-black truncate pr-4">System How-To: Reset Finance Role</span>
-                                    <ArrowUpRight size={14} className="opacity-0 group-hover:opacity-100 flex-shrink-0" />
-                                </button>
-                                <button className="w-full text-left p-3 rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/20 text-indigo-600 transition-all flex items-center justify-between group">
-                                    <span className="text-xs font-black truncate pr-4">User Guide: Login Finance System</span>
-                                    <ArrowUpRight size={14} className="opacity-0 group-hover:opacity-100 flex-shrink-0" />
-                                </button>
+                                {suggestedKB.length > 0 ? (
+                                    suggestedKB.map(kb => (
+                                        <button key={kb.id} onClick={() => alert(`View Article: ${kb.title}`)} className="w-full text-left p-3 rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/20 text-indigo-600 transition-all flex items-center justify-between group">
+                                            <div>
+                                                <span className="text-xs font-black truncate block pr-2">{kb.title}</span>
+                                                <span className="text-[10px] text-gray-400 font-medium line-clamp-1">{kb.summary}</span>
+                                            </div>
+                                            <ArrowUpRight size={14} className="opacity-0 group-hover:opacity-100 flex-shrink-0" />
+                                        </button>
+                                    ))
+                                ) : (
+                                    <div className="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded text-center">
+                                        No relevant articles found.
+                                    </div>
+                                )}
+                            </div>
+                        </AICard>
+
+                        {/* Similar Solved History Card */}
+                        <AICard title="Similar Solved History" icon={CheckCircle2}>
+                            <div className="space-y-3">
+                                {similarTickets.length > 0 ? (
+                                    similarTickets.map(t => (
+                                        <div key={t.id} className="w-full text-left p-3 rounded-lg border border-gray-100 bg-white/50 hover:border-green-200 hover:bg-green-50/20 transition-all flex items-center justify-between group cursor-pointer" onClick={() => alert(`Open Ticket: ${t.title}\nID: ${t.id}`)}>
+                                            <div className="flex-1 min-w-0">
+                                                <span className="text-xs font-bold text-gray-700 truncate block">{t.title}</span>
+                                                <span className="text-[10px] text-gray-400 flex items-center gap-1 mt-1">
+                                                    <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded-sm text-[9px] font-bold uppercase tracking-wider">Solved</span>
+                                                    • {new Date(t.created_at).toLocaleDateString()}
+                                                </span>
+                                            </div>
+                                            <ArrowUpRight size={14} className="text-green-600 opacity-0 group-hover:opacity-100 flex-shrink-0" />
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded text-center">
+                                        No similar solved cases found.
+                                    </div>
+                                )}
                             </div>
                         </AICard>
 

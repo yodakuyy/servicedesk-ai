@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, HelpCircle, Paperclip, Sparkles, Send, ChevronRight, X, Info, AlertCircle, Monitor, Wifi, Box, MoreHorizontal } from 'lucide-react';
+import { ArrowLeft, HelpCircle, Paperclip, Sparkles, Send, ChevronRight, X, Info, AlertCircle, Monitor, Wifi, Box, MoreHorizontal, Clock, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
 
@@ -8,6 +8,24 @@ interface RequesterCreateIncidentProps {
     onSubmit?: (data: any) => void;
     userProfile?: any;
 }
+
+const generateAutoTags = (text: string): string[] => {
+    const stopWords = new Set([
+        'the', 'and', 'is', 'to', 'in', 'of', 'for', 'a', 'an', 'on', 'with', 'at', 'by',
+        'dan', 'yang', 'di', 'ke', 'dari', 'ini', 'itu', 'saya', 'tidak', 'bisa', 'ada', 'karena', 'jika', 'atau', 'dengan', 'untuk', 'pada', 'adalah', 'sebagai', 'sudah', 'telah'
+    ]);
+
+    // Simple frequency or extraction logic
+    const words = text
+        .toLowerCase()
+        .replace(/<[^>]*>/g, ' ') // Strip HTML tags
+        .replace(/[^\w\s-]/g, '')  // Strip punctuation but keep hyphens (e.g. wi-fi)
+        .split(/\s+/)
+        .filter(w => w.length > 2 && !stopWords.has(w));
+
+    // Remove duplicates
+    return Array.from(new Set(words)).slice(0, 8);
+};
 
 const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBack, onSubmit, userProfile }) => {
     // Section 1: Who is affected? (Requested For)
@@ -47,49 +65,107 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
     // Dynamic Group IDs fetched from DB
     const [groupIds, setGroupIds] = useState<{ [key: string]: string }>({});
 
-    // Fetch 'Open' Status ID AND Assignment Groups
+    // Data Lists
+    const [categories, setCategories] = useState<any[]>([]);
+    const [services, setServices] = useState<any[]>([]);
+
+    // Fetch 'Open' Status ID, Groups, Categories, and Services
     useEffect(() => {
         const initData = async () => {
             // 1. Fetch Status ID
-            const { data: statusData, error: statusError } = await supabase
+            const { data: statusData } = await supabase
                 .from('ticket_statuses')
                 .select('status_id')
                 .eq('status_name', 'Open')
                 .single();
 
-            if (statusData) {
-                setOpenStatusId(statusData.status_id);
-            } else {
-                console.error("Critical: 'Open' status not found in DB", statusError);
-                setErrorMessage("System configuration error: Could not find 'Open' status.");
-            }
+            if (statusData) setOpenStatusId(statusData.status_id);
 
-            // 2. Fetch Assignment Groups (Dynamic)
-            const { data: groupsData } = await supabase
-                .from('groups')
-                .select('id, name');
-
+            // 2. Fetch Assignment Groups
+            const { data: groupsData } = await supabase.from('groups').select('id, name');
             if (groupsData) {
                 const mapping: { [key: string]: string } = {};
                 groupsData.forEach((g: any) => {
-                    // Flexible matching
                     const name = g.name.toLowerCase();
                     if (name.includes('software') || name.includes('application')) mapping['SOFTWARE'] = g.id;
                     if (name.includes('endpoint') || name.includes('hardware') || name.includes('network')) mapping['ENDPOINT'] = g.id;
                 });
                 setGroupIds(mapping);
             }
+
+            // 3. Fetch Categories (Incident Only)
+            const { data: catData } = await supabase
+                .from('ticket_categories')
+                .select('id, name')
+                .eq('category_type', 'incident'); // Filter by input type
+            if (catData) setCategories(catData);
+
+            // 4. Fetch Services
+            const { data: svcData } = await supabase
+                .from('services')
+                .select('id, name')
+                .eq('is_active', true);
+            if (svcData) setServices(svcData);
         };
         initData();
     }, []);
+
+    // Helper to determine Category & Service based on Issue Type
+    const getSystemClassification = (type: string) => {
+        let catKeyword = '';
+        let svcKeyword = '';
+
+        switch (type) {
+            case 'software':
+                catKeyword = 'software'; // Looks for category named 'Software'
+                svcKeyword = 'application'; // Looks for service with 'Application'
+                break;
+            case 'hardware':
+                catKeyword = 'hardware';
+                svcKeyword = 'computing'; // e.g., 'End User Computing'
+                break;
+            case 'network':
+                catKeyword = 'network';
+                svcKeyword = 'network';
+                break;
+            default:
+                catKeyword = 'access'; // Fallback
+                svcKeyword = 'general';
+        }
+
+        const category = categories.find(c => c.name.toLowerCase().includes(catKeyword)) || categories[0];
+        const service = services.find(s => s.name.toLowerCase().includes(svcKeyword)) || services[0];
+
+        return {
+            category_id: category?.id || null,
+            service_id: service?.id || null
+        };
+    };
+
+    // Helper to determine Priority based on keywords (AI Simulation)
+    const calculatePriority = (subject: string, description: string) => {
+        const text = `${subject} ${description}`.toLowerCase();
+
+        // High Priority Keywords
+        if (text.includes('urgent') || text.includes('critical') || text.includes('system down') ||
+            text.includes('mati total') || text.includes('emergency') || text.includes('dead')) {
+            return 'High';
+        }
+
+        // Medium Priority Keywords
+        if (text.includes('error') || text.includes('unable') || text.includes('fail') ||
+            text.includes('cant') || text.includes('cannot') || text.includes('slow') || text.includes('lambat')) {
+            return 'Medium';
+        }
+
+        // Default to Low for questions/requests
+        return 'Low';
+    };
 
     // AI Analysis Simulation (Runs when description changes) - used for Insights
     useEffect(() => {
         const analyzeTicket = () => {
             if (description.length < 10) return;
-
-            // Simple Keyword Matching just to provide initial AI context in DB
-            // This does NOT control routing anymore (Routing is User Selected via Issue Type)
             const text = `${subject} ${description}`.toLowerCase();
             let summary = "User reported an issue.";
             let confidence = 'medium';
@@ -103,12 +179,11 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
             }
 
             setAiInsight({
-                suggested_category_id: '', // We don't force category ID here anymore
+                suggested_category_id: '',
                 confidence_level: confidence as any,
                 summary: summary
             });
 
-            // Trigger UI notice based on simplistic AI result
             if (text.includes('password') || text.includes('login')) {
                 setShowAINotice(true);
             } else {
@@ -116,10 +191,94 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
             }
         };
 
-        const timer = setTimeout(analyzeTicket, 1000); // Debounce 1s
+        const timer = setTimeout(analyzeTicket, 1000);
         return () => clearTimeout(timer);
     }, [description, subject]);
 
+
+    // KB Suggestions
+    const [suggestedArticles, setSuggestedArticles] = useState<any[]>([]);
+
+    // Search KB when Subject changes
+    useEffect(() => {
+        const searchKB = async () => {
+            if (subject.length < 3) {
+                setSuggestedArticles([]);
+                return;
+            }
+
+            // A. Prepare Keywords
+            const rawKeywords = subject.toLowerCase().split(' ').filter(w => w.length > 2);
+            // Remove common stop words for cleaner search
+            const stopWords = ['tidak', 'bisa', 'mau', 'ada', 'yang', 'dan', 'ini', 'itu', 'cannot', 'cant', 'not'];
+            const keywords = rawKeywords.filter(w => !stopWords.includes(w));
+
+            if (keywords.length === 0) return;
+
+            // B. Hybrid Search: Broad Fetch -> Smart Rank
+            const queryParts = keywords.map(w => `title.ilike.%${w}%,summary.ilike.%${w}%`).join(',');
+
+            const { data: candidates } = await supabase
+                .from('kb_articles')
+                .select('id, title, summary, tags')
+                .eq('status', 'published')
+                // .eq('visibility', 'public') // DISABLED
+                .or(queryParts)
+                .limit(20); // Fetch more candidates to rank them
+
+            if (!candidates || candidates.length === 0) {
+                setSuggestedArticles([]);
+                return;
+            }
+
+            // C. Scoring Algorithm
+            const scoredResults = candidates.map(article => {
+                let score = 0;
+                const titleLower = article.title.toLowerCase();
+                const summaryLower = (article.summary || '').toLowerCase();
+                const tags = (article.tags || []).map((t: string) => t.toLowerCase());
+
+                keywords.forEach(word => {
+                    // Title Match (High Priority)
+                    if (titleLower.includes(word)) score += 10;
+                    // Exact Title Word Match (Bonus)
+                    if (titleLower.split(' ').includes(word)) score += 5;
+
+                    // Summary Match (Medium)
+                    if (summaryLower.includes(word)) score += 5;
+
+                    // Tag Match (High Priority)
+                    if (tags.some((t: string) => t.includes(word))) score += 8;
+                });
+
+                return { ...article, score };
+            });
+
+            // D. Sort & Filter
+            const filteredResults = scoredResults
+                // .filter(item => item.score >= 5) // DISABLED
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 5); // Take top 5
+
+            setSuggestedArticles(filteredResults);
+        };
+
+        const timer = setTimeout(searchKB, 500);
+        return () => clearTimeout(timer);
+    }, [subject]);
+
+    // Article Viewing State
+    const [viewingArticle, setViewingArticle] = useState<any | null>(null);
+
+    const handleViewArticle = async (id: string) => {
+        const { data, error } = await supabase
+            .from('kb_articles')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+        if (data) setViewingArticle(data);
+    };
 
     // Handlers
     const handleSomeoneElseChange = (field: string, value: string) => {
@@ -138,18 +297,24 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
         }
 
         try {
-            // Determine Assignment Group based on Issue Type
+            // Determine Assignment Group
             let assignedGroupId = null;
-
-            // Use IDs fetched from Real DB
             if (issueType === 'software') {
                 assignedGroupId = groupIds['SOFTWARE'] || null;
             } else if (issueType === 'hardware' || issueType === 'network') {
                 assignedGroupId = groupIds['ENDPOINT'] || null;
             }
-            // If group not found, it stays null (Dispatcher will handle)
 
-            // Prepare Description with "On Behalf Of" details if applicable
+            // Determine Classification (Category & Service)
+            const { category_id, service_id } = getSystemClassification(issueType);
+
+            // Determine Priority (AI Simulation)
+            const calculatedPriority = calculatePriority(subject, description);
+
+            // Generate Auto Tags from Content
+            const autoTags = generateAutoTags(subject + ' ' + description);
+
+            // Prepare Description
             let finalDescription = description;
             if (affectedUser === 'someone_else') {
                 finalDescription = `**Reported on behalf of:** ${someoneElseDetails.fullName} (${someoneElseDetails.email})\n` +
@@ -162,14 +327,19 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
             const ticketPayload = {
                 subject: subject,
                 description: finalDescription,
-                status_id: openStatusId, // FK Reference
-                ticket_number: `INC-${Math.floor(Math.random() * 100000)}`, // Random Number
-                priority: 'medium', // Default, AI can update later
-                requester_id: userProfile?.id, // FK
-                created_by: userProfile?.id, // FK
+                tags: autoTags, // Auto-generated keywords for future AI similarity search
+                status_id: openStatusId,
+                ticket_number: `INC-${Math.floor(Math.random() * 100000)}`,
+                priority: calculatedPriority, // Uses logic now
+                requester_id: userProfile?.id,
+                created_by: userProfile?.id,
                 ticket_type: 'incident',
-                assignment_group_id: assignedGroupId, // Re-enabled after RLS fix
+                assignment_group_id: assignedGroupId,
+                category_id: category_id, // Auto-mapped
+                service_id: service_id,   // Auto-mapped
             };
+
+            console.log("Submitting Ticket Payload:", ticketPayload); // Debug
 
             const { data: ticketData, error: ticketError } = await supabase
                 .from('tickets')
@@ -182,7 +352,9 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 throw ticketError;
             }
 
-            // 2. Insert AI Insights (Still valuable for Agent)
+            // ... Rest of Logic (AI Insight, Attachments)
+
+            // 2. Insert AI Insights
             if (aiInsight && ticketData) {
                 await supabase
                     .from('ticket_ai_insights')
@@ -190,8 +362,42 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                         ticket_id: ticketData.id,
                         summary: aiInsight.summary,
                         confidence_level: aiInsight.confidence_level,
-                        // suggested_priority: 'medium' // Might be Enum or wrong column
                     });
+            }
+
+            // 3. Handle Attachment Upload
+            if (attachment && ticketData) {
+                try {
+                    const filePath = `tickets/${ticketData.id}/${Math.floor(Date.now() / 1000)}_${attachment.name}`;
+                    const { error: uploadError } = await supabase.storage
+                        .from('ticket-attachments')
+                        .upload(filePath, attachment);
+
+                    if (uploadError) {
+                        console.error("Upload Error:", uploadError);
+                    } else {
+                        const { data: { publicUrl } } = supabase.storage
+                            .from('ticket-attachments')
+                            .getPublicUrl(filePath);
+
+                        // Insert into ticket_attachments table
+                        const { error: dbError } = await supabase
+                            .from('ticket_attachments')
+                            .insert({
+                                ticket_id: ticketData.id,
+                                file_name: attachment.name,
+                                file_path: filePath,
+                                mime_type: attachment.type,
+                                uploaded_by: userProfile?.id
+                            });
+
+                        if (dbError) {
+                            console.error("Failed to link attachment to ticket:", dbError);
+                        }
+                    }
+                } catch (uploadErr) {
+                    console.error("Attachment handling failed:", uploadErr);
+                }
             }
 
             setIsSuccess(true);
@@ -475,6 +681,34 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                         />
                     </div>
 
+                    {suggestedArticles.length > 0 && (
+                        <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 animate-in fade-in slide-in-from-top-2">
+                            <div className="flex items-center gap-2 text-indigo-700 font-semibold text-sm mb-3">
+                                <Sparkles size={16} />
+                                <span>Suggested Solutions from Knowledge Base</span>
+                            </div>
+                            <div className="space-y-2">
+                                {suggestedArticles.map(article => (
+                                    <div key={article.id} className="bg-white p-3 rounded-lg border border-indigo-100 shadow-sm hover:shadow-md transition-all">
+                                        <h4 className="font-semibold text-gray-800 text-sm mb-1">{article.title}</h4>
+                                        <p className="text-xs text-gray-500 line-clamp-1 mb-2">{article.summary || 'No summary available.'}</p>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleViewArticle(article.id)}
+                                            className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                                        >
+                                            Read Article <ChevronRight size={12} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="mt-3 text-xs text-center text-indigo-600/70">
+                                Did this solve your issue? <button type="button" onClick={onBack} className="font-bold hover:underline">Yes, cancel ticket</button>
+                            </div>
+                        </div>
+                    )}
+
+
                     <div className="space-y-3 relative">
                         <label className="block text-xl font-bold text-gray-900">
                             Description <span className="text-red-500">*</span>
@@ -526,12 +760,37 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                                 <Paperclip size={14} />
                             </div>
                             Add document
-                            <input type="file" className="hidden" onChange={(e) => setAttachment(e.target.files ? e.target.files[0] : null)} />
+                            <input
+                                type="file"
+                                className="hidden"
+                                onChange={async (e) => {
+                                    const file = e.target.files ? e.target.files[0] : null;
+                                    if (file) {
+                                        if (file.size > 5 * 1024 * 1024) { // 5MB Limit
+                                            // @ts-ignore
+                                            const Swal = (await import('sweetalert2')).default;
+                                            Swal.fire({
+                                                icon: 'warning',
+                                                title: 'File Too Large',
+                                                text: 'The attachment size must be less than 5MB.',
+                                                confirmButtonColor: '#6366f1'
+                                            });
+                                            setAttachment(null);
+                                            e.target.value = ''; // Reset input
+                                        } else {
+                                            setAttachment(file);
+                                        }
+                                    }
+                                }}
+                            />
                         </label>
+                        <p className="text-[10px] text-gray-400 font-medium">Max size: 5MB</p>
+
                         {attachment && (
-                            <div className="text-sm text-indigo-600 font-medium flex items-center gap-2 bg-indigo-50 w-fit px-3 py-1.5 rounded-lg border border-indigo-100">
+                            <div className="text-sm text-indigo-600 font-medium flex items-center gap-2 bg-indigo-50 w-fit px-3 py-1.5 rounded-lg border border-indigo-100 mt-2">
                                 <span className="w-2 h-2 rounded-full bg-indigo-500 block"></span>
                                 {attachment.name}
+                                <span className="text-gray-400 text-xs ml-1">({(attachment.size / 1024 / 1024).toFixed(2)} MB)</span>
                                 <button
                                     type="button"
                                     className="ml-2 text-indigo-400 hover:text-indigo-700"
@@ -585,6 +844,95 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 </div>
 
             </form>
+
+            {/* KB Article Modal */}
+            {viewingArticle && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95">
+                        <div className="p-6 border-b border-gray-100 flex justify-between items-start bg-gray-50">
+                            <div>
+                                <h3 className="text-xl font-bold text-gray-900">{viewingArticle.title}</h3>
+                                <div className="flex gap-2 mt-2">
+                                    <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-bold uppercase tracking-wider">
+                                        Trusted Solution
+                                    </span>
+                                    <span className="text-xs text-gray-500 flex items-center gap-1">
+                                        <Clock size={12} /> Updated {new Date(viewingArticle.updated_at).toLocaleDateString()}
+                                    </span>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setViewingArticle(null)}
+                                className="p-2 bg-white rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all shadow-sm border border-gray-200"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="p-6 overflow-y-auto custom-scrollbar">
+                            {typeof viewingArticle.content === 'string' ? (
+                                <div className="prose prose-sm max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: viewingArticle.content }} />
+                            ) : (
+                                <div className="space-y-6">
+                                    {/* Problem Section */}
+                                    {viewingArticle.content.problem && viewingArticle.content.problem !== '<p></p>' && (
+                                        <div className="bg-red-50/50 rounded-xl p-4 border border-red-50">
+                                            <h4 className="text-xs font-black text-red-600 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                                <AlertCircle size={14} /> Problem Description
+                                            </h4>
+                                            <div className="prose prose-sm prose-red max-w-none" dangerouslySetInnerHTML={{ __html: viewingArticle.content.problem }} />
+                                        </div>
+                                    )}
+
+                                    {/* Solution Section - MAIN */}
+                                    {viewingArticle.content.solution && viewingArticle.content.solution !== '<p></p>' && (
+                                        <div className="bg-white rounded-xl p-1">
+                                            <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest mb-3 border-b border-indigo-50 pb-2 flex items-center gap-2">
+                                                <Sparkles size={14} /> Solution Steps
+                                            </h4>
+                                            <div className="prose prose-sm prose-indigo max-w-none" dangerouslySetInnerHTML={{ __html: viewingArticle.content.solution }} />
+                                        </div>
+                                    )}
+
+                                    {/* Verification Section */}
+                                    {viewingArticle.content.verification && viewingArticle.content.verification !== '<p></p>' && (
+                                        <div className="bg-green-50/50 rounded-xl p-4 border border-green-50">
+                                            <h4 className="text-xs font-black text-green-600 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                                <CheckCircle2 size={14} /> Verification
+                                            </h4>
+                                            <div className="prose prose-sm prose-green max-w-none" dangerouslySetInnerHTML={{ __html: viewingArticle.content.verification }} />
+                                        </div>
+                                    )}
+
+                                    {/* Notes Section */}
+                                    {viewingArticle.content.notes && viewingArticle.content.notes !== '<p></p>' && (
+                                        <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 italic">
+                                            <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-2">Additional Notes</h4>
+                                            <div className="prose prose-sm prose-gray max-w-none text-gray-500" dangerouslySetInnerHTML={{ __html: viewingArticle.content.notes }} />
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
+                            <span className="text-xs text-gray-500">Did this article help?</span>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setViewingArticle(null)}
+                                    className="px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+                                >
+                                    No, I still need help
+                                </button>
+                                <button
+                                    onClick={onBack}
+                                    className="px-4 py-2 text-sm font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-lg shadow-green-200 transition-all flex items-center gap-2"
+                                >
+                                    <CheckCircle2 size={16} /> Yes, Solve Information
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

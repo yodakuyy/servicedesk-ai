@@ -9,12 +9,17 @@ import RequesterKBPortal from './components/RequesterKBPortal';
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<'login' | 'departments' | 'dashboard' | 'kb-portal'>('login');
+  const [dashboardInitialView, setDashboardInitialView] = useState<string | undefined>(undefined);
 
-  // Check URL hash for direct portal access
+  // Check URL hash for direct portal access and deep linking
   useEffect(() => {
     const checkHash = () => {
-      if (window.location.hash === '#kb-portal' || window.location.hash === '#/kb-portal') {
+      const hash = window.location.hash;
+      if (hash === '#kb-portal' || hash === '#/kb-portal') {
         setCurrentView('kb-portal');
+      } else if (hash === '#dashboard/tickets') {
+        setDashboardInitialView('user-dashboard');
+        setCurrentView('dashboard');
       }
     };
 
@@ -33,6 +38,7 @@ const App: React.FC = () => {
       <Dashboard
         onLogout={() => setCurrentView('login')}
         onChangeDepartment={() => setCurrentView('departments')}
+        initialView={dashboardInitialView}
       />
     );
   }
