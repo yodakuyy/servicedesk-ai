@@ -1,0 +1,20 @@
+[
+  "id",
+  "ticket_number",
+  "ticket_type",
+  "subject",
+  "description",
+  "category_id",
+  "service_id",
+  "status_id",
+  "priority",
+  "requester_id",
+  "created_by",
+  "assigned_group_id",
+  "assigned_agent_id",
+  "created_at",
+  "updated_at",
+  "assignment_group_id",
+  "assigned_to",
+  "tags"
+]

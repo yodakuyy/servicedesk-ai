@@ -160,6 +160,72 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     }
   }, [initialView]);
 
+  // AUTO-CLOSE TICKETS: Resolved -> Closed after 24h
+  useEffect(() => {
+    const handleAutoClose = async () => {
+      try {
+        const { supabase } = await import('../lib/supabase');
+
+        // 1. Get Resolved and Closed Status IDs
+        const { data: statuses } = await supabase
+          .from('ticket_statuses')
+          .select('status_id, status_name')
+          .in('status_name', ['Resolved', 'Closed']);
+
+        if (!statuses) return;
+
+        const resolvedStatus = statuses.find(s => s.status_name === 'Resolved');
+        const closedStatus = statuses.find(s => s.status_name === 'Closed');
+
+        if (!resolvedStatus || !closedStatus) return;
+
+        // 2. Find tickets that have been Resolved for more than 24 hours
+        // We use updated_at as the reference for when it was resolved
+        const twentyFourHoursAgo = new Date();
+        twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+        const { data: ticketsToClose } = await supabase
+          .from('tickets')
+          .select('id, ticket_number')
+          .eq('status_id', resolvedStatus.status_id)
+          .lt('updated_at', twentyFourHoursAgo.toISOString());
+
+        if (!ticketsToClose || ticketsToClose.length === 0) return;
+
+        console.log(`Auto-closing ${ticketsToClose.length} resolved tickets...`);
+
+        // 3. Update them to Closed
+        const ticketIds = ticketsToClose.map(t => t.id);
+        const { error: updateError } = await supabase
+          .from('tickets')
+          .update({
+            status_id: closedStatus.status_id,
+            updated_at: new Date().toISOString()
+          })
+          .in('id', ticketIds);
+
+        if (updateError) throw updateError;
+
+        // 4. Log Activity for each
+        const activityLogs = ticketsToClose.map(t => ({
+          ticket_id: t.id,
+          action: 'System auto-closed ticket after 24 hours in Resolved status.',
+          actor_id: userProfile?.id || null // System action, but attribute to current user if possible or use null
+        }));
+
+        await supabase.from('ticket_activity_log').insert(activityLogs);
+
+      } catch (err) {
+        console.error('Error in handleAutoClose:', err);
+      }
+    };
+
+    // Run once on load after userProfile is available
+    if (userProfile?.id) {
+      handleAutoClose();
+    }
+  }, [userProfile?.id]);
+
   const toggleSettingsSub = (key: keyof typeof settingsSubOpen) => {
     setSettingsSubOpen(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -390,8 +456,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     }
 
     if (currentView === 'incidents') {
-      // Changed: All Incidents now uses the new Agent Workspace View
-      return <AgentTicketView userProfile={userProfile} />;
+      // Check if user is Requester (role_id = 4)
+      const isRequester = userProfile?.role_id === 4 || userProfile?.role_id === '4';
+
+      if (isRequester) {
+        // Requester uses the dedicated RequesterTicketManager
+        return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} />;
+      } else {
+        // Agent/SPV uses the new Agent Workspace View with tabs
+        return <AgentTicketView userProfile={userProfile} />;
+      }
     }
 
     if (currentView === 'knowledge') {
@@ -408,10 +482,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       return <OutOfOffice viewMode={currentView === 'team-availability' ? 'supervisor' : 'agent'} />;
     }
 
-    // User Incidents Data (Requester View using unified Agent View with 'submitted' filter)
+    // My Incidents / My Tickets - Different view based on role
     if (currentView === 'my-tickets' || currentView === 'my-incidents') {
-      // Use the unified AgentTicketView with 'submitted' filter to show user's own tickets
-      return <AgentTicketView userProfile={userProfile} initialQueueFilter="submitted" />;
+      // Check if user is Requester (role_id = 4)
+      const isRequester = userProfile?.role_id === 4 || userProfile?.role_id === '4';
+
+      if (isRequester) {
+        // Requester uses the dedicated RequesterTicketManager
+        return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} />;
+      } else {
+        // Agent/SPV uses the unified AgentTicketView with 'submitted' filter
+        return <AgentTicketView userProfile={userProfile} initialQueueFilter="submitted" />;
+      }
     }
 
     // NEW: Empty Placeholder for Service Requests
@@ -923,21 +1005,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               );
             })
           ) : (
-            // Fallback jika tidak ada accessible menus
-            <>
-              <SidebarItem
-                icon={LayoutDashboard}
-                label="Dashboard"
-                active={currentView === 'dashboard'}
-                onClick={() => setCurrentView('dashboard')}
-              />
-              <SidebarItem
-                icon={User}
-                label="User Tickets"
-                active={currentView === 'user-dashboard'}
-                onClick={() => setCurrentView('user-dashboard')}
-              />
-            </>
+            <div className="px-6 py-4 text-xs text-gray-400 italic">No accessible menus found for your role.</div>
           )}
 
           {/* Settings - hanya tampilkan jika user adalah admin atau punya akses settings */}

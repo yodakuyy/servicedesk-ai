@@ -67,7 +67,7 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                         id, ticket_number, subject, description, created_at, status_id,
                         ticket_statuses!fk_tickets_status (status_name)
                     `)
-                    .eq('requester_id', targetUserId)
+                    .or(`requester_id.eq.${targetUserId},created_by.eq.${targetUserId}`)
                     .order('created_at', { ascending: false });
 
                 if (error) throw error;

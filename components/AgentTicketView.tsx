@@ -39,9 +39,19 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     const [availableStatuses, setAvailableStatuses] = useState<any[]>([]);
     const [allGroups, setAllGroups] = useState<any[]>([]);
     const [allAgents, setAllAgents] = useState<any[]>([]);
+    const [allCategories, setAllCategories] = useState<any[]>([]);
     const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
     const [isAssigning, setIsAssigning] = useState(false);
     const [isTransferring, setIsTransferring] = useState(false);
+
+    // AI Copilot States
+    const [aiSummary, setAiSummary] = useState<string[]>([]);
+    const [aiClassification, setAiClassification] = useState<{ category: string; priority: string } | null>(null);
+    const [aiSuggestedReply, setAiSuggestedReply] = useState<string>('');
+    const [slaRisk, setSlaRisk] = useState<{ percentage: number; timeElapsed: string; hasResponse: boolean }>({ percentage: 0, timeElapsed: '00:00:00', hasResponse: false });
+    const [isAiLoading, setIsAiLoading] = useState(false);
+    const [aiConfidence, setAiConfidence] = useState<'high' | 'medium' | 'low'>('low');
+    const [isApplyingSummary, setIsApplyingSummary] = useState(false);
 
     // Queue Filter State - for switching between different ticket views
     const [queueFilter, setQueueFilter] = useState<'assigned' | 'submitted' | 'all'>(initialQueueFilter);
@@ -108,10 +118,15 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 setAllAgents(processedAgents);
             }
         };
+        const fetchCategories = async () => {
+            const { data } = await supabase.from('ticket_categories').select('*');
+            if (data) setAllCategories(data);
+        };
         fetchAgentGroups();
         fetchStatuses();
         fetchAllGroups();
         fetchAllAgents();
+        fetchCategories();
     }, [userProfile]);
 
     useEffect(() => {
@@ -234,39 +249,376 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
     useEffect(() => {
         const fetchAISuggestions = async () => {
-            if (!selectedTicket?.subject) return;
+            if (!selectedTicket?.subject && !selectedTicket?.description) return;
+            setIsAiLoading(true);
 
-            // Simple Keyword Extraction
-            const keywords = selectedTicket.subject.split(' ').filter((w: string) => w.length > 3);
-            if (keywords.length === 0) return;
+            try {
+                // ==========================================
+                // 1. EXTRACT KEYWORDS FROM SUBJECT + DESCRIPTION
+                // ==========================================
+                const stopWords = new Set([
+                    'the', 'and', 'is', 'to', 'in', 'of', 'for', 'a', 'an', 'on', 'with', 'at', 'by',
+                    'dan', 'yang', 'di', 'ke', 'dari', 'ini', 'itu', 'saya', 'tidak', 'bisa', 'ada',
+                    'karena', 'jika', 'atau', 'dengan', 'untuk', 'pada', 'adalah', 'sebagai', 'sudah', 'telah'
+                ]);
 
-            const kbQuery = keywords.map((w: string) => `title.ilike.%${w}%,summary.ilike.%${w}%`).join(',');
-            const ticketQuery = keywords.map((w: string) => `title.ilike.%${w}%`).join(',');
+                const text = `${selectedTicket.subject || ''} ${selectedTicket.description || ''}`.toLowerCase();
+                const cleanText = text.replace(/<[^>]*>/g, ' ').replace(/[^a-zA-Z0-9\s]/g, ' ');
+                const words = cleanText.split(/\s+/).filter(w => w.length > 3 && !stopWords.has(w));
+                const keywords = [...new Set(words)].slice(0, 10);
 
-            // 1. Fetch KB
-            const { data: kbData } = await supabase
-                .from('kb_articles')
-                .select('id, title, summary')
-                .eq('status', 'published')
-                .or(kbQuery)
-                .limit(3);
+                // Also use tags if available
+                const ticketTags = selectedTicket.tags || [];
+                const allSearchTerms = [...new Set([...keywords, ...ticketTags])];
 
-            if (kbData) setSuggestedKB(kbData);
+                // ==========================================
+                // 2. FETCH KB ARTICLES WITH RELEVANCE SCORING
+                // ==========================================
+                if (allSearchTerms.length > 0) {
+                    // Get more articles initially, then score and filter
+                    const kbQuery = allSearchTerms.slice(0, 5).map(w => `title.ilike.%${w}%,summary.ilike.%${w}%`).join(',');
+                    const { data: kbData } = await supabase
+                        .from('kb_articles')
+                        .select('id, title, summary, visibility')
+                        .eq('status', 'published')
+                        .or(kbQuery)
+                        .limit(10);
 
-            // 2. Fetch Similar Resolved/Closed Tickets
-            const { data: ticketData } = await supabase
-                .from('incidents')
-                .select('id, title, status, created_at')
-                .in('status', ['resolved', 'closed'])
-                .neq('id', selectedTicket.id)
-                .or(ticketQuery)
-                .order('created_at', { ascending: false })
-                .limit(3);
+                    if (kbData && kbData.length > 0) {
+                        // Score each article based on relevance
+                        const scoredArticles = kbData.map(article => {
+                            let score = 0;
+                            const titleLower = (article.title || '').toLowerCase();
+                            const summaryLower = (article.summary || '').toLowerCase();
 
-            if (ticketData) setSimilarTickets(ticketData);
+                            // Priority keywords from subject (more important)
+                            const subjectKeywords = (selectedTicket.subject || '').toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+
+                            subjectKeywords.forEach((word: string) => {
+                                // Exact word match in title = highest score
+                                if (titleLower.split(/\s+/).includes(word)) score += 20;
+                                // Partial match in title
+                                else if (titleLower.includes(word)) score += 10;
+                                // Match in summary
+                                if (summaryLower.includes(word)) score += 5;
+                            });
+
+                            // Bonus for tag matches
+                            ticketTags.forEach((tag: string) => {
+                                if (titleLower.includes(tag.toLowerCase())) score += 15;
+                                if (summaryLower.includes(tag.toLowerCase())) score += 8;
+                            });
+
+                            return { ...article, relevanceScore: score };
+                        });
+
+                        // Filter articles with minimum relevance score and sort by score
+                        const relevantArticles = scoredArticles
+                            .filter(a => a.relevanceScore >= 10) // Minimum threshold
+                            .sort((a, b) => b.relevanceScore - a.relevanceScore)
+                            .slice(0, 3);
+
+                        setSuggestedKB(relevantArticles);
+                    } else {
+                        setSuggestedKB([]);
+                    }
+                }
+
+                // ==========================================
+                // 3. FETCH SIMILAR SOLVED TICKETS (using tags + subject)
+                // ==========================================
+                // First try by tags overlap
+                let similarData: any[] = [];
+
+                if (ticketTags.length > 0) {
+                    const { data: byTags } = await supabase
+                        .from('tickets')
+                        .select('id, subject, status_id, created_at, tags, ticket_statuses!fk_tickets_status(status_name)')
+                        .neq('id', selectedTicket.id)
+                        .overlaps('tags', ticketTags)
+                        .order('created_at', { ascending: false })
+                        .limit(5);
+
+                    if (byTags) similarData = byTags;
+                }
+
+                // Fallback: search by subject keywords
+                if (similarData.length < 3 && keywords.length > 0) {
+                    const subjectQuery = keywords.slice(0, 3).map(w => `subject.ilike.%${w}%`).join(',');
+                    const { data: bySubject } = await supabase
+                        .from('tickets')
+                        .select('id, subject, status_id, created_at, tags, ticket_statuses!fk_tickets_status(status_name)')
+                        .neq('id', selectedTicket.id)
+                        .or(subjectQuery)
+                        .order('created_at', { ascending: false })
+                        .limit(5);
+
+                    if (bySubject) {
+                        // Merge and dedupe
+                        const existingIds = new Set(similarData.map(t => t.id));
+                        bySubject.forEach(t => {
+                            if (!existingIds.has(t.id)) similarData.push(t);
+                        });
+                    }
+                }
+
+                // Filter to ONLY show resolved/closed tickets (exclude canceled, open, etc)
+                const prioritizedSimilar = similarData
+                    .filter(t => {
+                        const status = t.ticket_statuses?.status_name?.toLowerCase() || '';
+                        return status === 'resolved' || status === 'closed';
+                    })
+                    .slice(0, 3)
+                    .map(t => ({
+                        id: t.id,
+                        title: t.subject,
+                        status: t.ticket_statuses?.status_name || 'Unknown',
+                        created_at: t.created_at
+                    }));
+
+                setSimilarTickets(prioritizedSimilar);
+
+                // ==========================================
+                // 4. AI SUMMARY GENERATION (Client-side NLP simulation)
+                // ==========================================
+                const summaryPoints: string[] = [];
+                const descLower = (selectedTicket.description || '').toLowerCase();
+
+                // Extract key information
+                if (selectedTicket.requester?.full_name) {
+                    summaryPoints.push(`Reported by ${selectedTicket.requester.full_name}`);
+                }
+
+                // Detect issue type
+                if (descLower.includes('login') || descLower.includes('password') || descLower.includes('akses')) {
+                    summaryPoints.push('Issue involves login/access problem');
+                } else if (descLower.includes('error') || descLower.includes('gagal')) {
+                    summaryPoints.push('User experiencing error/failure');
+                } else if (descLower.includes('slow') || descLower.includes('lambat')) {
+                    summaryPoints.push('Performance/slowness issue reported');
+                }
+
+                // Extract system mentions
+                const systems = ['sap', 'finance', 'more', 'vms', 'email', 'outlook', 'excel', 'word'];
+                const mentionedSystems = systems.filter(s => descLower.includes(s));
+                if (mentionedSystems.length > 0) {
+                    summaryPoints.push(`Affected system(s): ${mentionedSystems.map(s => s.toUpperCase()).join(', ')}`);
+                }
+
+                // Time detection
+                const timeMatch = text.match(/\b(\d{1,2}[:.]\d{2}|\d{1,2}\s*(am|pm)|sejak\s+\w+|since\s+\w+)/i);
+                if (timeMatch) {
+                    summaryPoints.push(`Issue started around: ${timeMatch[0]}`);
+                }
+
+                if (summaryPoints.length === 0) {
+                    summaryPoints.push('User reported a general issue');
+                }
+
+                setAiSummary(summaryPoints);
+
+                // ==========================================
+                // 5. AI CLASSIFICATION SUGGESTION
+                // ==========================================
+                let suggestedCategory = 'General';
+                let suggestedPriority = 'medium';
+
+                // Category detection
+                if (descLower.includes('login') || descLower.includes('password') || descLower.includes('akses') || descLower.includes('permission')) {
+                    suggestedCategory = 'Access & Authentication';
+                } else if (descLower.includes('hardware') || descLower.includes('laptop') || descLower.includes('monitor')) {
+                    suggestedCategory = 'Hardware';
+                } else if (descLower.includes('network') || descLower.includes('wifi') || descLower.includes('internet') || descLower.includes('vpn')) {
+                    suggestedCategory = 'Network & Connectivity';
+                } else if (descLower.includes('software') || descLower.includes('install') || descLower.includes('app')) {
+                    suggestedCategory = 'Software & Applications';
+                }
+
+                // Priority detection
+                if (descLower.includes('urgent') || descLower.includes('critical') || descLower.includes('mati') || descLower.includes('down')) {
+                    suggestedPriority = 'urgent';
+                } else if (descLower.includes('error') || descLower.includes('gagal') || descLower.includes('tidak bisa')) {
+                    suggestedPriority = 'high';
+                } else if (descLower.includes('slow') || descLower.includes('lambat')) {
+                    suggestedPriority = 'medium';
+                }
+
+                setAiClassification({ category: suggestedCategory, priority: suggestedPriority });
+
+                // ==========================================
+                // 6. AI SUGGESTED REPLY GENERATION
+                // ==========================================
+                const requesterName = selectedTicket.requester?.full_name?.split(' ')[0] || 'User';
+                let replyTemplate = '';
+
+                // Get last requester message to make it dynamic
+                const lastRequesterMsg = [...messages].reverse().find(m => m.sender_role === 'requester');
+                const lastMsgContent = lastRequesterMsg?.content?.toLowerCase().replace(/<[^>]*>/g, '') || '';
+
+                // Use last message if available, otherwise fallback to description
+                const analyzeContent = lastMsgContent || descLower;
+
+                if (analyzeContent.includes('login') || analyzeContent.includes('akses') || analyzeContent.includes('password')) {
+                    if (lastMsgContent) {
+                        replyTemplate = `Halo ${requesterName}, terima kasih informasinya terkait kendala login. Kami sedang memvalidasi akun Anda. Apakah Anda sudah mencoba reset password atau clear cache browser?`;
+                    } else {
+                        replyTemplate = `Halo ${requesterName}, terima kasih sudah melaporkan kendala akses. Kami sedang melakukan pengecekan pada akun Anda. Mohon konfirmasi apakah issue ini terjadi di semua device atau hanya satu device tertentu?`;
+                    }
+                } else if (analyzeContent.includes('sudah bisa') || analyzeContent.includes('berhasil') || analyzeContent.includes('terima kasih') || analyzeContent.includes('thanks') || analyzeContent.includes('oke')) {
+                    replyTemplate = `Halo ${requesterName}, senang mendengarnya jika kendala tersebut sudah teratasi. Apakah ada hal lain yang bisa kami bantu sebelum tiket ini kami tutup?`;
+                } else if (analyzeContent.includes('error') || analyzeContent.includes('failed') || analyzeContent.includes('gagal')) {
+                    replyTemplate = `Halo ${requesterName}, terima kasih informasinya. Terkait error tersebut, kami sedang meninjau log sistem kami. Bisakah Anda memberikan detail langkah terakhir yang dilakukan sebelum error muncul?`;
+                } else if (analyzeContent.includes('slow') || analyzeContent.includes('lambat')) {
+                    replyTemplate = `Halo ${requesterName}, kami memahami kendala performa tersebut. Kami sedang mengecek utilisasi server saat ini. Apakah user lain di lokasi yang sama juga mengalami hal yang sama?`;
+                } else if (analyzeContent.includes('tanya') || analyzeContent.includes('help') || analyzeContent.includes('gimana')) {
+                    replyTemplate = `Halo ${requesterName}, tentu kami siap membantu. Terkait pertanyaan Anda, bisa diinformasikan lebih detail bagian mana yang ingin Anda tanyakan agar kami bisa memberikan panduan yang tepat?`;
+                } else {
+                    replyTemplate = `Halo ${requesterName}, baik kami mengerti. Laporan Anda sedang kami proses lebih lanjut oleh tim terkait. Kami akan segera memberikan update kembali.`;
+                }
+
+                setAiSuggestedReply(replyTemplate);
+
+                // ==========================================
+                // 7. SLA RISK CALCULATION
+                // ==========================================
+                if (selectedTicket.created_at) {
+                    const createdAt = new Date(selectedTicket.created_at);
+                    const now = new Date();
+                    const diffMs = now.getTime() - createdAt.getTime();
+                    const diffMins = Math.floor(diffMs / (1000 * 60));
+                    const hours = Math.floor(diffMins / 60);
+                    const mins = diffMins % 60;
+                    const secs = Math.floor((diffMs / 1000) % 60);
+
+                    // SLA based on priority (example: urgent=30min, high=1hr, medium=4hr, low=8hr)
+                    const priority = selectedTicket.priority || 'medium';
+                    let slaMins = 240; // default 4 hours
+                    if (priority === 'urgent') slaMins = 30;
+                    else if (priority === 'high') slaMins = 60;
+                    else if (priority === 'medium') slaMins = 240;
+                    else slaMins = 480;
+
+                    const usedPercentage = Math.min(100, Math.round((diffMins / slaMins) * 100));
+
+                    setSlaRisk({
+                        percentage: usedPercentage,
+                        timeElapsed: `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`,
+                        hasResponse: messages.length > 0
+                    });
+                }
+
+                // ==========================================
+                // 8. CALCULATE AI CONFIDENCE LEVEL
+                // ==========================================
+                // Based on: KB matches + Similar tickets found + Summary points generated
+                const kbCount = suggestedKB.length;
+                const similarCount = prioritizedSimilar.length;
+                const summaryCount = summaryPoints.length;
+
+                if ((kbCount >= 2 && similarCount >= 1) || (kbCount >= 1 && similarCount >= 2) || summaryCount >= 3) {
+                    setAiConfidence('high');
+                } else if (kbCount >= 1 || similarCount >= 1 || summaryCount >= 2) {
+                    setAiConfidence('medium');
+                } else {
+                    setAiConfidence('low');
+                }
+
+            } catch (error) {
+                console.error('AI Suggestions Error:', error);
+            } finally {
+                setIsAiLoading(false);
+            }
         };
+
         fetchAISuggestions();
-    }, [selectedTicket?.subject, selectedTicket?.id]);
+    }, [selectedTicket?.id, selectedTicket?.subject, selectedTicket?.description, messages.length]);
+
+    // Apply AI Summary to Internal Notes
+    const handleApplySummary = async () => {
+        if (!selectedTicketId || aiSummary.length === 0) return;
+
+        setIsApplyingSummary(true);
+        try {
+            let senderId = userProfile?.id;
+            if (!senderId) {
+                const { data: { user } } = await supabase.auth.getUser();
+                senderId = user?.id;
+            }
+
+            // Format summary as HTML list
+            const summaryHtml = `
+                <div style="background: #fef3c7; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">
+                    <strong style="color: #92400e;">🤖 AI Summary:</strong>
+                    <ul style="margin: 8px 0 0; padding-left: 20px; color: #78350f;">
+                        ${aiSummary.map(point => `<li>${point}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
+
+            // Insert as Internal Note
+            await supabase.from('ticket_messages').insert({
+                ticket_id: selectedTicketId,
+                sender_id: senderId,
+                sender_role: 'agent',
+                content: summaryHtml,
+                is_internal: true // This is a private note
+            });
+
+            // Re-fetch messages
+            const { data: msgs } = await supabase
+                .from('ticket_messages')
+                .select('*, sender:profiles!sender_id(full_name)')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: true });
+
+            if (msgs) {
+                setMessages(msgs.map(m => ({
+                    ...m,
+                    sender_name: m.sender?.full_name || (m.sender_role === 'requester' ? 'User' : 'Agent')
+                })));
+            }
+
+            // Success notification
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Summary Applied',
+                text: 'AI Summary has been added as an internal note.',
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 3000,
+                timerProgressBar: true
+            });
+        } catch (error) {
+            console.error('Apply Summary Error:', error);
+        } finally {
+            setIsApplyingSummary(false);
+        }
+    };
+
+    // Helper to build category path (Breadcrumb)
+    const getCategoryPath = (catId: string) => {
+        if (!catId || allCategories.length === 0) return '';
+
+        const path: string[] = [];
+        let currentId: string | null = catId;
+        let depth = 0; // Prevent infinite loops
+
+        while (currentId && depth < 5) {
+            const cat = allCategories.find(c => c.id === currentId);
+            if (cat) {
+                path.unshift(cat.name);
+                currentId = cat.parent_id;
+            } else {
+                currentId = null;
+            }
+            depth++;
+        }
+
+        return path.join(' › ');
+    };
 
     const [isSending, setIsSending] = useState(false);
 
@@ -1176,11 +1528,11 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                                         {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                     </span>
                                                     {isAgent ? (
-                                                        <span className="bg-indigo-50 text-indigo-600 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-indigo-100 flex items-center gap-1">
+                                                        <span className="bg-indigo-50 text-indigo-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-indigo-100 flex items-center gap-1">
                                                             Agent
                                                         </span>
                                                     ) : (
-                                                        <span className="bg-slate-50 text-slate-500 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
+                                                        <span className="bg-slate-100 text-slate-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
                                                             Requester
                                                         </span>
                                                     )}
@@ -1228,7 +1580,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                                 return 'P4 - Low';
                                             })()
                                         } />
-                                        <DetailRow label="Category" value={selectedTicket.ticket_categories?.name || 'System Classification Pending'} />
+                                        <DetailRow label="Category" value={getCategoryPath(selectedTicket.category_id) || selectedTicket.ticket_categories?.name || 'System Classification Pending'} />
                                         <DetailRow label="Affected Service" value={selectedTicket.services?.name || '-'} />
                                     </div>
                                 </div>
@@ -1440,7 +1792,11 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                 minHeight="80px"
                             />
                             <div className="flex justify-between items-center mt-4">
-                                <button className="flex items-center gap-2 text-indigo-600 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-all">
+                                <button
+                                    onClick={() => aiSuggestedReply && setNewMessage(aiSuggestedReply)}
+                                    disabled={!aiSuggestedReply}
+                                    className="flex items-center gap-2 text-indigo-600 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
                                     <Sparkles size={14} fill="currentColor" /> Insert AI Suggestion
                                 </button>
                                 <button
@@ -1485,18 +1841,41 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     <div className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar">
                         <div className="flex justify-between items-center text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">
                             <span>Diagnostic Engine</span>
-                            <span className="text-blue-500">Confidence: High</span>
+                            {isAiLoading ? (
+                                <span className="text-amber-500 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Analyzing...</span>
+                            ) : (
+                                <span className={`${aiConfidence === 'high' ? 'text-green-500' :
+                                    aiConfidence === 'medium' ? 'text-blue-500' :
+                                        'text-gray-400'
+                                    }`}>
+                                    Confidence: {aiConfidence.charAt(0).toUpperCase() + aiConfidence.slice(1)}
+                                </span>
+                            )}
                         </div>
 
                         {/* Summary Card */}
                         <AICard title="Ticket Summary" icon={FileText}>
                             <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-                                <ul className="text-xs text-slate-600 space-y-2 list-disc pl-4 font-medium leading-relaxed">
-                                    <li>User cannot login to Finance System since 09:10.</li>
-                                    <li>Error indicates "permission denied" error.</li>
-                                    <li>Incident affects Finance department specifically.</li>
-                                </ul>
-                                <button className="mt-4 w-full text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline">Apply To Description</button>
+                                {aiSummary.length > 0 ? (
+                                    <ul className="text-xs text-slate-600 space-y-2 list-disc pl-4 font-medium leading-relaxed">
+                                        {aiSummary.map((point, idx) => (
+                                            <li key={idx}>{point}</li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p className="text-xs text-gray-400 italic">Analyzing ticket content...</p>
+                                )}
+                                <button
+                                    onClick={handleApplySummary}
+                                    disabled={isApplyingSummary || aiSummary.length === 0}
+                                    className="mt-4 w-full text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                >
+                                    {isApplyingSummary ? (
+                                        <><Loader2 size={12} className="animate-spin" /> Applying...</>
+                                    ) : (
+                                        <>Add as Internal Note</>
+                                    )}
+                                </button>
                             </div>
                         </AICard>
 
@@ -1505,15 +1884,20 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-3">
                                 <div className="flex justify-between text-xs">
                                     <span className="text-gray-400 font-bold uppercase tracking-tighter">Category</span>
-                                    <span className="text-gray-800 font-black">Access → Perms Denied</span>
+                                    <span className="text-gray-800 font-black">{aiClassification?.category || 'Analyzing...'}</span>
                                 </div>
                                 <div className="flex justify-between text-xs">
                                     <span className="text-gray-400 font-bold uppercase tracking-tighter">Priority</span>
-                                    <span className="text-red-500 font-black">P1 - Critical</span>
+                                    <span className={`font-black ${aiClassification?.priority === 'urgent' ? 'text-red-500' :
+                                        aiClassification?.priority === 'high' ? 'text-orange-500' :
+                                            aiClassification?.priority === 'medium' ? 'text-amber-500' : 'text-green-500'
+                                        }`}>
+                                        {aiClassification?.priority?.toUpperCase() || 'N/A'}
+                                    </span>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 mt-2">
-                                    <button className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm">Apply</button>
-                                    <button className="py-2.5 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100">Edit</button>
+                                    <button className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm hover:bg-indigo-700 transition-colors">Apply</button>
+                                    <button className="py-2.5 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors">Edit</button>
                                 </div>
                             </div>
                         </AICard>
@@ -1522,13 +1906,16 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                         <AICard title="Suggested Reply" icon={Zap}>
                             <div className="bg-green-50/30 p-4 rounded-xl border border-green-100 space-y-3">
                                 <p className="text-[12px] text-gray-700 italic font-medium leading-relaxed">
-                                    "Halo Pak Budi, kami sedang cek akses akun Anda. Mohon konfirmasi apakah error muncul di semua menu atau hanya laporan?"
+                                    "{aiSuggestedReply || 'Generating suggested reply...'}"
                                 </p>
                                 <div className="flex gap-2">
-                                    <button className="flex-1 py-2 bg-white text-green-700 text-[10px] font-black uppercase tracking-widest rounded-lg border border-green-200 flex items-center justify-center gap-2 shadow-sm">
+                                    <button
+                                        onClick={() => setNewMessage(aiSuggestedReply)}
+                                        className="flex-1 py-2 bg-white text-green-700 text-[10px] font-black uppercase tracking-widest rounded-lg border border-green-200 flex items-center justify-center gap-2 shadow-sm hover:bg-green-50 transition-colors"
+                                    >
                                         <Copy size={12} /> Insert
                                     </button>
-                                    <button className="flex-1 py-2 bg-white text-gray-400 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 flex items-center justify-center gap-2">
+                                    <button className="flex-1 py-2 bg-white text-gray-400 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors">
                                         <RefreshCw size={12} /> Rewrite
                                     </button>
                                 </div>
@@ -1541,8 +1928,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                 {suggestedKB.length > 0 ? (
                                     suggestedKB.map(kb => (
                                         <button key={kb.id} onClick={() => alert(`View Article: ${kb.title}`)} className="w-full text-left p-3 rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/20 text-indigo-600 transition-all flex items-center justify-between group">
-                                            <div>
-                                                <span className="text-xs font-black truncate block pr-2">{kb.title}</span>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-black truncate block">{kb.title}</span>
+                                                    {kb.visibility === 'internal' && (
+                                                        <span className="text-[8px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-bold uppercase">Internal</span>
+                                                    )}
+                                                </div>
                                                 <span className="text-[10px] text-gray-400 font-medium line-clamp-1">{kb.summary}</span>
                                             </div>
                                             <ArrowUpRight size={14} className="opacity-0 group-hover:opacity-100 flex-shrink-0" />
@@ -1556,25 +1948,31 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             </div>
                         </AICard>
 
-                        {/* Similar Solved History Card */}
-                        <AICard title="Similar Solved History" icon={CheckCircle2}>
+                        {/* Similar Tickets Card */}
+                        <AICard title="Similar Tickets" icon={CheckCircle2}>
                             <div className="space-y-3">
                                 {similarTickets.length > 0 ? (
-                                    similarTickets.map(t => (
-                                        <div key={t.id} className="w-full text-left p-3 rounded-lg border border-gray-100 bg-white/50 hover:border-green-200 hover:bg-green-50/20 transition-all flex items-center justify-between group cursor-pointer" onClick={() => alert(`Open Ticket: ${t.title}\nID: ${t.id}`)}>
-                                            <div className="flex-1 min-w-0">
-                                                <span className="text-xs font-bold text-gray-700 truncate block">{t.title}</span>
-                                                <span className="text-[10px] text-gray-400 flex items-center gap-1 mt-1">
-                                                    <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded-sm text-[9px] font-bold uppercase tracking-wider">Solved</span>
-                                                    • {new Date(t.created_at).toLocaleDateString()}
-                                                </span>
+                                    similarTickets.map(t => {
+                                        const statusLower = t.status?.toLowerCase() || '';
+                                        const isResolved = statusLower === 'resolved' || statusLower === 'closed';
+                                        return (
+                                            <div key={t.id} className={`w-full text-left p-3 rounded-lg border bg-white/50 transition-all flex items-center justify-between group cursor-pointer ${isResolved ? 'border-green-100 hover:border-green-200 hover:bg-green-50/20' : 'border-gray-100 hover:border-blue-200 hover:bg-blue-50/20'
+                                                }`} onClick={() => setSelectedTicketId(t.id)}>
+                                                <div className="flex-1 min-w-0">
+                                                    <span className="text-xs font-bold text-gray-700 truncate block">{t.title}</span>
+                                                    <span className="text-[10px] text-gray-400 flex items-center gap-1 mt-1">
+                                                        <span className={`px-1.5 py-0.5 rounded-sm text-[9px] font-bold uppercase tracking-wider ${isResolved ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                                                            }`}>{t.status}</span>
+                                                        • {new Date(t.created_at).toLocaleDateString()}
+                                                    </span>
+                                                </div>
+                                                <ArrowUpRight size={14} className={`opacity-0 group-hover:opacity-100 flex-shrink-0 ${isResolved ? 'text-green-600' : 'text-blue-600'}`} />
                                             </div>
-                                            <ArrowUpRight size={14} className="text-green-600 opacity-0 group-hover:opacity-100 flex-shrink-0" />
-                                        </div>
-                                    ))
+                                        );
+                                    })
                                 ) : (
                                     <div className="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded text-center">
-                                        No similar solved cases found.
+                                        No similar cases found.
                                     </div>
                                 )}
                             </div>
@@ -1582,17 +1980,28 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                         {/* SLA Risk Card */}
                         <AICard title="SLA Risk Analysis" icon={BarChart3}>
-                            <div className="bg-red-50/30 p-4 rounded-xl border border-red-100 space-y-4">
+                            <div className={`p-4 rounded-xl border space-y-4 ${slaRisk.percentage >= 75 ? 'bg-red-50/30 border-red-100' :
+                                slaRisk.percentage >= 50 ? 'bg-amber-50/30 border-amber-100' :
+                                    'bg-green-50/30 border-green-100'
+                                }`}>
                                 <div className="flex justify-between items-center font-black">
-                                    <span className="text-[10px] text-gray-400 uppercase tracking-widest">Breach Risk</span>
-                                    <span className="text-red-500 text-xs tracking-tighter">87% - CRITICAL</span>
+                                    <span className="text-[10px] text-gray-400 uppercase tracking-widest">SLA Used</span>
+                                    <span className={`text-xs tracking-tighter ${slaRisk.percentage >= 75 ? 'text-red-500' :
+                                        slaRisk.percentage >= 50 ? 'text-amber-500' :
+                                            'text-green-500'
+                                        }`}>
+                                        {slaRisk.percentage}% {slaRisk.percentage >= 75 ? '- CRITICAL' : slaRisk.percentage >= 50 ? '- WARNING' : '- OK'}
+                                    </span>
                                 </div>
                                 <div className="h-2 w-full bg-white rounded-full overflow-hidden shadow-inner">
-                                    <div className="h-full bg-red-500" style={{ width: '87%' }} />
+                                    <div className={`h-full transition-all duration-500 ${slaRisk.percentage >= 75 ? 'bg-red-500' :
+                                        slaRisk.percentage >= 50 ? 'bg-amber-500' :
+                                            'bg-green-500'
+                                        }`} style={{ width: `${slaRisk.percentage}%` }} />
                                 </div>
                                 <ul className="text-[10px] text-gray-500 font-bold space-y-1 mt-2">
-                                    <li>• Time elapsed: 14m (75% SLA)</li>
-                                    <li>• No agent response yet</li>
+                                    <li>• Time elapsed: {slaRisk.timeElapsed}</li>
+                                    <li>• {slaRisk.hasResponse ? '✓ Agent has responded' : '⚠ No agent response yet'}</li>
                                 </ul>
                             </div>
                         </AICard>

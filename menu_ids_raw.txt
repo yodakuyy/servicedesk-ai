@@ -1,0 +1,10 @@
+--- FULL MENU LIST ---
+ID: 58f7ccb1-0701-4c67-b251-279025711ed0 | Label: Dashboard
+ID: aeabc387-24a7-42ef-bc9e-2fd8b1425962 | Label: Knowledge Base
+ID: 6ea479c1-09ce-4394-87dd-349d2db4fc96 | Label: Help Center
+ID: 9503b60a-7e33-4645-9984-dd509d69d5db | Label: Out of Office
+ID: c61a733d-08c1-4258-b42d-c23a270503c0 | Label: Settings
+ID: a06dee5b-da84-4da8-9754-a2e4045a5d3d | Label: Escalated Tickets
+ID: 622530d7-8452-4728-83ca-6e6997e202d4 | Label: My Dashbord
+ID: 8de8c832-4af2-4625-9158-3b13480c8513 | Label: Incidents
+ID: 13761d35-1654-4af8-ab7c-7d9fe8f9c898 | Label: Service Requests

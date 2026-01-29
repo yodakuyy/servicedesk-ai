@@ -1,0 +1,72 @@
+[
+  {
+    "email": "dedi.septiadi@modena.com",
+    "full_name": "Dedi Septiadi",
+    "role_id": 4,
+    "status": "Active",
+    "created_at": "2026-01-29T07:57:48.025424"
+  },
+  {
+    "email": "jeffri.junaidi@modena.com",
+    "full_name": "Jeffri Junaidi",
+    "role_id": 5,
+    "status": "Active",
+    "created_at": "2026-01-02T06:27:59.979911"
+  },
+  {
+    "email": "admin@xmail.com",
+    "full_name": "Admin Creative",
+    "role_id": 1,
+    "status": "Active",
+    "created_at": "2025-12-31T03:10:34.880797"
+  },
+  {
+    "email": "rezza.asmara@modena.com",
+    "full_name": "Rezza Panji Asmara",
+    "role_id": 2,
+    "status": "Active",
+    "created_at": "2025-12-30T10:38:52.153627"
+  },
+  {
+    "email": "meriza.putri@modena.com",
+    "full_name": "Meriza Putri",
+    "role_id": 3,
+    "status": "Active",
+    "created_at": "2025-12-30T10:37:54.326853"
+  },
+  {
+    "email": "Achmad.Kurnia@modena.com",
+    "full_name": "Achmad Fadil Kurnia",
+    "role_id": 3,
+    "status": "Active",
+    "created_at": "2025-12-30T10:37:11.319126"
+  },
+  {
+    "email": "adminhc@xmail.com",
+    "full_name": "Admin HCO",
+    "role_id": 1,
+    "status": "Active",
+    "created_at": "2025-12-23T07:50:06.66387"
+  },
+  {
+    "email": "oca.rosnalita@modena.com",
+    "full_name": "Oca Rosnalita",
+    "role_id": 2,
+    "status": "Active",
+    "created_at": "2025-12-23T07:39:26.613714"
+  },
+  {
+    "email": "ade.triyanto@modena.com",
+    "full_name": "Ade Triyanto",
+    "role_id": 3,
+    "status": "Active",
+    "created_at": "2025-12-23T02:02:35.137285"
+  },
+  {
+    "email": "ydf121991@gmail.com",
+    "full_name": "Yodakuyy",
+    "role_id": 4,
+    "status": "Active",
+    "created_at": "2025-12-16T02:59:53.058314"
+  }
+]

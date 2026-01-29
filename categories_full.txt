@@ -1,0 +1,24 @@
+--- MASTER TICKET CATEGORIES ---
+ID: 19205192-739a-46f4-9242-f19748d05408 | Name: ERP | Parent: d53c75dc-d224-4bd1-811c-d4dbd1422fd4
+ID: 5ef94de9-0668-46a2-950f-96117fca7280 | Name: SAP | Parent: 19205192-739a-46f4-9242-f19748d05408
+ID: 102d5c3d-15e6-4a70-be3e-5d9071556ef4 | Name: FPP | Parent: 660a7827-0b2e-44fd-9b10-aec65baf943e
+ID: 724c9a39-ad80-479c-a9d7-7e4ad9d449fc | Name: MORE 1.0 | Parent: 8b4ec244-653c-4451-aae8-d36c6b5ac47a
+ID: 665e2570-6578-4cc9-bbe6-31c8e698b507 | Name: MORE 2.0 | Parent: 8b4ec244-653c-4451-aae8-d36c6b5ac47a
+ID: fa5006a7-ea99-442b-9a05-d31e31eaf71a | Name: Hardware Issue | Parent: null
+ID: f0f5b003-2973-4411-9aa3-5244cd7d26e0 | Name: Microsoft Office 365 | Parent: null
+ID: d53c75dc-d224-4bd1-811c-d4dbd1422fd4 | Name: Software Apps | Parent: null
+ID: 660a7827-0b2e-44fd-9b10-aec65baf943e | Name: Finance Apps | Parent: d53c75dc-d224-4bd1-811c-d4dbd1422fd4
+ID: 8b4ec244-653c-4451-aae8-d36c6b5ac47a | Name: Sales Apps | Parent: d53c75dc-d224-4bd1-811c-d4dbd1422fd4
+ID: 99984705-52e5-4fda-bdb0-16852b911c98 | Name: Microsoft Teams | Parent: f0f5b003-2973-4411-9aa3-5244cd7d26e0
+ID: 212d5830-b7ad-4515-8578-a37261f9ba2b | Name: Change Request | Parent: null
+ID: 664739b9-b349-46cc-9093-b1664815619d | Name: Business Intelligence & Data Analytics | Parent: null
+ID: 1e59aa80-a5b4-4c94-b978-be4f63eb6819 | Name: Laptop / Desktop | Parent: 21d79bd8-a61b-4fd6-a3be-06ed9b6d89e3
+ID: a62a1952-0007-4597-8ae5-8ade7ce76213 | Name: Blank Screen / Hang | Parent: 1e59aa80-a5b4-4c94-b978-be4f63eb6819
+ID: 21d79bd8-a61b-4fd6-a3be-06ed9b6d89e3 | Name: IT Device | Parent: null
+ID: 399f2068-7c59-45fd-a196-dc2f3f893bec | Name: User Tidak Bisa Login SAP | Parent: 5ef94de9-0668-46a2-950f-96117fca7280
+ID: 4cc07f9d-986f-4641-9606-a97e923de599 | Name: Software Apps | Parent: null
+ID: 6a63ef4f-34da-4518-a6b6-944ada38d90e | Name: ERP | Parent: 4cc07f9d-986f-4641-9606-a97e923de599
+ID: a6a187f4-c684-4442-ba1a-92d0d5ddc904 | Name: SAP | Parent: 6a63ef4f-34da-4518-a6b6-944ada38d90e
+ID: 97e9bd91-6e5e-4911-8191-5bf2c4ff12a2 | Name: Open Block Account | Parent: a6a187f4-c684-4442-ba1a-92d0d5ddc904
+ID: debc4c4a-8628-4c94-887f-960332da31c0 | Name: MoRe 2.0 - Error Saat Submit | Parent: 665e2570-6578-4cc9-bbe6-31c8e698b507
+ID: 81aa4479-a6a3-4197-a138-0a0ac68182c3 | Name: MoRe 2.0 - Promo Tidak Muncul | Parent: 665e2570-6578-4cc9-bbe6-31c8e698b507

@@ -38,6 +38,8 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
 
     // User's department (Free text now)
     const [myDepartment, setMyDepartment] = useState('');
+    const [affectedUserId, setAffectedUserId] = useState<string | null>(null);
+    const [searchingUser, setSearchingUser] = useState(false);
 
     // Section 2: What's the problem?
     const [subject, setSubject] = useState('');
@@ -110,56 +112,118 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
         initData();
     }, []);
 
-    // Helper to determine Category & Service based on Issue Type
-    const getSystemClassification = (type: string) => {
+    // Search for Affected User by Email
+    useEffect(() => {
+        if (affectedUser === 'myself') {
+            setAffectedUserId(userProfile?.id || null);
+            return;
+        }
+
+        const searchUser = async () => {
+            if (!someoneElseDetails.email.includes('@')) return;
+
+            setSearchingUser(true);
+            try {
+                const { data, error } = await supabase
+                    .from('profiles')
+                    .select('id, full_name, department_id')
+                    .eq('email', someoneElseDetails.email)
+                    .single();
+
+                if (data) {
+                    setAffectedUserId(data.id);
+                    // Also auto-fill name if empty
+                    if (!someoneElseDetails.fullName) {
+                        setSomeoneElseDetails(prev => ({ ...prev, fullName: data.full_name }));
+                    }
+                } else {
+                    setAffectedUserId(null); // Not found, will be stored as guest/text info only
+                }
+            } catch (err) {
+                setAffectedUserId(null);
+            } finally {
+                setSearchingUser(false);
+            }
+        };
+
+        const timer = setTimeout(searchUser, 1000);
+        return () => clearTimeout(timer);
+    }, [someoneElseDetails.email, affectedUser, userProfile?.id]);
+
+    // Helper to determine Category & Service based on Content (Improved AI Simulation)
+    const getSystemClassification = (type: string, subject: string, description: string) => {
+        const text = `${subject} ${description}`.toLowerCase();
         let catKeyword = '';
         let svcKeyword = '';
 
+        // Broad type handling (still useful as a base filter)
         switch (type) {
-            case 'software':
-                catKeyword = 'software'; // Looks for category named 'Software'
-                svcKeyword = 'application'; // Looks for service with 'Application'
-                break;
-            case 'hardware':
-                catKeyword = 'hardware';
-                svcKeyword = 'computing'; // e.g., 'End User Computing'
-                break;
-            case 'network':
-                catKeyword = 'network';
-                svcKeyword = 'network';
-                break;
-            default:
-                catKeyword = 'access'; // Fallback
-                svcKeyword = 'general';
+            case 'software': catKeyword = 'software'; svcKeyword = 'application'; break;
+            case 'hardware': catKeyword = 'hardware'; svcKeyword = 'computing'; break;
+            case 'network': catKeyword = 'network'; svcKeyword = 'network'; break;
+            default: catKeyword = 'access'; svcKeyword = 'general';
         }
 
-        const category = categories.find(c => c.name.toLowerCase().includes(catKeyword)) || categories[0];
-        const service = services.find(s => s.name.toLowerCase().includes(svcKeyword)) || services[0];
+        // 1. IMPROVED CATEGORY MATCHING (Scoring System)
+        // We look for the most specific match in the master categories table
+        let bestCategory = null;
+        let highestScore = -1;
+
+        categories.forEach(cat => {
+            const catNameLower = cat.name.toLowerCase();
+            let score = 0;
+
+            // Broad Type Match (Base)
+            if (catNameLower.includes(catKeyword)) score += 5;
+
+            // Specific Keyword Match
+            // Split category name into words and check if they exist in user text
+            const catWords = catNameLower.split(/[\s-/]+/).filter(w => w.length > 2);
+            catWords.forEach(word => {
+                if (text.includes(word)) {
+                    score += 10;
+                    // Bonus for exact word match
+                    if (text.split(' ').includes(word)) score += 5;
+                }
+            });
+
+            if (score > highestScore) {
+                highestScore = score;
+                bestCategory = cat;
+            }
+        });
+
+        // 2. SERVICE MATCHING
+        const bestService = services.find(s => {
+            const svcNameLower = s.name.toLowerCase();
+            return text.includes(svcNameLower) || svcNameLower.includes(svcKeyword);
+        }) || services[0];
 
         return {
-            category_id: category?.id || null,
-            service_id: service?.id || null
+            category_id: bestCategory?.id || categories[0]?.id || null,
+            service_id: bestService?.id || services[0]?.id || null
         };
     };
 
     // Helper to determine Priority based on keywords (AI Simulation)
+    // Note: Values must match database enum: {low, medium, high, urgent}
     const calculatePriority = (subject: string, description: string) => {
         const text = `${subject} ${description}`.toLowerCase();
 
-        // High Priority Keywords
+        // Urgent Priority Keywords
         if (text.includes('urgent') || text.includes('critical') || text.includes('system down') ||
             text.includes('mati total') || text.includes('emergency') || text.includes('dead')) {
-            return 'High';
+            return 'urgent';
         }
 
-        // Medium Priority Keywords
+        // High Priority Keywords
         if (text.includes('error') || text.includes('unable') || text.includes('fail') ||
             text.includes('cant') || text.includes('cannot') || text.includes('slow') || text.includes('lambat')) {
-            return 'Medium';
+            return 'high';
         }
 
-        // Default to Low for questions/requests
-        return 'Low';
+        // Default to medium for general issues
+        return 'medium';
     };
 
     // AI Analysis Simulation (Runs when description changes) - used for Insights
@@ -218,13 +282,19 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
             // B. Hybrid Search: Broad Fetch -> Smart Rank
             const queryParts = keywords.map(w => `title.ilike.%${w}%,summary.ilike.%${w}%`).join(',');
 
-            const { data: candidates } = await supabase
+            const { data: candidates, error } = await supabase
                 .from('kb_articles')
-                .select('id, title, summary, tags')
+                .select('id, title, summary')
                 .eq('status', 'published')
-                // .eq('visibility', 'public') // DISABLED
+                .eq('visibility', 'public') // Only show public articles to requesters
                 .or(queryParts)
                 .limit(20); // Fetch more candidates to rank them
+
+            if (error) {
+                console.error('KB Search Error:', error);
+                setSuggestedArticles([]);
+                return;
+            }
 
             if (!candidates || candidates.length === 0) {
                 setSuggestedArticles([]);
@@ -236,7 +306,6 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 let score = 0;
                 const titleLower = article.title.toLowerCase();
                 const summaryLower = (article.summary || '').toLowerCase();
-                const tags = (article.tags || []).map((t: string) => t.toLowerCase());
 
                 keywords.forEach(word => {
                     // Title Match (High Priority)
@@ -246,9 +315,6 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
 
                     // Summary Match (Medium)
                     if (summaryLower.includes(word)) score += 5;
-
-                    // Tag Match (High Priority)
-                    if (tags.some((t: string) => t.includes(word))) score += 8;
                 });
 
                 return { ...article, score };
@@ -256,7 +322,6 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
 
             // D. Sort & Filter
             const filteredResults = scoredResults
-                // .filter(item => item.score >= 5) // DISABLED
                 .sort((a, b) => b.score - a.score)
                 .slice(0, 5); // Take top 5
 
@@ -306,7 +371,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
             }
 
             // Determine Classification (Category & Service)
-            const { category_id, service_id } = getSystemClassification(issueType);
+            const { category_id, service_id } = getSystemClassification(issueType, subject, description);
 
             // Determine Priority (AI Simulation)
             const calculatedPriority = calculatePriority(subject, description);
@@ -314,29 +379,36 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
             // Generate Auto Tags from Content
             const autoTags = generateAutoTags(subject + ' ' + description);
 
-            // Prepare Description
+            // Prepare Description with beautiful Alert-style info for Requested For
             let finalDescription = description;
             if (affectedUser === 'someone_else') {
-                finalDescription = `**Reported on behalf of:** ${someoneElseDetails.fullName} (${someoneElseDetails.email})\n` +
-                    (someoneElseDetails.department ? `**Department:** ${someoneElseDetails.department}\n` : '') +
-                    `\n----------------------------------------\n\n` +
-                    description;
+                const infoBox = `
+<div style="background-color: #fefce8; border: 1px solid #fef08a; border-radius: 12px; padding: 16px; margin-bottom: 20px; font-family: sans-serif;">
+    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+        <span style="background-color: #eab308; color: white; padding: 2px 8px; border-radius: 6px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;">Reported on Behalf of</span>
+    </div>
+    <div style="font-size: 14px; font-weight: 700; color: #854d0e;">${someoneElseDetails.fullName}</div>
+    <div style="font-size: 12px; color: #a16207; opacity: 0.8;">${someoneElseDetails.email}</div>
+    ${someoneElseDetails.department ? `<div style="font-size: 11px; margin-top: 4px; padding-top: 4px; border-top: 1px solid #fef08a; color: #a16207;">Dept: <b>${someoneElseDetails.department}</b></div>` : ''}
+</div>
+`;
+                finalDescription = infoBox + description;
             }
 
             // 1. Create Ticket in DB
             const ticketPayload = {
                 subject: subject,
                 description: finalDescription,
-                tags: autoTags, // Auto-generated keywords for future AI similarity search
+                tags: autoTags, // Auto-generated keywords for AI similarity search
                 status_id: openStatusId,
                 ticket_number: `INC-${Math.floor(Math.random() * 100000)}`,
-                priority: calculatedPriority, // Uses logic now
-                requester_id: userProfile?.id,
-                created_by: userProfile?.id,
+                priority: calculatedPriority,
+                requester_id: affectedUserId || userProfile?.id, // THE AFFECTED USER
+                created_by: userProfile?.id, // THE REPORTER
                 ticket_type: 'incident',
                 assignment_group_id: assignedGroupId,
-                category_id: category_id, // Auto-mapped
-                service_id: service_id,   // Auto-mapped
+                category_id: category_id,
+                service_id: service_id,
             };
 
             console.log("Submitting Ticket Payload:", ticketPayload); // Debug

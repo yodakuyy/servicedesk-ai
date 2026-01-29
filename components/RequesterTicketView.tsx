@@ -412,8 +412,12 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                         <div className="flex items-center gap-2 mb-1">
                                             <span className="text-xs font-bold text-slate-700">{msg.sender?.full_name || 'Support Agent'}</span>
                                             <span className="text-[10px] text-slate-400 font-medium">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                            {msg.sender_role !== 'requester' && (
-                                                <span className="bg-indigo-50 text-indigo-600 border border-indigo-100 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                            {msg.sender_role === 'requester' ? (
+                                                <span className="bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                                    Requester
+                                                </span>
+                                            ) : (
+                                                <span className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
                                                     Agent
                                                 </span>
                                             )}
