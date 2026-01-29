@@ -99,32 +99,76 @@ const LoginSection: React.FC<LoginSectionProps> = ({ onLogin }) => {
       console.error('Error fetching role menu permissions:', roleMenuError);
     }
 
-    // Fetch menus
+    // Fetch user-specific menu permissions (CUSTOM overrides)
+    const { data: userMenuPerms, error: userMenuError } = await supabase
+      .from('user_menu_permissions')
+      .select('menu_key, can_view, can_create, can_update, can_delete')
+      .eq('user_id', profile.id);
+
+    if (userMenuError) {
+      console.error('Error fetching user menu permissions:', userMenuError);
+    }
+
+    console.log('=== PERMISSIONS DATA ===');
+    console.log('Role Menu Permissions:', roleMenuPerms);
+    console.log('User Menu Permissions (CUSTOM):', userMenuPerms);
+
+    // Fetch menus with order
     const { data: menus, error: menusError } = await supabase
       .from('menus')
-      .select('*');
+      .select('*')
+      .order('order_no', { ascending: true });
 
     if (menusError) {
       console.error('Error fetching menus:', menusError);
     }
 
-    // Build accessible menus for this role
-    const accessibleMenus = (roleMenuPerms || [])
+    // Merge permissions: User-specific (CUSTOM) overrides Role-based
+    // First, create a map of all menu permissions starting with role permissions
+    const permissionsMap = new Map<string, any>();
+
+    // Add role permissions first (using menu_id)
+    (roleMenuPerms || []).forEach(perm => {
+      permissionsMap.set(String(perm.menu_id), {
+        ...perm,
+        menu_id: perm.menu_id,
+        source: 'ROLE'
+      });
+    });
+
+    // Override with user-specific permissions (CUSTOM) - using menu_key
+    // menu_key in user_menu_permissions corresponds to menu.id in menus table
+    (userMenuPerms || []).forEach(perm => {
+      const menuKey = String(perm.menu_key);
+      const existing = permissionsMap.get(menuKey);
+      permissionsMap.set(menuKey, {
+        ...perm,
+        menu_id: perm.menu_key, // Normalize to menu_id for consistency
+        sort_order: existing?.sort_order || 0,
+        source: 'CUSTOM'
+      });
+    });
+
+    // Build accessible menus - only include menus with can_view permission
+    const accessibleMenus = Array.from(permissionsMap.values())
+      .filter(perm => perm.can_view === true)
       .map(perm => {
-        const menu = (menus || []).find(m => String(m.id) === String(perm.menu_id));
+        const menuId = perm.menu_id || perm.menu_key;
+        const menu = (menus || []).find(m => String(m.id) === String(menuId) || String(m.key) === String(menuId));
         return {
-          id: perm.menu_id,
+          id: menuId,
           name: menu?.label || menu?.name || menu?.menu_name || 'Unknown',
           can_view: perm.can_view,
           can_create: perm.can_create,
           can_update: perm.can_update,
           can_delete: perm.can_delete,
-          sort_order: perm.sort_order || 0
+          sort_order: perm.sort_order || menu?.order_no || 0,
+          source: perm.source
         };
       })
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 
-    console.log('=== ACCESSIBLE MENUS WITH SORT ORDER ===');
+    console.log('=== ACCESSIBLE MENUS (MERGED) ===');
     console.log(JSON.stringify(accessibleMenus, null, 2));
 
     // Simpan session + profile + accessible menus
@@ -259,6 +303,22 @@ const LoginSection: React.FC<LoginSectionProps> = ({ onLogin }) => {
         >
           Login
         </button>
+
+        <div className="text-center mt-6">
+          <p className="text-sm text-gray-500">
+            First time here?{' '}
+            <button
+              type="button"
+              onClick={() => {
+                window.location.hash = '#kb-portal';
+                window.location.reload();
+              }}
+              className="font-medium text-brand-primary hover:text-brand-700 hover:underline"
+            >
+              Read the Getting Started Guide
+            </button>
+          </p>
+        </div>
       </form>
     </div>
   );

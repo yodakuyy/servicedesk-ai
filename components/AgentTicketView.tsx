@@ -11,6 +11,7 @@ import RichTextEditor from './RichTextEditor';
 
 interface AgentTicketViewProps {
     userProfile?: any;
+    initialQueueFilter?: 'assigned' | 'submitted' | 'all';
 }
 
 const workflowMap: Record<string, string[]> = {
@@ -22,7 +23,7 @@ const workflowMap: Record<string, string[]> = {
     'Canceled': ['Open']
 };
 
-const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
+const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQueueFilter = 'assigned' }) => {
     // State
     const [tickets, setTickets] = useState<any[]>([]);
     const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
@@ -41,6 +42,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
     const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
     const [isAssigning, setIsAssigning] = useState(false);
     const [isTransferring, setIsTransferring] = useState(false);
+
+    // Queue Filter State - for switching between different ticket views
+    const [queueFilter, setQueueFilter] = useState<'assigned' | 'submitted' | 'all'>(initialQueueFilter);
 
     useEffect(() => {
         const fetchAgentGroups = async () => {
@@ -112,30 +116,68 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
 
     useEffect(() => {
         const fetchTickets = async () => {
-            if (agentGroups.length === 0) {
+            if (!userProfile?.id) {
                 setIsLoading(false);
                 return;
             }
+
             setIsLoading(true);
-            const { data } = await supabase
+
+            // Base query builder
+            let query = supabase
                 .from('tickets')
                 .select(`
-                    id, ticket_number, subject, priority, created_at, updated_at, assignment_group_id, status_id,
+                    id, ticket_number, subject, priority, created_at, updated_at, 
+                    assignment_group_id, status_id, assigned_to, requester_id,
                     ticket_statuses!fk_tickets_status (status_name),
                     requester:profiles!fk_tickets_requester (full_name),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name)
                 `)
-                .in('assignment_group_id', agentGroups)
                 .order('updated_at', { ascending: false });
+
+            // Apply filter based on queueFilter
+            if (queueFilter === 'assigned') {
+                // Tickets assigned to me (as agent)
+                query = query.eq('assigned_to', userProfile.id);
+            } else if (queueFilter === 'submitted') {
+                // Tickets I submitted (as requester)
+                query = query.eq('requester_id', userProfile.id);
+            } else if (queueFilter === 'all') {
+                // All tickets in my groups (for supervisors/admins)
+                if (agentGroups.length > 0) {
+                    query = query.in('assignment_group_id', agentGroups);
+                }
+            }
+
+            const { data, error } = await query;
+
+            if (error) {
+                console.error('Error fetching tickets:', error);
+                setIsLoading(false);
+                return;
+            }
 
             if (data) {
                 setTickets(data);
-                if (data.length > 0 && !selectedTicketId) setSelectedTicketId(data[0].id);
+                // Auto-select first ticket if none selected
+                if (data.length > 0 && !selectedTicketId) {
+                    setSelectedTicketId(data[0].id);
+                } else if (data.length === 0) {
+                    setSelectedTicketId(null);
+                    setSelectedTicket(null);
+                }
             }
             setIsLoading(false);
         };
-        if (agentGroups.length > 0) fetchTickets();
-    }, [agentGroups]);
+
+        // Fetch based on filter type
+        if (queueFilter === 'all' && agentGroups.length === 0) {
+            // Wait for agentGroups to load for 'all' filter
+            return;
+        }
+
+        fetchTickets();
+    }, [queueFilter, agentGroups, userProfile?.id]);
 
     useEffect(() => {
         if (!selectedTicketId) return;
@@ -750,6 +792,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
 
             {/* 1. LEFT PANEL - Ticket List */}
             <div className="w-[320px] flex flex-col border-r border-gray-200 bg-white">
+                {/* Search Bar */}
                 <div className="p-3 border-b border-gray-100 flex items-center justify-between">
                     <div className="relative flex-1">
                         <Search className="absolute left-2.5 top-2.5 text-gray-400" size={14} />
@@ -757,37 +800,117 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile }) => {
                     </div>
                 </div>
 
+                {/* Queue Filter Tabs */}
+                <div className="flex border-b border-gray-100 bg-gray-50/50">
+                    <button
+                        onClick={() => setQueueFilter('assigned')}
+                        className={`flex-1 py-2.5 text-xs font-semibold transition-colors relative ${queueFilter === 'assigned'
+                            ? 'text-blue-600 bg-white'
+                            : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
+                            }`}
+                    >
+                        <span className="flex items-center justify-center gap-1.5">
+                            <User size={12} />
+                            Assigned
+                        </span>
+                        {queueFilter === 'assigned' && (
+                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
+                        )}
+                    </button>
+                    <button
+                        onClick={() => setQueueFilter('submitted')}
+                        className={`flex-1 py-2.5 text-xs font-semibold transition-colors relative ${queueFilter === 'submitted'
+                            ? 'text-blue-600 bg-white'
+                            : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
+                            }`}
+                    >
+                        <span className="flex items-center justify-center gap-1.5">
+                            <FileText size={12} />
+                            My Tickets
+                        </span>
+                        {queueFilter === 'submitted' && (
+                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
+                        )}
+                    </button>
+                    <button
+                        onClick={() => setQueueFilter('all')}
+                        className={`flex-1 py-2.5 text-xs font-semibold transition-colors relative ${queueFilter === 'all'
+                            ? 'text-blue-600 bg-white'
+                            : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
+                            }`}
+                    >
+                        <span className="flex items-center justify-center gap-1.5">
+                            <List size={12} />
+                            All
+                        </span>
+                        {queueFilter === 'all' && (
+                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
+                        )}
+                    </button>
+                </div>
+
+                {/* Ticket Count Badge */}
+                <div className="px-4 py-2 text-[11px] text-gray-500 bg-gray-50/30 border-b border-gray-50 flex justify-between items-center">
+                    <span>
+                        {queueFilter === 'assigned' && 'Tickets assigned to me'}
+                        {queueFilter === 'submitted' && 'Tickets I submitted'}
+                        {queueFilter === 'all' && 'All team tickets'}
+                    </span>
+                    <span className="font-bold text-blue-600">{tickets.length}</span>
+                </div>
+
+                {/* Ticket List */}
                 <div className="flex-1 overflow-y-auto">
-                    {tickets.map(ticket => (
-                        <div
-                            key={ticket.id}
-                            onClick={() => setSelectedTicketId(ticket.id)}
-                            className={`px-4 py-3 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedTicketId === ticket.id ? 'bg-blue-50/50' : ''}`}
-                        >
-                            <div className="flex justify-between items-start mb-1">
-                                <div className="flex items-center gap-2">
-                                    <div className={`w-2 h-2 rounded-full ${ticket.priority === 'High' ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]'}`} />
-                                    <span className="font-bold text-xs text-blue-600">{ticket.ticket_number}</span>
-                                </div>
-                                <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">4m ago</span>
-                            </div>
-                            <h4 className="text-[13px] font-semibold text-gray-700 line-clamp-1 mb-1 leading-snug">
-                                {ticket.subject}
-                            </h4>
-                            <div className="flex justify-between items-center text-[11px] font-medium">
-                                <span className="text-gray-400 truncate max-w-[120px]">{ticket.requester?.full_name || 'Anonymous'}</span>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-red-500 font-bold tracking-tighter text-[10px]">00:14:21</span>
-                                </div>
-                            </div>
-                            <div className="flex justify-between items-center mt-1.5">
-                                <div className="px-1.5 py-0.5 bg-slate-50 border border-slate-100 rounded text-[9px] font-black text-slate-500 uppercase tracking-widest">
-                                    PIC: {ticket.assigned_agent?.full_name || 'UNASSIGNED'}
-                                </div>
-                                <div className="text-[10px] text-gray-400 italic">{ticket.ticket_statuses?.status_name}</div>
-                            </div>
+                    {isLoading ? (
+                        <div className="flex items-center justify-center py-12">
+                            <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
                         </div>
-                    ))}
+                    ) : tickets.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                            <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                                {queueFilter === 'assigned' && <User size={20} className="text-gray-400" />}
+                                {queueFilter === 'submitted' && <FileText size={20} className="text-gray-400" />}
+                                {queueFilter === 'all' && <List size={20} className="text-gray-400" />}
+                            </div>
+                            <h4 className="text-sm font-semibold text-gray-700 mb-1">No tickets found</h4>
+                            <p className="text-xs text-gray-500">
+                                {queueFilter === 'assigned' && 'No tickets assigned to you yet'}
+                                {queueFilter === 'submitted' && 'You haven\'t submitted any tickets'}
+                                {queueFilter === 'all' && 'No tickets in your team queue'}
+                            </p>
+                        </div>
+                    ) : (
+                        tickets.map(ticket => (
+                            <div
+                                key={ticket.id}
+                                onClick={() => setSelectedTicketId(ticket.id)}
+                                className={`px-4 py-3 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedTicketId === ticket.id ? 'bg-blue-50/50' : ''}`}
+                            >
+                                <div className="flex justify-between items-start mb-1">
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-2 h-2 rounded-full ${ticket.priority === 'High' ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]'}`} />
+                                        <span className="font-bold text-xs text-blue-600">{ticket.ticket_number}</span>
+                                    </div>
+                                    <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">4m ago</span>
+                                </div>
+                                <h4 className="text-[13px] font-semibold text-gray-700 line-clamp-1 mb-1 leading-snug">
+                                    {ticket.subject}
+                                </h4>
+                                <div className="flex justify-between items-center text-[11px] font-medium">
+                                    <span className="text-gray-400 truncate max-w-[120px]">{ticket.requester?.full_name || 'Anonymous'}</span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-red-500 font-bold tracking-tighter text-[10px]">00:14:21</span>
+                                    </div>
+                                </div>
+                                <div className="flex justify-between items-center mt-1.5">
+                                    <div className="px-1.5 py-0.5 bg-slate-50 border border-slate-100 rounded text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                                        PIC: {ticket.assigned_agent?.full_name || 'UNASSIGNED'}
+                                    </div>
+                                    <div className="text-[10px] text-gray-400 italic">{ticket.ticket_statuses?.status_name}</div>
+                                </div>
+                            </div>
+                        ))
+                    )}
                 </div>
             </div>
 

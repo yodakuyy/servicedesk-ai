@@ -135,7 +135,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     portal: false
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'service-requests' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'access-policy'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'access-policy'>('dashboard');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile' | 'user-dashboard'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
@@ -192,6 +192,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           return orderA - orderB;
         });
         setAccessibleMenus(sortedMenus);
+        console.log('Dashboard: Loaded Accessible Menus:', sortedMenus);
 
         // Set default view logic: Priority to Dashboard
         const hasDashboard = parsedMenus.some((m: any) => m.name === 'Dashboard');
@@ -199,19 +200,37 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           setCurrentView('dashboard');
         } else if (parsedMenus.length > 0) {
           // Fallback to first menu if Dashboard not available
-          const firstMenu = parsedMenus[0];
+          // Aggressive Normalization Map (Lowercase + Alphanumeric only)
           const menuViewMap: { [key: string]: any } = {
-            'Dashboard': 'dashboard',
-            'User Tickets': 'user-dashboard',
-            'All Incidents': 'incidents',
-            'User Incidents': 'my-tickets', // Maps to UserTicketList (User Incidents data)
-            'Out of Office': 'outofoffice',
-            'Knowledge Base': 'knowledge',
-            'Help Center': 'help-center',
-            'My Tickets': 'user-incidents', // Empty placeholder
-            'Service Requests': 'service-requests', // Empty placeholder
+            'dashboard': 'dashboard',
+
+            'usertickets': 'my-dashboard',
+            'mydashboard': 'my-dashboard',
+            'mydashbord': 'my-dashboard', // Typo support
+
+            'allincidents': 'incidents',
+
+            'userincidents': 'my-incidents',
+            'myincidents': 'my-incidents',
+            'mytickets': 'my-incidents',
+
+            'outofoffice': 'outofoffice',
+
+            'knowledgebase': 'knowledge',
+
+            'helpcenter': 'help-center',
+
+            'servicerequests': 'my-service-request',
+            'myservicerequest': 'my-service-request', // Specific
+            'myrequests': 'my-service-request',
+            'allservicerequests': 'service-requests', // "All" view
+
+            'escalatedtickets': 'escalated-tickets',
+            'settings': 'settings'
           };
-          const defaultView = menuViewMap[firstMenu.name];
+
+          const firstMenuName = (parsedMenus[0]?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const defaultView = menuViewMap[firstMenuName];
           if (defaultView) {
             setCurrentView(defaultView);
           }
@@ -360,7 +379,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   };
 
   const renderContent = () => {
-    if (currentView === 'user-dashboard') {
+    if (currentView === 'user-dashboard' || currentView === 'my-dashboard') {
       return (
         <UserDashboard
           onNavigate={(view: any) => setCurrentView(view)}
@@ -389,19 +408,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       return <OutOfOffice viewMode={currentView === 'team-availability' ? 'supervisor' : 'agent'} />;
     }
 
-    // User Incidents Data (Requester View Manager)
-    if (currentView === 'my-tickets') {
-      return <RequesterTicketManager userProfile={userProfile} initialTicketId={previousView === 'user-dashboard' ? selectedTicketId : null} />;
+    // User Incidents Data (Requester View using unified Agent View with 'submitted' filter)
+    if (currentView === 'my-tickets' || currentView === 'my-incidents') {
+      // Use the unified AgentTicketView with 'submitted' filter to show user's own tickets
+      return <AgentTicketView userProfile={userProfile} initialQueueFilter="submitted" />;
     }
 
     // NEW: Empty Placeholder for Service Requests
-    if (currentView === 'service-requests') {
+    // NEW: Empty Placeholder for Service Requests
+    if (currentView === 'service-requests' || currentView === 'my-service-request') {
       return (
         <div className="p-8 flex flex-col items-center justify-center h-full text-center">
           <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
             <Package size={32} className="text-indigo-400" />
           </div>
-          <h3 className="text-lg font-bold text-gray-800 mb-2">Service Requests</h3>
+          <h3 className="text-lg font-bold text-gray-800 mb-2">My Service Requests</h3>
           <p className="text-gray-500 max-w-md">This module is currently under development. You will be able to manage service requests here soon.</p>
         </div>
       );
@@ -808,47 +829,93 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           {/* Render menu berdasarkan accessible menus */}
           {accessibleMenus.length > 0 ? (
             accessibleMenus.map((menu) => {
-              // Map menu names to views
+              // Map menu names to views - Complete mapping for all menus
               const menuViewMap: { [key: string]: any } = {
-                'Dashboard': 'dashboard',
-                'User Tickets': 'user-dashboard',
-                'All Incidents': 'incidents',
-                'User Incidents': 'my-tickets', // INI UNTUK DATA INCIDENT LIST (User Dashboard)
-                'Out of Office': 'outofoffice',
-                'Knowledge Base': 'knowledge',
-                'Help Center': 'help-center',
-                'My Tickets': 'user-incidents', // Empty state
-                'Service Requests': 'service-requests', // Empty state
-                'Escalated Tickets': 'escalated-tickets', // NEW
+                'dashboard': 'dashboard',
+                'usertickets': 'user-dashboard',
+
+                // Incidents (unified view with tabs)
+                'incidents': 'incidents',           // NEW: merged menu name
+                'allincidents': 'incidents',        // Legacy: All Incidents
+
+                // My Dashboard (Requester view)
+                'mydashboard': 'my-dashboard',
+                'mydashbord': 'my-dashboard', // Typo support
+
+                // My Incidents (Requester's own incidents - now uses unified view)
+                'myincidents': 'my-incidents',
+                'userincidents': 'my-incidents',
+                'mytickets': 'my-incidents',
+
+                // Service Requests (unified view with tabs)
+                'servicerequests': 'service-requests',      // NEW: merged menu name
+                'allservicerequests': 'service-requests',   // Legacy: All Service Requests
+
+                // My Service Request (now uses unified view)
+                'myservicerequest': 'my-service-request',
+                'myservicerequests': 'my-service-request',
+
+                // Other menus
+                'outofoffice': 'outofoffice',
+                'knowledgebase': 'knowledge',
+                'helpcenter': 'help-center',
+                'escalatedtickets': 'escalated-tickets',
+                'settings': 'settings', // Settings handled separately but include for completeness
               };
 
-              const view = menuViewMap[menu.name];
-              if (!view) return null;
+              // Normalize Name for Lookup (Remove spaces, special chars, lowercase)
+              const normalizedName = menu.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+              // Skip Settings here - it's handled separately below
+              if (normalizedName === 'settings') {
+                return null;
+              }
+
+              // Lookup View
+              let view = menuViewMap[normalizedName];
+
+              if (!view) {
+                console.warn(`Dashboard: Skipping unmapped menu item: "${menu.name}" (Normalized: "${normalizedName}")`);
+                return null;
+              }
 
               // Determine badge count
               let badgeCount = '';
-              if (menu.name === 'My Tickets') badgeCount = '5';
-              if (menu.name === 'User Incidents') badgeCount = '2';
-              if (menu.name === 'Service Requests') badgeCount = '3';
-              if (menu.name === 'Escalated Tickets') badgeCount = '1';
+              if (normalizedName.includes('myincidents') || normalizedName.includes('userincidents')) badgeCount = '2';
+              if (normalizedName.includes('servicerequest')) badgeCount = '3';
+              if (normalizedName.includes('escalated')) badgeCount = '1';
+
+              // Label Normalizer (Fix Typos & Format Keys)
+              let displayLabel = menu.name;
+              if (normalizedName === 'mydashboard' || normalizedName === 'mydashbord') displayLabel = 'My Dashboard';
+              if (normalizedName === 'myincidents' || normalizedName === 'userincidents') displayLabel = 'My Incidents';
+              if (normalizedName === 'myservicerequest' || normalizedName === 'myservicerequests') displayLabel = 'My Service Request';
+              if (normalizedName === 'allincidents' || normalizedName === 'incidents') displayLabel = 'Incidents';
+              if (normalizedName === 'knowledgebase') displayLabel = 'Knowledge Base';
+              if (normalizedName === 'helpcenter') displayLabel = 'Help Center';
+              if (normalizedName === 'outofoffice') displayLabel = 'Out of Office';
+              if (normalizedName === 'escalatedtickets') displayLabel = 'Escalated Tickets';
+              if (normalizedName === 'allservicerequests' || normalizedName === 'servicerequests') displayLabel = 'Service Requests';
+
+              // Determine icon based on menu type
+              const getMenuIcon = () => {
+                if (normalizedName === 'dashboard') return LayoutDashboard;
+                if (normalizedName === 'mydashboard' || normalizedName === 'mydashbord' || normalizedName === 'usertickets') return User;
+                if (normalizedName === 'allincidents') return Ticket;
+                if (normalizedName.includes('incidents') || normalizedName.includes('mytickets')) return FileText;
+                if (normalizedName.includes('office')) return CalendarOff;
+                if (normalizedName.includes('knowledge')) return Book;
+                if (normalizedName.includes('help')) return BookOpen;
+                if (normalizedName.includes('request')) return Package;
+                if (normalizedName.includes('escalated')) return TrendingUp;
+                return undefined;
+              };
 
               return (
                 <SidebarItem
                   key={menu.id}
-                  icon={
-                    menu.name === 'Dashboard' ? LayoutDashboard :
-                      menu.name === 'User Tickets' ? User :
-                        menu.name === 'All Incidents' ? Ticket :
-                          menu.name === 'User Incidents' ? FileText :
-                            menu.name === 'Out of Office' ? CalendarOff :
-                              menu.name === 'Knowledge Base' ? Book :
-                                menu.name === 'Help Center' ? BookOpen :
-                                  menu.name === 'My Tickets' ? FileText :
-                                    menu.name === 'Service Requests' ? Package :
-                                      menu.name === 'Escalated Tickets' ? TrendingUp :
-                                        undefined
-                  }
-                  label={menu.name}
+                  icon={getMenuIcon()}
+                  label={displayLabel}
                   badge={badgeCount}
                   active={currentView === view}
                   onClick={() => setCurrentView(view)}

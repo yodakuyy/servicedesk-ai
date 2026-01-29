@@ -166,6 +166,36 @@ const RequesterKBPortal: React.FC = () => {
         }
     };
 
+    const fetchArticlesByType = async (type: string) => {
+        setSearchLoading(true);
+        try {
+            const { data } = await supabase
+                .from('kb_articles')
+                .select(`
+                    id, title, summary, content, category_id, updated_at,
+                    kb_categories!inner(name)
+                `)
+                .eq('visibility', 'public')
+                .eq('status', 'published')
+                .eq('article_type', type)
+                .order('title', { ascending: true });
+
+            if (data) {
+                const articlesWithCategory = data.map((a: any) => ({
+                    ...a,
+                    category_name: a.kb_categories?.name
+                }));
+                setArticles(articlesWithCategory);
+                // Use a special prefix to indicate type-based selection
+                setSelectedCategory('type:' + type);
+            }
+        } catch (error) {
+            console.error('Error fetching articles by type:', error);
+        } finally {
+            setSearchLoading(false);
+        }
+    };
+
     const fetchArticlesByCategory = async (categoryId: string) => {
         setSearchLoading(true);
         try {
@@ -514,6 +544,60 @@ const RequesterKBPortal: React.FC = () => {
                 {/* Categories Section */}
                 {!searchQuery && !selectedCategory && (
                     <>
+                        {/* 🌟 Quick Help Section */}
+                        <div className="mb-12">
+                            <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+                                <Sparkles size={22} className="text-indigo-600" />
+                                Quick Help
+                            </h2>
+                            <div className="grid md:grid-cols-3 gap-6">
+                                {/* Getting Started */}
+                                <div
+                                    onClick={() => fetchArticlesByType('getting-started')}
+                                    className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl p-6 text-white cursor-pointer hover:scale-105 transition-transform shadow-lg shadow-blue-500/20 group relative overflow-hidden"
+                                >
+                                    <div className="absolute top-0 right-0 p-4 opacity-10">
+                                        <BookOpen size={100} />
+                                    </div>
+                                    <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform relative z-10">
+                                        <BookOpen size={24} className="text-white" />
+                                    </div>
+                                    <h3 className="text-xl font-bold mb-2 relative z-10">Getting Started</h3>
+                                    <p className="text-blue-100 text-sm relative z-10">New to Service Desk? Learn the basics of how to use the portal.</p>
+                                </div>
+
+                                {/* System How-To */}
+                                <div
+                                    onClick={() => fetchArticlesByType('how-to')}
+                                    className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-6 text-white cursor-pointer hover:scale-105 transition-transform shadow-lg shadow-indigo-500/20 group relative overflow-hidden"
+                                >
+                                    <div className="absolute top-0 right-0 p-4 opacity-10">
+                                        <Folder size={100} />
+                                    </div>
+                                    <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform relative z-10">
+                                        <Folder size={24} className="text-white" />
+                                    </div>
+                                    <h3 className="text-xl font-bold mb-2 relative z-10">System How-To</h3>
+                                    <p className="text-indigo-100 text-sm relative z-10">Step-by-step technical guides and tutorials.</p>
+                                </div>
+
+                                {/* FAQ */}
+                                <div
+                                    onClick={() => fetchArticlesByType('faq')}
+                                    className="bg-gradient-to-br from-purple-500 to-pink-600 rounded-2xl p-6 text-white cursor-pointer hover:scale-105 transition-transform shadow-lg shadow-purple-500/20 group relative overflow-hidden"
+                                >
+                                    <div className="absolute top-0 right-0 p-4 opacity-10">
+                                        <HelpCircle size={100} />
+                                    </div>
+                                    <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform relative z-10">
+                                        <HelpCircle size={24} className="text-white" />
+                                    </div>
+                                    <h3 className="text-xl font-bold mb-2 relative z-10">FAQ</h3>
+                                    <p className="text-purple-100 text-sm relative z-10">Frequently asked questions and answers.</p>
+                                </div>
+                            </div>
+                        </div>
+
                         {/* Browse by Category */}
                         <div className="mb-12">
                             <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
@@ -612,9 +696,15 @@ const RequesterKBPortal: React.FC = () => {
                         <p className="text-white/80 mb-6 max-w-xl mx-auto">
                             Our support team is ready to help you with any questions or issues
                         </p>
-                        <button className="inline-flex items-center gap-2 px-8 py-4 bg-white text-indigo-600 rounded-xl font-semibold hover:bg-gray-50 transition-colors shadow-lg">
+                        <button
+                            onClick={() => {
+                                window.location.hash = '';
+                                window.location.reload();
+                            }}
+                            className="inline-flex items-center gap-2 px-8 py-4 bg-white text-indigo-600 rounded-xl font-semibold hover:bg-gray-50 transition-colors shadow-lg"
+                        >
                             <Ticket size={20} />
-                            Create a Support Ticket
+                            Log In to Create Ticket
                         </button>
                     </div>
                 </div>

@@ -44,7 +44,7 @@ const SECTION_TYPE_MAP: { [key: string]: string } = {
 
 const HelpCenter: React.FC = () => {
     const [userRole, setUserRole] = useState<string | null>('requester');
-    const [view, setView] = useState<'home' | 'categories' | 'articles' | 'detail'>('home');
+    const [view, setView] = useState<'home' | 'categories' | 'articles' | 'detail' | 'faq'>('home');
 
     useEffect(() => {
         const checkUser = async () => {
@@ -70,6 +70,7 @@ const HelpCenter: React.FC = () => {
     const [articleSearchQuery, setArticleSearchQuery] = useState('');
     const [subCategories, setSubCategories] = useState<{ id: string; name: string }[]>([]);
     const [expandedSubCats, setExpandedSubCats] = useState<{ [key: string]: boolean }>({});
+    const [expandedFaq, setExpandedFaq] = useState<string | null>(null);
 
     // Global search functionality with debounce
     useEffect(() => {
@@ -121,6 +122,63 @@ const HelpCenter: React.FC = () => {
             setCategorySearchQuery('');
 
             try {
+                // Special handling for Getting Started: Fetch articles directly and show in Split View
+                if (articleType === 'getting-started') {
+                    setView('articles'); // Use split view directly
+
+                    const { data: articlesData } = await supabase
+                        .from('kb_articles')
+                        .select('*, kb_categories(name)')
+                        .eq('visibility', 'public')
+                        .eq('status', 'published')
+                        .eq('article_type', articleType)
+                        .order('title', { ascending: true });
+
+                    if (articlesData) {
+                        const formattedArticles = articlesData.map((a: any) => ({
+                            ...a,
+                            category_name: a.kb_categories?.name
+                        }));
+                        setArticles(formattedArticles);
+                        setCategories([]);
+
+                        // Set dummy category for the split view header
+                        setSelectedCategory({
+                            id: 'getting-started-section',
+                            name: 'Getting Started',
+                            description: 'Learn how to use the Service Desk efficiently.',
+                            article_count: articlesData.length
+                        });
+
+                        // Auto-select first article if available for better UX
+                        if (formattedArticles.length > 0) {
+                            setSelectedArticle(formattedArticles[0]);
+                        }
+                    }
+                    setLoading(false);
+                    return;
+                }
+
+                // Special handling for FAQ: Fetch articles directly and show in Accordion View
+                if (articleType === 'faq') {
+                    const { data: articlesData } = await supabase
+                        .from('kb_articles')
+                        .select('*')
+                        .eq('visibility', 'public')
+                        .eq('status', 'published')
+                        .eq('article_type', articleType)
+                        .order('title', { ascending: true });
+
+                    if (articlesData) {
+                        setArticles(articlesData);
+                        setCategories([]);
+                        setView('faq');
+                    }
+                    setLoading(false);
+                    return;
+                }
+
+                // Normal handling for other sections (aggregated by category)
                 // Fetch all categories with their parent info
                 const { data: allCategories } = await supabase
                     .from('kb_categories')
@@ -129,6 +187,7 @@ const HelpCenter: React.FC = () => {
                 // Fetch articles with this type
                 const { data: articlesData } = await supabase
                     .from('kb_articles')
+                    // Only need category_id for counting
                     .select('category_id')
                     .eq('visibility', 'public')
                     .eq('status', 'published')
@@ -355,13 +414,25 @@ const HelpCenter: React.FC = () => {
             setView('articles');
             setSelectedArticle(null);
         } else if (view === 'articles') {
-            setView('categories');
-            setSelectedCategory(null);
-            setArticles([]);
+            if (selectedSection === 'Getting Started') {
+                setView('home');
+                setSelectedSection(null);
+                setArticles([]);
+                setSelectedCategory(null);
+            } else {
+                setView('categories');
+                setSelectedCategory(null);
+                setArticles([]);
+            }
         } else if (view === 'categories') {
             setView('home');
             setSelectedSection(null);
             setCategories([]);
+            setCategorySearchQuery('');
+        } else if (view === 'faq') {
+            setView('home');
+            setSelectedSection(null);
+            setArticles([]);
             setCategorySearchQuery('');
         }
     };
@@ -605,7 +676,7 @@ const HelpCenter: React.FC = () => {
                             className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 transition-colors mb-4 text-sm"
                         >
                             <ArrowLeft size={16} />
-                            <span>Back to Categories</span>
+                            <span>{selectedSection === 'Getting Started' ? 'Back to Help Center' : 'Back to Categories'}</span>
                         </button>
                         <h2 className="font-bold text-gray-900 text-lg">{selectedCategory.name}</h2>
                         <p className="text-sm text-gray-500">{articles.length} articles</p>
@@ -825,6 +896,94 @@ const HelpCenter: React.FC = () => {
                                 <h3 className="text-lg font-semibold text-gray-900 mb-2">Select an article</h3>
                                 <p className="text-gray-500">Choose an article from the list to view its content</p>
                             </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    // FAQ View (Custom Accordion Layout)
+    if (view === 'faq' && selectedSection) {
+        const filteredFAQ = articles.filter(a =>
+            a.title.toLowerCase().includes(categorySearchQuery.toLowerCase()) ||
+            (a.summary && a.summary.toLowerCase().includes(categorySearchQuery.toLowerCase()))
+        );
+
+        return (
+            <div className="min-h-full bg-slate-50">
+                {/* Hero Header */}
+                <div className="bg-gradient-to-br from-purple-600 via-violet-600 to-indigo-600 px-6 py-12 text-white shadow-xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-12 opacity-10 transform translate-x-1/4 -translate-y-1/4">
+                        <HelpCircle size={300} />
+                    </div>
+
+                    <div className="relative max-w-3xl mx-auto">
+                        <button onClick={goBack} className="flex items-center gap-2 text-white/80 hover:text-white mb-8 transition-colors group">
+                            <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" /> Back to Help Center
+                        </button>
+
+                        <div className="text-center mb-8">
+                            <h1 className="text-4xl font-bold mb-4">Frequently Asked Questions</h1>
+                            <p className="text-purple-100 text-lg">Find quick answers to common questions about our services.</p>
+                        </div>
+
+                        {/* Search Local FAQ */}
+                        <div className="relative max-w-xl mx-auto">
+                            <Search size={20} className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input
+                                type="text"
+                                value={categorySearchQuery}
+                                onChange={(e) => setCategorySearchQuery(e.target.value)}
+                                placeholder="Search for questions..."
+                                className="w-full pl-12 pr-4 py-4 bg-white/95 backdrop-blur rounded-2xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-4 focus:ring-white/30 shadow-2xl transition-all text-lg"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                {/* Accordion Content */}
+                <div className="max-w-3xl mx-auto px-6 py-12 -mt-4 relative z-10">
+                    {filteredFAQ.length > 0 ? (
+                        <div className="space-y-4">
+                            {filteredFAQ.map((article) => {
+                                const isExpanded = expandedFaq === article.id;
+                                return (
+                                    <div key={article.id} className={`bg-white rounded-2xl transition-all duration-300 ${isExpanded ? 'shadow-xl ring-1 ring-purple-100 scale-[1.01]' : 'shadow-sm hover:shadow-md border border-gray-100'}`}>
+                                        <button
+                                            onClick={() => setExpandedFaq(isExpanded ? null : article.id)}
+                                            className="w-full px-6 py-5 flex items-start justify-between text-left gap-4"
+                                        >
+                                            <h3 className={`font-semibold text-lg leading-relaxed ${isExpanded ? 'text-purple-700' : 'text-gray-900'}`}>
+                                                {article.title}
+                                            </h3>
+                                            <div className={`mt-1 flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-300 ${isExpanded ? 'bg-purple-100 text-purple-600 rotate-180' : 'bg-gray-50 text-gray-400'}`}>
+                                                <ChevronDown size={20} />
+                                            </div>
+                                        </button>
+
+                                        {/* Answer Content */}
+                                        <div
+                                            className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}
+                                        >
+                                            <div className="px-8 pb-8 pt-0">
+                                                <div className="h-px bg-gradient-to-r from-transparent via-purple-100 to-transparent mb-6"></div>
+                                                <div className="prose prose-purple prose-sm max-w-none text-gray-600 leading-relaxed">
+                                                    <div dangerouslySetInnerHTML={{ __html: article.content.solution || article.content.problem || article.summary || 'No content provided.' }} />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="text-center py-16 bg-white rounded-3xl border border-gray-100 shadow-sm">
+                            <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Search size={24} className="text-gray-400" />
+                            </div>
+                            <h3 className="text-xl font-medium text-gray-900 mb-1">No matches found</h3>
+                            <p className="text-gray-500">Try searching for something else</p>
                         </div>
                     )}
                 </div>
