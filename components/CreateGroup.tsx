@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { X, Save, Loader2 } from 'lucide-react';
+import { X, Save, Loader2, Clock } from 'lucide-react';
 // @ts-ignore
 import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
 
@@ -30,6 +30,7 @@ const CreateGroup: React.FC<CreateGroupProps> = ({ isOpen, onCancel, onSuccess }
     const [supervisors, setSupervisors] = useState<User[]>([]);
     const [filteredSupervisors, setFilteredSupervisors] = useState<User[]>([]);
     const [businessHoursList, setBusinessHoursList] = useState<{ id: string, name: string }[]>([]);
+    const [slaPolicies, setSlaPolicies] = useState<any[]>([]);
     const [supervisorSearch, setSupervisorSearch] = useState('');
     const [showSupervisorDropdown, setShowSupervisorDropdown] = useState(false);
 
@@ -40,7 +41,8 @@ const CreateGroup: React.FC<CreateGroupProps> = ({ isOpen, onCancel, onSuccess }
         isActive: true,
         assignTasksFirst: false,
         businessHourId: '',
-        businessHourSchedule: undefined as any[] | undefined
+        businessHourSchedule: undefined as any[] | undefined,
+        slaPolicies: [] as any[] // Array of {id, name}
     });
 
     const [error, setError] = useState<string | null>(null);
@@ -55,7 +57,9 @@ const CreateGroup: React.FC<CreateGroupProps> = ({ isOpen, onCancel, onSuccess }
                 agentSupervisor: '',
                 isActive: true,
                 assignTasksFirst: false,
-                businessHourId: ''
+                businessHourId: '',
+                businessHourSchedule: undefined,
+                slaPolicies: []
             });
             setSupervisorSearch('');
             setShowSupervisorDropdown(false);
@@ -108,6 +112,10 @@ const CreateGroup: React.FC<CreateGroupProps> = ({ isOpen, onCancel, onSuccess }
             const { data: bhData } = await supabase.from('business_hours').select('id, name').order('name');
             if (bhData) setBusinessHoursList(bhData);
 
+            // Fetch SLA Policies
+            const { data: slaData } = await supabase.from('sla_policies').select('id, name, company_id').eq('is_active', true).order('name');
+            if (slaData) setSlaPolicies(slaData);
+
         } catch (err: any) {
             console.error('Error fetching options:', err);
             setError('Failed to load form options');
@@ -132,6 +140,23 @@ const CreateGroup: React.FC<CreateGroupProps> = ({ isOpen, onCancel, onSuccess }
         const ampm = h >= 12 ? 'PM' : 'AM';
         const displayHours = h % 12 || 12;
         return `${displayHours.toString().padStart(2, '0')}:${minutes} ${ampm}`;
+    };
+
+    const handleSlaSelect = (policyId: string) => {
+        const policy = slaPolicies.find(p => p.id === policyId);
+        if (policy && !formData.slaPolicies.some(p => p.id === policyId)) {
+            setFormData(prev => ({
+                ...prev,
+                slaPolicies: [...prev.slaPolicies, { id: policy.id, name: policy.name }]
+            }));
+        }
+    };
+
+    const handleSlaRemove = (policyId: string) => {
+        setFormData(prev => ({
+            ...prev,
+            slaPolicies: prev.slaPolicies.filter(p => p.id !== policyId)
+        }));
     };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -187,6 +212,30 @@ const CreateGroup: React.FC<CreateGroupProps> = ({ isOpen, onCancel, onSuccess }
                 });
 
             if (groupError) throw new Error(`Group error: ${groupError.message}`);
+
+            // Get new group ID (since insert doesn't return data by default in some configurations, we might need select)
+            const { data: newGroup, error: fetchError } = await supabase
+                .from('groups')
+                .select('id')
+                .eq('name', formData.groupName)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .single();
+
+            if (fetchError) throw fetchError;
+
+            // Insert SLA policies
+            if (formData.slaPolicies.length > 0) {
+                const slaInserts = formData.slaPolicies.map(p => ({
+                    group_id: newGroup.id,
+                    sla_policy_id: p.id
+                }));
+                const { error: slaError } = await supabase
+                    .from('group_sla_policies')
+                    .insert(slaInserts);
+                if (slaError) throw slaError;
+            }
+
             console.log('✅ Group created successfully');
 
             Swal.fire({
@@ -203,7 +252,9 @@ const CreateGroup: React.FC<CreateGroupProps> = ({ isOpen, onCancel, onSuccess }
                 agentSupervisor: '',
                 isActive: true,
                 assignTasksFirst: false,
-                businessHourId: ''
+                businessHourId: '',
+                businessHourSchedule: undefined,
+                slaPolicies: []
             });
             setSupervisorSearch('');
 
@@ -455,14 +506,44 @@ const CreateGroup: React.FC<CreateGroupProps> = ({ isOpen, onCancel, onSuccess }
                         </div>
 
                         {/* Choose Service-level Agreement */}
-                        <div className="space-y-1.5">
+                        <div className="space-y-3">
                             <label className="text-sm font-semibold text-gray-700">Choose Service-level Agreement:</label>
-                            <button
-                                type="button"
-                                className="w-full px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
+
+                            {/* Selected SLAs Tags */}
+                            {formData.slaPolicies.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                    {formData.slaPolicies.map(policy => (
+                                        <div key={policy.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-bold border border-indigo-100 shadow-sm">
+                                            <Clock size={12} />
+                                            <span>{policy.name}</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSlaRemove(policy.id)}
+                                                className="ml-1 hover:text-indigo-900 focus:outline-none transition-colors"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            <select
+                                name="slaPolicyId"
+                                value=""
+                                onChange={(e) => handleSlaSelect(e.target.value)}
+                                disabled={!formData.departmentId}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white shadow-sm disabled:bg-gray-50 disabled:text-gray-400"
                             >
-                                <span>+</span> Add SLA
-                            </button>
+                                <option value="" disabled>-- Add SLA Policy --</option>
+                                {slaPolicies
+                                    .filter(p => (!p.company_id || p.company_id === parseInt(formData.departmentId)) && !formData.slaPolicies.some(selected => selected.id === p.id))
+                                    .map((policy) => (
+                                        <option key={policy.id} value={policy.id}>
+                                            {policy.name}
+                                        </option>
+                                    ))}
+                            </select>
                         </div>
                     </div>
                 </form>

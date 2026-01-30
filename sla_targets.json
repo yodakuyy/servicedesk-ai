@@ -1,0 +1,162 @@
+[
+  {
+    "id": "768f9568-b734-486b-bd0a-c3249ee19bde",
+    "sla_policy_id": "6666b3fb-dd52-4fc1-98b1-6e0608a93d30",
+    "priority": "Urgent",
+    "response_time_minutes": 30,
+    "resolution_time_minutes": null,
+    "created_at": null,
+    "sla_type": "response",
+    "target_minutes": 30
+  },
+  {
+    "id": "87033dc8-eb44-4bd7-bffc-6c964b31e4ae",
+    "sla_policy_id": "6666b3fb-dd52-4fc1-98b1-6e0608a93d30",
+    "priority": "High",
+    "response_time_minutes": 60,
+    "resolution_time_minutes": null,
+    "created_at": null,
+    "sla_type": "response",
+    "target_minutes": 60
+  },
+  {
+    "id": "8db47177-d129-4f9c-9290-ef21ac2e86ed",
+    "sla_policy_id": "6666b3fb-dd52-4fc1-98b1-6e0608a93d30",
+    "priority": "Medium",
+    "response_time_minutes": 180,
+    "resolution_time_minutes": null,
+    "created_at": null,
+    "sla_type": "response",
+    "target_minutes": 180
+  },
+  {
+    "id": "761b4f6d-b967-42a5-8fed-6d2942162ad7",
+    "sla_policy_id": "6666b3fb-dd52-4fc1-98b1-6e0608a93d30",
+    "priority": "Low",
+    "response_time_minutes": 1440,
+    "resolution_time_minutes": null,
+    "created_at": null,
+    "sla_type": "response",
+    "target_minutes": 1440
+  },
+  {
+    "id": "f1cca5ff-6d44-4b3b-94ef-fa4735132f87",
+    "sla_policy_id": "6666b3fb-dd52-4fc1-98b1-6e0608a93d30",
+    "priority": "Urgent",
+    "response_time_minutes": 0,
+    "resolution_time_minutes": 240,
+    "created_at": null,
+    "sla_type": "resolution",
+    "target_minutes": 240
+  },
+  {
+    "id": "58bff282-5f95-4c99-bba7-81a52de30bbd",
+    "sla_policy_id": "6666b3fb-dd52-4fc1-98b1-6e0608a93d30",
+    "priority": "High",
+    "response_time_minutes": 0,
+    "resolution_time_minutes": 240,
+    "created_at": null,
+    "sla_type": "resolution",
+    "target_minutes": 240
+  },
+  {
+    "id": "f1abe2fb-f737-4083-a901-28491b6c871b",
+    "sla_policy_id": "6666b3fb-dd52-4fc1-98b1-6e0608a93d30",
+    "priority": "Medium",
+    "response_time_minutes": 0,
+    "resolution_time_minutes": 720,
+    "created_at": null,
+    "sla_type": "resolution",
+    "target_minutes": 720
+  },
+  {
+    "id": "41b402d3-5b7b-4c98-825d-0f5c6c48ae34",
+    "sla_policy_id": "6666b3fb-dd52-4fc1-98b1-6e0608a93d30",
+    "priority": "Low",
+    "response_time_minutes": 0,
+    "resolution_time_minutes": 720,
+    "created_at": null,
+    "sla_type": "resolution",
+    "target_minutes": 720
+  },
+  {
+    "id": "91c3e021-6a06-4cf8-b640-143594b7caf9",
+    "sla_policy_id": "dd63cdf1-e7b0-4089-a707-0d231e5f5b32",
+    "priority": "Urgent",
+    "response_time_minutes": 30,
+    "resolution_time_minutes": null,
+    "created_at": null,
+    "sla_type": "response",
+    "target_minutes": 30
+  },
+  {
+    "id": "fd293a36-1aec-447a-8261-adcf1ea1fbf0",
+    "sla_policy_id": "dd63cdf1-e7b0-4089-a707-0d231e5f5b32",
+    "priority": "High",
+    "response_time_minutes": 60,
+    "resolution_time_minutes": null,
+    "created_at": null,
+    "sla_type": "response",
+    "target_minutes": 60
+  },
+  {
+    "id": "3503116a-0731-4510-994d-312a99ee8a32",
+    "sla_policy_id": "dd63cdf1-e7b0-4089-a707-0d231e5f5b32",
+    "priority": "Medium",
+    "response_time_minutes": 180,
+    "resolution_time_minutes": null,
+    "created_at": null,
+    "sla_type": "response",
+    "target_minutes": 180
+  },
+  {
+    "id": "abc6794e-adb9-42fd-a273-6aac601f6239",
+    "sla_policy_id": "dd63cdf1-e7b0-4089-a707-0d231e5f5b32",
+    "priority": "Low",
+    "response_time_minutes": 1440,
+    "resolution_time_minutes": null,
+    "created_at": null,
+    "sla_type": "response",
+    "target_minutes": 1440
+  },
+  {
+    "id": "cc0d9b59-b508-4267-9db5-1f17e534b11f",
+    "sla_policy_id": "dd63cdf1-e7b0-4089-a707-0d231e5f5b32",
+    "priority": "Urgent",
+    "response_time_minutes": 0,
+    "resolution_time_minutes": 240,
+    "created_at": null,
+    "sla_type": "resolution",
+    "target_minutes": 240
+  },
+  {
+    "id": "5e67d83e-f719-4074-956f-14a6e790b56b",
+    "sla_policy_id": "dd63cdf1-e7b0-4089-a707-0d231e5f5b32",
+    "priority": "High",
+    "response_time_minutes": 0,
+    "resolution_time_minutes": 480,
+    "created_at": null,
+    "sla_type": "resolution",
+    "target_minutes": 480
+  },
+  {
+    "id": "f6215529-d39f-4b99-85d4-ed92b6f3cca2",
+    "sla_policy_id": "dd63cdf1-e7b0-4089-a707-0d231e5f5b32",
+    "priority": "Medium",
+    "response_time_minutes": 0,
+    "resolution_time_minutes": 720,
+    "created_at": null,
+    "sla_type": "resolution",
+    "target_minutes": 720
+  },
+  {
+    "id": "c4a2e45e-dca6-406a-b98d-6820de0083e3",
+    "sla_policy_id": "dd63cdf1-e7b0-4089-a707-0d231e5f5b32",
+    "priority": "Low",
+    "response_time_minutes": 0,
+    "resolution_time_minutes": 2400,
+    "created_at": null,
+    "sla_type": "resolution",
+    "target_minutes": 2400
+  }
+]

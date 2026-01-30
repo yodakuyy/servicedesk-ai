@@ -236,25 +236,58 @@ const EscalationRules: React.FC = () => {
         if (!validateForm()) return;
         setSaving(true);
         try {
-            const policyName = slaPolicies.find(p => p.id === formData.sla_policy_id)?.name;
+            const dataToSave: any = {
+                name: formData.name,
+                policy_id: formData.sla_policy_id,
+                sla_type: formData.sla_type,
+                trigger_type: formData.trigger_type,
+                trigger_value: formData.trigger_value,
+                actions: formData.actions,
+                notification_channels: formData.notification_channels,
+                notification_message: formData.notification_message,
+                is_active: formData.is_active
+            };
+
             if (selectedRule) {
-                setRules(rules.map(r => r.id === selectedRule.id ? { ...formData, id: selectedRule.id, sla_policy_name: policyName } : r));
+                const { error } = await supabase
+                    .from('sla_escalations')
+                    .update(dataToSave)
+                    .eq('id', selectedRule.id);
+                if (error) throw error;
             } else {
-                setRules([...rules, { ...formData, id: Date.now().toString(), sla_policy_name: policyName }]);
+                const { error } = await supabase
+                    .from('sla_escalations')
+                    .insert(dataToSave);
+                if (error) throw error;
             }
+
+            await fetchData();
             setView('list');
         } catch (error: any) {
-            alert('Error saving rule: ' + error.message);
+            console.error('Save Error:', error);
+            alert('Error saving rule: ' + (error.message || 'Check console for details'));
         } finally {
             setSaving(false);
         }
     };
 
-    const handleDelete = () => {
+    const handleDelete = async () => {
         if (!ruleToDelete) return;
-        setRules(rules.filter(r => r.id !== ruleToDelete.id));
-        setShowDeleteConfirm(false);
-        setRuleToDelete(null);
+        try {
+            const { error } = await supabase
+                .from('sla_escalations')
+                .delete()
+                .eq('id', ruleToDelete.id);
+
+            if (error) throw error;
+
+            setRules(rules.filter(r => r.id !== ruleToDelete.id));
+            setShowDeleteConfirm(false);
+            setRuleToDelete(null);
+        } catch (error: any) {
+            console.error('Delete Error:', error);
+            alert('Error deleting rule: ' + (error.message || 'Check console for details'));
+        }
     };
 
     const getTriggerLabel = (rule: EscalationRule) => {
@@ -285,7 +318,7 @@ const EscalationRules: React.FC = () => {
     // LIST VIEW
     if (view === 'list') {
         return (
-            <div className="p-8 max-w-7xl mx-auto">
+            <div className="p-8 pb-20 max-w-7xl mx-auto min-h-screen">
                 <div className="mb-8">
                     <h1 className="text-2xl font-bold text-gray-800">Escalation Rules</h1>
                     <p className="text-gray-500 mt-1">Configure automated actions when SLA thresholds are reached</p>
@@ -396,228 +429,236 @@ const EscalationRules: React.FC = () => {
 
     // EDITOR VIEW
     return (
-        <div className="p-8 max-w-4xl mx-auto">
-            <div className="flex items-center gap-4 mb-8">
-                <button onClick={() => setView('list')} className="p-2 hover:bg-gray-100 rounded-lg"><ArrowLeft size={20} className="text-gray-500" /></button>
-                <div>
-                    <h1 className="text-2xl font-bold text-gray-800">{selectedRule ? 'Edit Escalation Rule' : 'Create Escalation Rule'}</h1>
-                    <p className="text-gray-500 mt-1">Configure automated actions for SLA breaches</p>
-                </div>
-            </div>
-
-            <div className="space-y-6">
-                {/* Section 1: SLA Binding */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><span className="w-6 h-6 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">1</span>SLA Binding</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="md:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Rule Name <span className="text-red-500">*</span></label>
-                            <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${errors.name ? 'border-red-300' : 'border-gray-200'}`} placeholder="e.g. IT General - 80% Warning" />
-                            {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">SLA Policy <span className="text-red-500">*</span></label>
-                            <select value={formData.sla_policy_id} onChange={(e) => setFormData({ ...formData, sla_policy_id: e.target.value })}
-                                className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${errors.sla_policy_id ? 'border-red-300' : 'border-gray-200'}`}>
-                                <option value="">Select SLA Policy</option>
-                                {slaPolicies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                            </select>
-                            {errors.sla_policy_id && <p className="text-xs text-red-500 mt-1">{errors.sla_policy_id}</p>}
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">SLA Type</label>
-                            <div className="flex gap-3">
-                                {['response', 'resolution'].map(type => (
-                                    <label key={type} className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 border rounded-lg cursor-pointer transition-colors ${formData.sla_type === type ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 hover:bg-gray-50'}`}>
-                                        <input type="radio" name="sla_type" value={type} checked={formData.sla_type === type} onChange={() => setFormData({ ...formData, sla_type: type as any })} className="sr-only" />
-                                        <Clock size={16} /><span className="text-sm font-medium capitalize">{type}</span>
-                                    </label>
-                                ))}
-                            </div>
-                        </div>
-                        <div className="md:col-span-2">
-                            <label className="flex items-center gap-3 cursor-pointer">
-                                <button
-                                    type="button"
-                                    onClick={() => setFormData({ ...formData, is_active: !formData.is_active })}
-                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${formData.is_active ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-300 hover:bg-gray-400'}`}
-                                    title={formData.is_active ? 'Click to deactivate' : 'Click to activate'}
-                                >
-                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${formData.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
-                                </button>
-                                <span className="text-sm font-medium text-gray-700">Rule is {formData.is_active ? 'Active' : 'Inactive'}</span>
-                            </label>
-                        </div>
+        <div className="w-full bg-slate-50/50">
+            <div className="p-8 pb-64 max-w-4xl mx-auto">
+                <div className="flex items-center gap-4 mb-8">
+                    <button onClick={() => setView('list')} className="p-2 hover:bg-gray-100 rounded-lg"><ArrowLeft size={20} className="text-gray-500" /></button>
+                    <div>
+                        <h1 className="text-2xl font-bold text-gray-800">{selectedRule ? 'Edit Escalation Rule' : 'Create Escalation Rule'}</h1>
+                        <p className="text-gray-500 mt-1">Configure automated actions for SLA breaches</p>
                     </div>
                 </div>
 
-                {/* Section 2: Trigger Condition */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><span className="w-6 h-6 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">2</span>Trigger Condition</h2>
-                    <p className="text-sm text-gray-500 mb-4">When SLA reaches:</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Trigger Type</label>
-                            <div className="flex gap-3">
-                                <label className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 border rounded-lg cursor-pointer ${formData.trigger_type === 'percentage' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'}`}>
-                                    <input type="radio" name="trigger_type" checked={formData.trigger_type === 'percentage'} onChange={() => setFormData({ ...formData, trigger_type: 'percentage', trigger_value: 80 })} className="sr-only" />
-                                    <span className="text-sm font-medium">Percentage</span>
-                                </label>
-                                <label className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 border rounded-lg cursor-pointer ${formData.trigger_type === 'overdue_minutes' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'}`}>
-                                    <input type="radio" name="trigger_type" checked={formData.trigger_type === 'overdue_minutes'} onChange={() => setFormData({ ...formData, trigger_type: 'overdue_minutes', trigger_value: 30 })} className="sr-only" />
-                                    <span className="text-sm font-medium">Minutes Overdue</span>
+                <div className="space-y-6">
+                    {/* Section 1: SLA Binding */}
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                        <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><span className="w-6 h-6 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">1</span>SLA Binding</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="md:col-span-2">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Rule Name <span className="text-red-500">*</span></label>
+                                <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                    className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${errors.name ? 'border-red-300' : 'border-gray-200'}`} placeholder="e.g. IT General - 80% Warning" />
+                                {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">SLA Policy <span className="text-red-500">*</span></label>
+                                <select value={formData.sla_policy_id} onChange={(e) => setFormData({ ...formData, sla_policy_id: e.target.value })}
+                                    className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${errors.sla_policy_id ? 'border-red-300' : 'border-gray-200'}`}>
+                                    <option value="">Select SLA Policy</option>
+                                    {slaPolicies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                </select>
+                                {errors.sla_policy_id && <p className="text-xs text-red-500 mt-1">{errors.sla_policy_id}</p>}
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">SLA Type</label>
+                                <div className="flex gap-3">
+                                    {['response', 'resolution'].map(type => (
+                                        <label key={type} className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 border rounded-lg cursor-pointer transition-colors ${formData.sla_type === type ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+                                            <input type="radio" name="sla_type" value={type} checked={formData.sla_type === type} onChange={() => setFormData({ ...formData, sla_type: type as any })} className="sr-only" />
+                                            <Clock size={16} /><span className="text-sm font-medium capitalize">{type}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="md:col-span-2">
+                                <label className="flex items-center gap-3 cursor-pointer">
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData({ ...formData, is_active: !formData.is_active })}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${formData.is_active ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-300 hover:bg-gray-400'}`}
+                                        title={formData.is_active ? 'Click to deactivate' : 'Click to activate'}
+                                    >
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${formData.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
+                                    </button>
+                                    <span className="text-sm font-medium text-gray-700">Rule is {formData.is_active ? 'Active' : 'Inactive'}</span>
                                 </label>
                             </div>
                         </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Value</label>
-                            {formData.trigger_type === 'percentage' ? (
-                                <div className="flex gap-2">
-                                    {triggerPercentages.map(p => (
-                                        <button key={p} onClick={() => setFormData({ ...formData, trigger_value: p })}
-                                            className={`flex-1 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${formData.trigger_value === p ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                                            {p}%
-                                        </button>
-                                    ))}
+                    </div>
+
+                    {/* Section 2: Trigger Condition */}
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                        <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><span className="w-6 h-6 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">2</span>Trigger Condition</h2>
+                        <p className="text-sm text-gray-500 mb-4">When SLA reaches:</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Trigger Type</label>
+                                <div className="flex gap-3">
+                                    <label className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 border rounded-lg cursor-pointer ${formData.trigger_type === 'percentage' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'}`}>
+                                        <input type="radio" name="trigger_type" checked={formData.trigger_type === 'percentage'} onChange={() => setFormData({ ...formData, trigger_type: 'percentage', trigger_value: 80 })} className="sr-only" />
+                                        <span className="text-sm font-medium">Percentage</span>
+                                    </label>
+                                    <label className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 border rounded-lg cursor-pointer ${formData.trigger_type === 'overdue_minutes' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'}`}>
+                                        <input type="radio" name="trigger_type" checked={formData.trigger_type === 'overdue_minutes'} onChange={() => setFormData({ ...formData, trigger_type: 'overdue_minutes', trigger_value: 30 })} className="sr-only" />
+                                        <span className="text-sm font-medium">Minutes Overdue</span>
+                                    </label>
                                 </div>
-                            ) : (
-                                <div className="flex items-center gap-2">
-                                    <input type="number" min="1" value={formData.trigger_value} onChange={(e) => setFormData({ ...formData, trigger_value: parseInt(e.target.value) || 0 })}
-                                        className="w-24 px-3 py-2 border border-gray-200 rounded-lg" />
-                                    <span className="text-sm text-gray-500">minutes after SLA breach</span>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Value</label>
+                                {formData.trigger_type === 'percentage' ? (
+                                    <div className="flex gap-2">
+                                        {triggerPercentages.map(p => (
+                                            <button key={p} onClick={() => setFormData({ ...formData, trigger_value: p })}
+                                                className={`flex-1 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${formData.trigger_value === p ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                                                {p}%
+                                            </button>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <input type="number" min="1" value={formData.trigger_value} onChange={(e) => setFormData({ ...formData, trigger_value: parseInt(e.target.value) || 0 })}
+                                            className="w-24 px-3 py-2 border border-gray-200 rounded-lg" />
+                                        <span className="text-sm text-gray-500">minutes after SLA breach</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Section 3: Actions */}
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2"><span className="w-6 h-6 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">3</span>Actions</h2>
+                        </div>
+                        {errors.actions && <p className="text-xs text-red-500 mb-3">{errors.actions}</p>}
+
+                        {/* Action buttons */}
+                        <div className="flex flex-wrap gap-2 mb-4">
+                            {actionTypes.map(action => {
+                                const Icon = action.icon;
+                                return (
+                                    <button key={action.value} onClick={() => addAction(action.value)}
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition-colors">
+                                        <Icon size={14} />{action.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {/* Added actions */}
+                        {formData.actions.length === 0 ? (
+                            <div className="border-2 border-dashed border-gray-200 rounded-lg p-6 text-center">
+                                <Zap size={24} className="text-gray-300 mx-auto mb-2" />
+                                <p className="text-sm text-gray-500">No actions added. Click buttons above to add actions.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {formData.actions.map((action, idx) => {
+                                    const actionInfo = actionTypes.find(a => a.value === action.type);
+                                    const Icon = actionInfo?.icon || Zap;
+                                    return (
+                                        <div key={idx} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                                            <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                                <Icon size={16} className="text-indigo-600" />
+                                            </div>
+                                            <div className="flex-1">
+                                                <p className="text-sm font-medium text-gray-800">{actionInfo?.label}</p>
+                                                {action.type === 'notify_group' && (
+                                                    <select value={action.target_id || ''} onChange={(e) => updateAction(idx, 'target_id', e.target.value)} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                                                        <option value="">Select Group</option>
+                                                        {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                                                    </select>
+                                                )}
+                                                {action.type === 'notify_user' && (
+                                                    <select value={action.target_id || ''} onChange={(e) => updateAction(idx, 'target_id', e.target.value)} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                                                        <option value="">Select User</option>
+                                                        {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+                                                    </select>
+                                                )}
+                                                {action.type === 'change_priority' && (
+                                                    <select value={action.new_priority || ''} onChange={(e) => updateAction(idx, 'new_priority', e.target.value)} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                                                        <option value="">Select Priority</option>
+                                                        {priorities.map(p => <option key={p} value={p}>{p}</option>)}
+                                                    </select>
+                                                )}
+                                                {action.type === 'add_note' && (
+                                                    <textarea value={action.note_text || ''} onChange={(e) => updateAction(idx, 'note_text', e.target.value)} placeholder="Note text..." rows={2} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none" />
+                                                )}
+                                            </div>
+                                            <button onClick={() => removeAction(idx)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><X size={16} /></button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Section 4: Notification */}
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2"><span className="w-6 h-6 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">4</span>Notification</h2>
+                            <button onClick={() => setShowPreview(!showPreview)} className="text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"><Eye size={16} />Preview</button>
+                        </div>
+                        {errors.channels && <p className="text-xs text-red-500 mb-3">{errors.channels}</p>}
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Channels</label>
+                                <div className="flex gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={(e) => { e.preventDefault(); toggleChannel('in_app'); }}
+                                        className={`flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer transition-colors ${formData.notification_channels.includes('in_app') ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'}`}
+                                    >
+                                        <Bell size={16} /><span className="text-sm font-medium">In-App</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => { e.preventDefault(); toggleChannel('email'); }}
+                                        className={`flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer transition-colors ${formData.notification_channels.includes('email') ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'}`}
+                                    >
+                                        <Mail size={16} /><span className="text-sm font-medium">Email</span>
+                                    </button>
+                                    <div className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-lg opacity-50 cursor-not-allowed">
+                                        <MessageSquare size={16} /><span className="text-sm font-medium">Slack</span><span className="text-xs bg-gray-200 px-1.5 py-0.5 rounded">Soon</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Message Template</label>
+                                <textarea value={formData.notification_message} onChange={(e) => setFormData({ ...formData, notification_message: e.target.value })} rows={3}
+                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none" placeholder="Use {ticket_id}, {sla_status} as variables..." />
+                                <p className="text-xs text-gray-400 mt-1">Available: {'{ticket_id}'}, {'{sla_status}'}, {'{assignee}'}, {'{priority}'}</p>
+                            </div>
+
+                            {/* Preview */}
+                            {showPreview && (
+                                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                                    <p className="text-xs font-medium text-gray-500 uppercase mb-2">Preview</p>
+                                    <div className="bg-white rounded-lg p-3 border border-gray-100 shadow-sm">
+                                        <div className="flex items-start gap-3">
+                                            <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center"><AlertTriangle size={16} className="text-orange-600" /></div>
+                                            <div>
+                                                <p className="text-sm font-medium text-gray-800">SLA Escalation Alert</p>
+                                                <p className="text-sm text-gray-600 mt-1">{getPreviewMessage()}</p>
+                                                <p className="text-xs text-gray-400 mt-2">via {formData.notification_channels.join(', ')}</p>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
                         </div>
                     </div>
-                </div>
 
-                {/* Section 3: Actions */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2"><span className="w-6 h-6 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">3</span>Actions</h2>
+                    {/* Save */}
+                    <div className="flex justify-end gap-3 pt-4">
+                        <button onClick={() => setView('list')} className="px-6 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg border bg-white">Cancel</button>
+                        <button onClick={handleSave} disabled={saving} className="px-6 py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg flex items-center gap-2 disabled:opacity-50">
+                            {saving ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                            {saving ? 'Saving...' : 'Save Rule'}
+                        </button>
                     </div>
-                    {errors.actions && <p className="text-xs text-red-500 mb-3">{errors.actions}</p>}
-
-                    {/* Action buttons */}
-                    <div className="flex flex-wrap gap-2 mb-4">
-                        {actionTypes.map(action => {
-                            const Icon = action.icon;
-                            return (
-                                <button key={action.value} onClick={() => addAction(action.value)}
-                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition-colors">
-                                    <Icon size={14} />{action.label}
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    {/* Added actions */}
-                    {formData.actions.length === 0 ? (
-                        <div className="border-2 border-dashed border-gray-200 rounded-lg p-6 text-center">
-                            <Zap size={24} className="text-gray-300 mx-auto mb-2" />
-                            <p className="text-sm text-gray-500">No actions added. Click buttons above to add actions.</p>
-                        </div>
-                    ) : (
-                        <div className="space-y-3">
-                            {formData.actions.map((action, idx) => {
-                                const actionInfo = actionTypes.find(a => a.value === action.type);
-                                const Icon = actionInfo?.icon || Zap;
-                                return (
-                                    <div key={idx} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-                                        <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                                            <Icon size={16} className="text-indigo-600" />
-                                        </div>
-                                        <div className="flex-1">
-                                            <p className="text-sm font-medium text-gray-800">{actionInfo?.label}</p>
-                                            {action.type === 'notify_group' && (
-                                                <select value={action.target_id || ''} onChange={(e) => updateAction(idx, 'target_id', e.target.value)} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
-                                                    <option value="">Select Group</option>
-                                                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                                                </select>
-                                            )}
-                                            {action.type === 'notify_user' && (
-                                                <select value={action.target_id || ''} onChange={(e) => updateAction(idx, 'target_id', e.target.value)} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
-                                                    <option value="">Select User</option>
-                                                    {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-                                                </select>
-                                            )}
-                                            {action.type === 'change_priority' && (
-                                                <select value={action.new_priority || ''} onChange={(e) => updateAction(idx, 'new_priority', e.target.value)} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
-                                                    <option value="">Select Priority</option>
-                                                    {priorities.map(p => <option key={p} value={p}>{p}</option>)}
-                                                </select>
-                                            )}
-                                            {action.type === 'add_note' && (
-                                                <textarea value={action.note_text || ''} onChange={(e) => updateAction(idx, 'note_text', e.target.value)} placeholder="Note text..." rows={2} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none" />
-                                            )}
-                                        </div>
-                                        <button onClick={() => removeAction(idx)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><X size={16} /></button>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
-                </div>
-
-                {/* Section 4: Notification */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2"><span className="w-6 h-6 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">4</span>Notification</h2>
-                        <button onClick={() => setShowPreview(!showPreview)} className="text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"><Eye size={16} />Preview</button>
-                    </div>
-                    {errors.channels && <p className="text-xs text-red-500 mb-3">{errors.channels}</p>}
-
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Channels</label>
-                            <div className="flex gap-3">
-                                <label className={`flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer ${formData.notification_channels.includes('in_app') ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'}`}>
-                                    <input type="checkbox" checked={formData.notification_channels.includes('in_app')} onChange={() => toggleChannel('in_app')} className="sr-only" />
-                                    <Bell size={16} /><span className="text-sm font-medium">In-App</span>
-                                </label>
-                                <label className={`flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer ${formData.notification_channels.includes('email') ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'}`}>
-                                    <input type="checkbox" checked={formData.notification_channels.includes('email')} onChange={() => toggleChannel('email')} className="sr-only" />
-                                    <Mail size={16} /><span className="text-sm font-medium">Email</span>
-                                </label>
-                                <label className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-lg opacity-50 cursor-not-allowed">
-                                    <MessageSquare size={16} /><span className="text-sm font-medium">Slack</span><span className="text-xs bg-gray-200 px-1.5 py-0.5 rounded">Soon</span>
-                                </label>
-                            </div>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Message Template</label>
-                            <textarea value={formData.notification_message} onChange={(e) => setFormData({ ...formData, notification_message: e.target.value })} rows={3}
-                                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none" placeholder="Use {ticket_id}, {sla_status} as variables..." />
-                            <p className="text-xs text-gray-400 mt-1">Available: {'{ticket_id}'}, {'{sla_status}'}, {'{assignee}'}, {'{priority}'}</p>
-                        </div>
-
-                        {/* Preview */}
-                        {showPreview && (
-                            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                                <p className="text-xs font-medium text-gray-500 uppercase mb-2">Preview</p>
-                                <div className="bg-white rounded-lg p-3 border border-gray-100 shadow-sm">
-                                    <div className="flex items-start gap-3">
-                                        <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center"><AlertTriangle size={16} className="text-orange-600" /></div>
-                                        <div>
-                                            <p className="text-sm font-medium text-gray-800">SLA Escalation Alert</p>
-                                            <p className="text-sm text-gray-600 mt-1">{getPreviewMessage()}</p>
-                                            <p className="text-xs text-gray-400 mt-2">via {formData.notification_channels.join(', ')}</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Save */}
-                <div className="flex justify-end gap-3 pt-4">
-                    <button onClick={() => setView('list')} className="px-6 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg border bg-white">Cancel</button>
-                    <button onClick={handleSave} disabled={saving} className="px-6 py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg flex items-center gap-2 disabled:opacity-50">
-                        {saving ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
-                        {saving ? 'Saving...' : 'Save Rule'}
-                    </button>
                 </div>
             </div>
         </div>

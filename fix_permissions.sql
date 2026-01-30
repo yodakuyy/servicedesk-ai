@@ -1,9 +1,14 @@
--- RUN THIS IN SUPABASE SQL EDITOR TO FIX 'NO GROUP' ISSUE
+-- Enable RLS (Optional, but good practice)
+ALTER TABLE group_sla_policies ENABLE ROW LEVEL SECURITY;
 
--- 1. Unlock the user_groups table so the app can read/write to it
-ALTER TABLE user_groups DISABLE ROW LEVEL SECURITY;
+-- Allow public/authenticated access for now to match other tables in this project
+DROP POLICY IF EXISTS "Allow all access to group_sla_policies" ON group_sla_policies;
+CREATE POLICY "Allow all access to group_sla_policies" ON group_sla_policies 
+FOR ALL 
+USING (true) 
+WITH CHECK (true);
 
--- OR if you prefer to keep security on, use these policies:
--- ALTER TABLE user_groups ENABLE ROW LEVEL SECURITY;
--- CREATE POLICY "Allow public read" ON user_groups FOR SELECT USING (true);
--- CREATE POLICY "Allow public insert" ON user_groups FOR INSERT WITH CHECK (true);
+-- Also make sure the service_role and authenticated roles have permission to the table
+GRANT ALL ON group_sla_policies TO anon;
+GRANT ALL ON group_sla_policies TO authenticated;
+GRANT ALL ON group_sla_policies TO service_role;

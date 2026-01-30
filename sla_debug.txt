@@ -1,0 +1,82 @@
+TICKETS COLUMNS:
+[
+  "id",
+  "ticket_number",
+  "ticket_type",
+  "subject",
+  "description",
+  "category_id",
+  "service_id",
+  "status_id",
+  "priority",
+  "requester_id",
+  "created_by",
+  "assigned_group_id",
+  "assigned_agent_id",
+  "created_at",
+  "updated_at",
+  "assignment_group_id",
+  "assigned_to",
+  "tags"
+]
+
+SLA POLICIES:
+[
+  {
+    "id": "dd63cdf1-e7b0-4089-a707-0d231e5f5b32",
+    "company_id": 1,
+    "name": "IT Support – Service Request",
+    "description": "Default SLA for IT Support Service Request tickets",
+    "business_hours_id": "041cdec5-fd25-4c23-8747-dc1f70de28bf",
+    "enable_resolution_sla": false,
+    "is_active": true,
+    "created_at": "2026-01-20T01:47:00.363978+00:00",
+    "enable_response_sla": true,
+    "conditions": [
+      {
+        "field": "company",
+        "value": "DIT",
+        "operator": "equals"
+      },
+      {
+        "field": "ticket_type",
+        "value": "Service Request",
+        "operator": "equals"
+      }
+    ],
+    "updated_at": "2026-01-20T01:46:59.612+00:00"
+  },
+  {
+    "id": "6666b3fb-dd52-4fc1-98b1-6e0608a93d30",
+    "company_id": 1,
+    "name": "IT Support – Incident",
+    "description": "Default SLA for IT Support incident tickets",
+    "business_hours_id": "041cdec5-fd25-4c23-8747-dc1f70de28bf",
+    "enable_resolution_sla": true,
+    "is_active": true,
+    "created_at": "2026-01-15T03:35:12.57186+00:00",
+    "enable_response_sla": true,
+    "conditions": [
+      {
+        "field": "company",
+        "value": "DIT",
+        "operator": "equals"
+      },
+      {
+        "field": "ticket_type",
+        "value": "Incident",
+        "operator": "equals"
+      }
+    ],
+    "updated_at": "2026-01-20T01:39:07.965+00:00"
+  }
+]
+
+SLA MANAGEMENT:
+{
+  "code": "PGRST205",
+  "details": null,
+  "hint": "Perhaps you meant the table 'public.sla_targets'",
+  "message": "Could not find the table 'public.sla_management' in the schema cache"
+}
+

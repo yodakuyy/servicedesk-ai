@@ -4,7 +4,7 @@ import {
     MessageSquare, FileText, GitBranch, Shield, Send, Sparkles,
     ChevronRight, ChevronLeft, ChevronDown, Paperclip, Mic, User, Copy, ExternalLink,
     ThumbsUp, RefreshCw, AlertTriangle, Loader2, Zap, X, Info, BookOpen,
-    ArrowUpRight, ArrowRight, BarChart3, Lock, List, Users
+    ArrowUpRight, ArrowRight, BarChart3, Lock, List, Users, Building2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
@@ -48,13 +48,199 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     const [aiSummary, setAiSummary] = useState<string[]>([]);
     const [aiClassification, setAiClassification] = useState<{ category: string; priority: string } | null>(null);
     const [aiSuggestedReply, setAiSuggestedReply] = useState<string>('');
-    const [slaRisk, setSlaRisk] = useState<{ percentage: number; timeElapsed: string; hasResponse: boolean }>({ percentage: 0, timeElapsed: '00:00:00', hasResponse: false });
+    const [aiReplyIndex, setAiReplyIndex] = useState(0);
+    const [slaRisk, setSlaRisk] = useState<{
+        percentage: number;
+        timeElapsed: string;
+        timeRemaining: string;
+        hasResponse: boolean;
+        breachTime?: string;
+        pauseAt?: string;
+        recommendation?: string;
+    }>({ percentage: 0, timeElapsed: '0h 0m', timeRemaining: '0h 0m', hasResponse: false });
     const [isAiLoading, setIsAiLoading] = useState(false);
     const [aiConfidence, setAiConfidence] = useState<'high' | 'medium' | 'low'>('low');
     const [isApplyingSummary, setIsApplyingSummary] = useState(false);
+    const [isInternalNote, setIsInternalNote] = useState(false);
 
     // Queue Filter State - for switching between different ticket views
     const [queueFilter, setQueueFilter] = useState<'assigned' | 'submitted' | 'all'>(initialQueueFilter);
+
+    // Search and Filter States
+    const [searchTerm, setSearchTerm] = useState('');
+    const [statusFilter, setStatusFilter] = useState<string>('all');
+    const [priorityFilter, setPriorityFilter] = useState<string>('all');
+    const [agentFilter, setAgentFilter] = useState<string>('all');
+    const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
+    const [now, setNow] = useState(new Date());
+
+    // --- REAL-TIME TICKER ---
+    useEffect(() => {
+        const timer = setInterval(() => {
+            setNow(new Date());
+        }, 60000); // Tick every minute for performance & accuracy
+        return () => clearInterval(timer);
+    }, []);
+
+    // SLA Data States
+    const [slaPolicies, setSlaPolicies] = useState<any[]>([]);
+    const [slaTargets, setSlaTargets] = useState<any[]>([]);
+
+    // --- SLA CALCULATIONS (Business Hours Aware) ---
+    // --- SLA CALCULATIONS (Business Hours Aware) ---
+    const calculateBusinessDeadline = (startDate: Date, targetMinutes: number, schedule: any[]) => {
+        if (!schedule || schedule.length === 0) return new Date(startDate.getTime() + targetMinutes * 60000);
+
+        let remainingMinutes = targetMinutes;
+        let currentDate = new Date(startDate);
+
+        while (remainingMinutes > 0) {
+            const dayName = currentDate.toLocaleString('en-US', { weekday: 'long' });
+            const dayConfig = schedule.find((d: any) => d.day === dayName);
+
+            if (!dayConfig || !dayConfig.isActive) {
+                currentDate.setDate(currentDate.getDate() + 1);
+                currentDate.setHours(0, 0, 0, 0);
+                continue;
+            }
+
+            const [startH, startM] = dayConfig.startTime.split(':').map(Number);
+            const [endH, endM] = dayConfig.endTime.split(':').map(Number);
+
+            const workStart = new Date(currentDate);
+            workStart.setHours(startH, startM, 0, 0);
+            const workEnd = new Date(currentDate);
+            workEnd.setHours(endH, endM, 0, 0);
+
+            if (currentDate < workStart) currentDate = workStart;
+            if (currentDate >= workEnd) {
+                currentDate.setDate(currentDate.getDate() + 1);
+                currentDate.setHours(0, 0, 0, 0);
+                continue;
+            }
+
+            // Check for break
+            if (dayConfig.breakActive) {
+                const [bStartH, bStartM] = dayConfig.breakStartTime.split(':').map(Number);
+                const [bEndH, bEndM] = dayConfig.breakEndTime.split(':').map(Number);
+                const bStart = new Date(currentDate); bStart.setHours(bStartH, bStartM, 0, 0);
+                const bEnd = new Date(currentDate); bEnd.setHours(bEndH, bEndM, 0, 0);
+
+                if (currentDate < bStart) {
+                    const minsToBreak = (bStart.getTime() - currentDate.getTime()) / 60000;
+                    if (remainingMinutes <= minsToBreak) {
+                        currentDate = new Date(currentDate.getTime() + remainingMinutes * 60000);
+                        remainingMinutes = 0;
+                        break;
+                    } else {
+                        remainingMinutes -= minsToBreak;
+                        currentDate = bEnd;
+                        continue;
+                    }
+                } else if (currentDate < bEnd) {
+                    currentDate = bEnd;
+                    continue;
+                }
+            }
+
+            const minsToday = (workEnd.getTime() - currentDate.getTime()) / 60000;
+            if (remainingMinutes <= minsToday) {
+                currentDate = new Date(currentDate.getTime() + remainingMinutes * 60000);
+                remainingMinutes = 0;
+            } else {
+                remainingMinutes -= minsToday;
+                currentDate.setDate(currentDate.getDate() + 1);
+                currentDate.setHours(0, 0, 0, 0);
+            }
+        }
+        return currentDate;
+    };
+
+    const calculateBusinessElapsed = (startDate: Date, endDate: Date, schedule: any[]) => {
+        if (!schedule || schedule.length === 0) return Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60));
+
+        let elapsedMinutes = 0;
+        let currentDate = new Date(startDate);
+
+        while (currentDate < endDate) {
+            const dayName = currentDate.toLocaleString('en-US', { weekday: 'long' });
+            const dayConfig = schedule.find((d: any) => d.day === dayName);
+
+            if (!dayConfig || !dayConfig.isActive) {
+                currentDate.setDate(currentDate.getDate() + 1);
+                currentDate.setHours(0, 0, 0, 0);
+                continue;
+            }
+
+            const [startH, startM] = dayConfig.startTime.split(':').map(Number);
+            const [endH, endM] = dayConfig.endTime.split(':').map(Number);
+
+            const workStart = new Date(currentDate);
+            workStart.setHours(startH, startM, 0, 0);
+            const workEnd = new Date(currentDate);
+            workEnd.setHours(endH, endM, 0, 0);
+
+            let segmentStart = currentDate < workStart ? workStart : currentDate;
+            let segmentEnd = endDate < workEnd ? endDate : workEnd;
+
+            if (segmentStart < segmentEnd) {
+                if (dayConfig.breakActive) {
+                    const [bStartH, bStartM] = dayConfig.breakStartTime.split(':').map(Number);
+                    const [bEndH, bEndM] = dayConfig.breakEndTime.split(':').map(Number);
+                    const bStart = new Date(segmentStart); bStart.setHours(bStartH, bStartM, 0, 0);
+                    const bEnd = new Date(segmentStart); bEnd.setHours(bEndH, bEndM, 0, 0);
+
+                    if (segmentStart < bStart && segmentEnd > bEnd) {
+                        elapsedMinutes += (bStart.getTime() - segmentStart.getTime()) / 60000;
+                        elapsedMinutes += (segmentEnd.getTime() - bEnd.getTime()) / 60000;
+                    } else if (segmentEnd <= bStart || segmentStart >= bEnd) {
+                        elapsedMinutes += (segmentEnd.getTime() - segmentStart.getTime()) / 60000;
+                    } else if (segmentStart < bStart) {
+                        elapsedMinutes += (bStart.getTime() - segmentStart.getTime()) / 60000;
+                    } else if (segmentEnd > bEnd) {
+                        elapsedMinutes += (segmentEnd.getTime() - bEnd.getTime()) / 60000;
+                    }
+                } else {
+                    elapsedMinutes += (segmentEnd.getTime() - segmentStart.getTime()) / 60000;
+                }
+            }
+
+            currentDate.setDate(currentDate.getDate() + 1);
+            currentDate.setHours(0, 0, 0, 0);
+        }
+        return Math.floor(elapsedMinutes);
+    };
+
+    // Memoized filtered tickets
+    const filteredTickets = tickets.filter(ticket => {
+        const matchesSearch =
+            ticket.ticket_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            ticket.subject?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            ticket.requester?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
+
+        const matchesStatus = statusFilter === 'all' || ticket.ticket_statuses?.status_name === statusFilter;
+        const matchesPriority = priorityFilter === 'all' || ticket.priority?.toLowerCase() === priorityFilter.toLowerCase();
+        const matchesAgent =
+            agentFilter === 'all' ||
+            (agentFilter === 'unassigned' && !ticket.assigned_to) ||
+            (ticket.assigned_to === agentFilter);
+
+        return matchesSearch && matchesStatus && matchesPriority && matchesAgent;
+    }).sort((a, b) => {
+        // Status Priority: Active (Open, In Progress, Pending) first
+        const terminalStatuses = ['Resolved', 'Closed', 'Canceled'];
+        const isTerminalA = terminalStatuses.includes(a.ticket_statuses?.status_name);
+        const isTerminalB = terminalStatuses.includes(b.ticket_statuses?.status_name);
+
+        if (isTerminalA && !isTerminalB) return 1;
+        if (!isTerminalA && isTerminalB) return -1;
+
+        // Within same group, sort by updated_at DESC (newest activity first)
+        const timeA = new Date(a.updated_at).getTime();
+        const timeB = new Date(b.updated_at).getTime();
+
+        return timeB - timeA;
+    });
 
     useEffect(() => {
         const fetchAgentGroups = async () => {
@@ -127,6 +313,16 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         fetchAllGroups();
         fetchAllAgents();
         fetchCategories();
+
+        const fetchSLAData = async () => {
+            const [policiesRes, targetsRes] = await Promise.all([
+                supabase.from('sla_policies').select('*').eq('is_active', true),
+                supabase.from('sla_targets').select('*')
+            ]);
+            if (policiesRes.data) setSlaPolicies(policiesRes.data);
+            if (targetsRes.data) setSlaTargets(targetsRes.data);
+        };
+        fetchSLAData();
     }, [userProfile]);
 
     useEffect(() => {
@@ -142,11 +338,16 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
             let query = supabase
                 .from('tickets')
                 .select(`
-                    id, ticket_number, subject, priority, created_at, updated_at, 
+                    id, ticket_number, subject, priority, created_at, updated_at, ticket_type,
                     assignment_group_id, status_id, assigned_to, requester_id,
                     ticket_statuses!fk_tickets_status (status_name),
                     requester:profiles!fk_tickets_requester (full_name),
-                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name)
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (
+                        id, name, company_id,
+                        business_hours (weekly_schedule),
+                        group_sla_policies (sla_policy_id)
+                    )
                 `)
                 .order('updated_at', { ascending: false });
 
@@ -196,6 +397,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
     useEffect(() => {
         if (!selectedTicketId) return;
+
         const fetchDetails = async () => {
             const { data: ticket } = await supabase
                 .from('tickets')
@@ -207,7 +409,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
-                    group:groups!assignment_group_id (id, name, company_id),
+                    group:groups!assignment_group_id (
+                        id, name, company_id, 
+                        company:company_id(company_name),
+                        group_sla_policies(sla_policy_id),
+                        business_hours(weekly_schedule)
+                    ),
                     ticket_attachments (*)
                 `)
                 .eq('id', selectedTicketId)
@@ -446,69 +653,61 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 setAiClassification({ category: suggestedCategory, priority: suggestedPriority });
 
                 // ==========================================
-                // 6. AI SUGGESTED REPLY GENERATION
+                // 6. AI SUGGESTED REPLY GENERATION (Context-Aware)
                 // ==========================================
                 const requesterName = selectedTicket.requester?.full_name?.split(' ')[0] || 'User';
-                let replyTemplate = '';
 
-                // Get last requester message to make it dynamic
+                // Get last requester message for context
                 const lastRequesterMsg = [...messages].reverse().find(m => m.sender_role === 'requester');
                 const lastMsgContent = lastRequesterMsg?.content?.toLowerCase().replace(/<[^>]*>/g, '') || '';
-
-                // Use last message if available, otherwise fallback to description
                 const analyzeContent = lastMsgContent || descLower;
 
-                if (analyzeContent.includes('login') || analyzeContent.includes('akses') || analyzeContent.includes('password')) {
-                    if (lastMsgContent) {
-                        replyTemplate = `Halo ${requesterName}, terima kasih informasinya terkait kendala login. Kami sedang memvalidasi akun Anda. Apakah Anda sudah mencoba reset password atau clear cache browser?`;
-                    } else {
-                        replyTemplate = `Halo ${requesterName}, terima kasih sudah melaporkan kendala akses. Kami sedang melakukan pengecekan pada akun Anda. Mohon konfirmasi apakah issue ini terjadi di semua device atau hanya satu device tertentu?`;
-                    }
-                } else if (analyzeContent.includes('sudah bisa') || analyzeContent.includes('berhasil') || analyzeContent.includes('terima kasih') || analyzeContent.includes('thanks') || analyzeContent.includes('oke')) {
-                    replyTemplate = `Halo ${requesterName}, senang mendengarnya jika kendala tersebut sudah teratasi. Apakah ada hal lain yang bisa kami bantu sebelum tiket ini kami tutup?`;
-                } else if (analyzeContent.includes('error') || analyzeContent.includes('failed') || analyzeContent.includes('gagal')) {
-                    replyTemplate = `Halo ${requesterName}, terima kasih informasinya. Terkait error tersebut, kami sedang meninjau log sistem kami. Bisakah Anda memberikan detail langkah terakhir yang dilakukan sebelum error muncul?`;
-                } else if (analyzeContent.includes('slow') || analyzeContent.includes('lambat')) {
-                    replyTemplate = `Halo ${requesterName}, kami memahami kendala performa tersebut. Kami sedang mengecek utilisasi server saat ini. Apakah user lain di lokasi yang sama juga mengalami hal yang sama?`;
-                } else if (analyzeContent.includes('tanya') || analyzeContent.includes('help') || analyzeContent.includes('gimana')) {
-                    replyTemplate = `Halo ${requesterName}, tentu kami siap membantu. Terkait pertanyaan Anda, bisa diinformasikan lebih detail bagian mana yang ingin Anda tanyakan agar kami bisa memberikan panduan yang tepat?`;
-                } else {
-                    replyTemplate = `Halo ${requesterName}, baik kami mengerti. Laporan Anda sedang kami proses lebih lanjut oleh tim terkait. Kami akan segera memberikan update kembali.`;
+                // Template Categorization with Variations
+                const templates = {
+                    success: [
+                        `Halo ${requesterName}, senang mendengarnya jika kendala tersebut sudah teratasi. Apakah ada hal lain yang bisa kami bantu sebelum tiket ini kami tutup?`,
+                        `Alhamdulillah sudah normal kembali ya ${requesterName}. Baik, saya standby dulu sebentar, jika tidak ada kendala lain tiket ini akan saya selesaikan. Terimakasih!`,
+                        `Sama-sama ${requesterName}, senang bisa membantu. Silakan dicoba kembali secara menyeluruh. Ada lagi yang bisa saya bantu sebelum sesi ini berakhir?`
+                    ],
+                    access: [
+                        `Halo ${requesterName}, terkait kendala akses tersebut, kami sedang melakukan pengecekan pada akun Anda di sistem. Mohon dicoba kembali dalam 5 menit ya.`,
+                        `Baik ${requesterName}, akses Anda sedang kami reset. Bisa diinfokan apakah Anda menggunakan koneksi VPN atau jaringan kantor saat mencoba login?`,
+                        `Halo ${requesterName}, kami sedang memvalidasi permission user Anda. Mohon tunggu sebentar, kami akan segera menginfokan jika sudah bisa dicoba lagi.`
+                    ],
+                    error: [
+                        `Halo ${requesterName}, mohon maaf atas ketidaknyamanannya. Terkait error tersebut, boleh dibantu screenshot pesan error lengkapnya? Kami akan cek ke tim terkait.`,
+                        `Baik ${requesterName}, laporan error Anda sudah kami terima. Kami sedang melakukan investigasi pada log sistem. Apakah ini baru saja terjadi atau sudah dari tadi?`,
+                        `Halo ${requesterName}, kami sedang meninjau laporan kendala Anda. Bisa diinfokan langkah-langkah detail sebelum muncul error tersebut untuk memudahkan kami mereplikasi masalahnya?`
+                    ],
+                    performance: [
+                        `Halo ${requesterName}, kami memahami kendala performa tersebut memang cukup menghambat. Kami sedang mengecek utilisasi server saat ini. Apakah user lain juga merasakannya?`,
+                        `Mohon maaf atas keterlambatan sistemnya ${requesterName}. Kami sedang melakukan pembersihan cache server. Mohon dicoba kembali secara berkala ya.`,
+                        `Baik ${requesterName}, kendala slowness sudah kami eskalasi ke tim infrastruktur. Kami akan memberikan update segera setelah ada perbaikan jalur koneksi.`
+                    ],
+                    general: [
+                        `Halo ${requesterName}, baik kami mengerti. Laporan Anda sedang kami proses lebih lanjut oleh tim terkait. Kami akan segera memberikan update kembali.`,
+                        `Siap ${requesterName}, pesan sudah kami terima. Sedang ditangani oleh tim PIC terkait. Mohon ditunggu ya update selanjutnya.`,
+                        `Terima kasih laporannya ${requesterName}. Kami akan segera menindaklanjuti hal tersebut. Estimasi pengecekan sekitar 15-30 menit ke depan.`
+                    ]
+                };
+
+                let category: keyof typeof templates = 'general';
+                if (analyzeContent.includes('sudah bisa') || analyzeContent.includes('berhasil') || analyzeContent.includes('terima kasih') || analyzeContent.includes('thanks') || analyzeContent.includes('oke') || analyzeContent.includes('aman')) {
+                    category = 'success';
+                } else if (analyzeContent.includes('login') || analyzeContent.includes('akses') || analyzeContent.includes('password') || analyzeContent.includes('akun')) {
+                    category = 'access';
+                } else if (analyzeContent.includes('error') || analyzeContent.includes('failed') || analyzeContent.includes('gagal') || analyzeContent.includes('salah')) {
+                    category = 'error';
+                } else if (analyzeContent.includes('slow') || analyzeContent.includes('lambat') || analyzeContent.includes('loading')) {
+                    category = 'performance';
                 }
 
-                setAiSuggestedReply(replyTemplate);
+                const selectedVariations = templates[category];
+                const finalReply = selectedVariations[aiReplyIndex % selectedVariations.length];
+                setAiSuggestedReply(finalReply);
 
                 // ==========================================
-                // 7. SLA RISK CALCULATION
-                // ==========================================
-                if (selectedTicket.created_at) {
-                    const createdAt = new Date(selectedTicket.created_at);
-                    const now = new Date();
-                    const diffMs = now.getTime() - createdAt.getTime();
-                    const diffMins = Math.floor(diffMs / (1000 * 60));
-                    const hours = Math.floor(diffMins / 60);
-                    const mins = diffMins % 60;
-                    const secs = Math.floor((diffMs / 1000) % 60);
-
-                    // SLA based on priority (example: urgent=30min, high=1hr, medium=4hr, low=8hr)
-                    const priority = selectedTicket.priority || 'medium';
-                    let slaMins = 240; // default 4 hours
-                    if (priority === 'urgent') slaMins = 30;
-                    else if (priority === 'high') slaMins = 60;
-                    else if (priority === 'medium') slaMins = 240;
-                    else slaMins = 480;
-
-                    const usedPercentage = Math.min(100, Math.round((diffMins / slaMins) * 100));
-
-                    setSlaRisk({
-                        percentage: usedPercentage,
-                        timeElapsed: `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`,
-                        hasResponse: messages.length > 0
-                    });
-                }
-
-                // ==========================================
-                // 8. CALCULATE AI CONFIDENCE LEVEL
+                // 7. CALCULATE AI CONFIDENCE LEVEL
                 // ==========================================
                 // Based on: KB matches + Similar tickets found + Summary points generated
                 const kbCount = suggestedKB.length;
@@ -531,20 +730,94 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         };
 
         fetchAISuggestions();
-    }, [selectedTicket?.id, selectedTicket?.subject, selectedTicket?.description, messages.length]);
+    }, [selectedTicket?.id, messages.length, aiReplyIndex]);
+
+    // --- LIVE SLA RISK UPDATE ---
+    useEffect(() => {
+        if (!selectedTicket || !selectedTicket.created_at) return;
+
+        const schedule = selectedTicket.group?.business_hours?.weekly_schedule || [];
+        const firstResponseTime = messages.find(m => !m.is_internal && m.sender_id !== selectedTicket.requester_id)?.created_at;
+        const createdAt = new Date(selectedTicket.created_at);
+
+        const linkedSlaIds = selectedTicket.group?.group_sla_policies?.map((ug: any) => ug.sla_policy_id) || [];
+        const matchingPolicy = slaPolicies.find(policy => {
+            if (linkedSlaIds.length > 0 && !linkedSlaIds.includes(policy.id)) return false;
+            if (!policy.conditions || !Array.isArray(policy.conditions)) return false;
+            return policy.conditions.every((cond: any) => {
+                let ticketVal: any;
+                switch (cond.field) {
+                    case 'company': ticketVal = selectedTicket.group?.company?.company_name; break;
+                    case 'ticket_type': ticketVal = selectedTicket.ticket_type; break;
+                    case 'category': ticketVal = selectedTicket.ticket_categories?.name; break;
+                    case 'priority': ticketVal = selectedTicket.priority; break;
+                    default: return false;
+                }
+                if (!ticketVal) return false;
+                const valLower = String(cond.value).toLowerCase();
+                const ticketValLower = String(ticketVal).toLowerCase();
+                if (cond.operator === 'equals') return ticketValLower === valLower;
+                if (cond.operator === 'not_equals') return ticketValLower !== valLower;
+                if (cond.operator === 'in') return valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+                if (cond.operator === 'not_in') return !valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+                return false;
+            });
+        });
+
+        const targets = slaTargets.filter(t => t.sla_policy_id === matchingPolicy?.id && t.priority?.toLowerCase() === (selectedTicket.priority || 'Medium').toLowerCase());
+        const responseTarget = targets.find(t => t.sla_type === 'response');
+        const resolutionTarget = targets.find(t => t.sla_type === 'resolution');
+
+        const activeSlaType = firstResponseTime ? 'resolution' : 'response';
+        const activeTarget = firstResponseTime ? resolutionTarget : responseTarget;
+        const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
+        const stopTime = activityLogs.find(l => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('canceled'))?.created_at;
+
+        const businessElapsed = calculateBusinessElapsed(createdAt, (firstResponseTime && activeSlaType === 'response') ? new Date(firstResponseTime) : (isTerminal && stopTime ? new Date(stopTime) : now), schedule);
+        const targetMins = activeTarget?.target_minutes || (activeSlaType === 'response' ? 240 : 480);
+
+        const usedPercentage = Math.floor((businessElapsed / targetMins) * 100);
+        const remMins = Math.max(0, targetMins - businessElapsed);
+
+        // --- NEW ANALYSIS LOGIC ---
+        const breachDate = calculateBusinessDeadline(createdAt, targetMins, schedule);
+
+        // Find today's end time
+        const todayName = now.toLocaleString('en-US', { weekday: 'long' });
+        const todayConfig = schedule.find((d: any) => d.day === todayName);
+        let pauseInfo = undefined;
+        if (todayConfig && todayConfig.isActive && !isTerminal) {
+            pauseInfo = todayConfig.endTime;
+        }
+
+        let rec = "";
+        if (isTerminal) rec = "SLA Berhenti: Tiket sudah diproses hingga tahap akhir.";
+        else if (usedPercentage >= 100) {
+            rec = "OVERDUE: Target waktu telah terlampaui. Mohon segera selesaikan tiket dan komunikasikan kendala dengan user.";
+        } else if (!firstResponseTime) {
+            rec = usedPercentage > 50 ? "URGENT: Segera kirim respon pertama untuk mengamankan Response SLA!" : "Saran: Berikan respon awal agar user tahu tiket sedang ditangani.";
+        } else {
+            rec = usedPercentage > 75 ? "KRITIS: Resolusi sudah mendekati batas. Mohon fokus penyelesaian atau koordinasi tim." : "Aman: Fokus pada progres pengerjaan sesuai alur kerja.";
+        }
+
+        setSlaRisk({
+            percentage: usedPercentage,
+            timeElapsed: `${Math.floor(businessElapsed / 60)}h ${businessElapsed % 60}m`,
+            timeRemaining: `${Math.floor(remMins / 60)}h ${remMins % 60}m`,
+            hasResponse: !!firstResponseTime,
+            breachTime: breachDate.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' WIB',
+            pauseAt: pauseInfo,
+            recommendation: rec
+        });
+    }, [now, selectedTicket?.id, messages.length, activityLogs.length]);
 
     // Apply AI Summary to Internal Notes
+    // Apply AI Summary to Internal Notes (Fills composer instead of direct insert)
     const handleApplySummary = async () => {
         if (!selectedTicketId || aiSummary.length === 0) return;
 
         setIsApplyingSummary(true);
         try {
-            let senderId = userProfile?.id;
-            if (!senderId) {
-                const { data: { user } } = await supabase.auth.getUser();
-                senderId = user?.id;
-            }
-
             // Format summary as HTML list
             const summaryHtml = `
                 <div style="background: #fef3c7; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">
@@ -555,42 +828,23 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 </div>
             `;
 
-            // Insert as Internal Note
-            await supabase.from('ticket_messages').insert({
-                ticket_id: selectedTicketId,
-                sender_id: senderId,
-                sender_role: 'agent',
-                content: summaryHtml,
-                is_internal: true // This is a private note
-            });
+            // FILLS THE COMPOSER instead of immediate database insert
+            setNewMessage(summaryHtml);
+            setIsInternalNote(true); // Switch to internal note tab automatically
 
-            // Re-fetch messages
-            const { data: msgs } = await supabase
-                .from('ticket_messages')
-                .select('*, sender:profiles!sender_id(full_name)')
-                .eq('ticket_id', selectedTicketId)
-                .order('created_at', { ascending: true });
-
-            if (msgs) {
-                setMessages(msgs.map(m => ({
-                    ...m,
-                    sender_name: m.sender?.full_name || (m.sender_role === 'requester' ? 'User' : 'Agent')
-                })));
-            }
-
-            // Success notification
             // @ts-ignore
             const Swal = (await import('sweetalert2')).default;
             Swal.fire({
                 icon: 'success',
-                title: 'Summary Applied',
-                text: 'AI Summary has been added as an internal note.',
+                title: 'Summary Inserted',
+                text: 'AI Summary has been inserted into the Internal Note composer.',
                 toast: true,
                 position: 'top-end',
                 showConfirmButton: false,
                 timer: 3000,
                 timerProgressBar: true
             });
+
         } catch (error) {
             console.error('Apply Summary Error:', error);
         } finally {
@@ -656,7 +910,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 sender_id: senderId,
                 sender_role: 'agent',
                 content: newMessage,
-                is_internal: false // Default to public reply for now
+                is_internal: isInternalNote
             });
 
             if (insertError) throw insertError;
@@ -1144,12 +1398,101 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
             {/* 1. LEFT PANEL - Ticket List */}
             <div className="w-[320px] flex flex-col border-r border-gray-200 bg-white">
-                {/* Search Bar */}
-                <div className="p-3 border-b border-gray-100 flex items-center justify-between">
-                    <div className="relative flex-1">
-                        <Search className="absolute left-2.5 top-2.5 text-gray-400" size={14} />
-                        <input type="text" placeholder="Search Incidents..." className="w-full bg-gray-50 border border-gray-100 rounded-md py-1.5 pl-8 pr-3 text-xs focus:ring-1 focus:ring-blue-500/20" />
+                {/* Search & Filter Bar */}
+                <div className="p-3 border-b border-gray-100 flex flex-col gap-2 bg-white">
+                    <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                            <Search className="absolute left-2.5 top-2.5 text-gray-400" size={14} />
+                            <input
+                                type="text"
+                                placeholder="Search Incidents..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="w-full bg-gray-50 border border-gray-100 rounded-md py-1.5 pl-8 pr-3 text-xs focus:ring-1 focus:ring-indigo-500/20 outline-none"
+                            />
+                        </div>
+                        <button
+                            onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)}
+                            className={`p-1.5 rounded-md border transition-all ${isFilterMenuOpen || statusFilter !== 'all' || priorityFilter !== 'all' || agentFilter !== 'all'
+                                ? 'bg-indigo-50 border-indigo-200 text-indigo-600'
+                                : 'bg-white border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                                }`}
+                        >
+                            <Filter size={16} />
+                        </button>
                     </div>
+
+                    {/* Filter Dropdown */}
+                    {isFilterMenuOpen && (
+                        <div className="bg-gray-50 p-3 rounded-lg border border-gray-100 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                            <div>
+                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Status</label>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {['all', 'Open', 'In Progress', 'Resolved'].map((s) => (
+                                        <button
+                                            key={s}
+                                            onClick={() => setStatusFilter(s)}
+                                            className={`px-2 py-1 rounded text-[10px] font-bold border transition-all ${statusFilter === s
+                                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
+                                                : 'bg-white border-gray-200 text-gray-500 hover:border-indigo-300'
+                                                }`}
+                                        >
+                                            {s.charAt(0).toUpperCase() + s.slice(1)}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Priority</label>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {['all', 'low', 'medium', 'high', 'urgent'].map((p) => (
+                                        <button
+                                            key={p}
+                                            onClick={() => setPriorityFilter(p)}
+                                            className={`px-2 py-1 rounded text-[10px] font-bold border transition-all ${priorityFilter === p
+                                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
+                                                : 'bg-white border-gray-200 text-gray-500 hover:border-indigo-300'
+                                                }`}
+                                        >
+                                            {p.charAt(0).toUpperCase() + p.slice(1)}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Agent (PIC)</label>
+                                <select
+                                    value={agentFilter}
+                                    onChange={(e) => setAgentFilter(e.target.value)}
+                                    className="w-full bg-white border border-gray-200 rounded px-2 py-1.5 text-[10px] font-bold text-gray-600 focus:ring-1 focus:ring-indigo-500/20 outline-none cursor-pointer"
+                                >
+                                    <option value="all">All Agents</option>
+                                    {allAgents
+                                        .filter(agent =>
+                                            // Only show agents that share at least one group with the current user
+                                            agent.group_ids?.some((gid: any) => agentGroups.includes(gid)) &&
+                                            // Exclude Admin roles
+                                            !agent.role_name?.toLowerCase().includes('admin')
+                                        )
+                                        .filter((v, i, a) => a.findIndex(t => t.id === v.id) === i) // Unique agents
+                                        .map(agent => (
+                                            <option key={agent.id} value={agent.id}>{agent.full_name}</option>
+                                        ))}
+                                </select>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setStatusFilter('all');
+                                    setPriorityFilter('all');
+                                    setAgentFilter('all');
+                                    setSearchTerm('');
+                                }}
+                                className="w-full py-1 text-[10px] font-black text-red-500 uppercase tracking-widest hover:bg-red-50 rounded transition-colors"
+                            >
+                                Reset Filters
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Queue Filter Tabs */}
@@ -1208,7 +1551,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                         {queueFilter === 'submitted' && 'Tickets I submitted'}
                         {queueFilter === 'all' && 'All team tickets'}
                     </span>
-                    <span className="font-bold text-blue-600">{tickets.length}</span>
+                    <span className="font-bold text-blue-600">{filteredTickets.length}</span>
                 </div>
 
                 {/* Ticket List */}
@@ -1217,51 +1560,122 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                         <div className="flex items-center justify-center py-12">
                             <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
                         </div>
-                    ) : tickets.length === 0 ? (
+                    ) : filteredTickets.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
                             <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3">
-                                {queueFilter === 'assigned' && <User size={20} className="text-gray-400" />}
-                                {queueFilter === 'submitted' && <FileText size={20} className="text-gray-400" />}
-                                {queueFilter === 'all' && <List size={20} className="text-gray-400" />}
+                                {searchTerm || statusFilter !== 'all' || priorityFilter !== 'all' ? (
+                                    <Search size={20} className="text-gray-400" />
+                                ) : (
+                                    <>
+                                        {queueFilter === 'assigned' && <User size={20} className="text-gray-400" />}
+                                        {queueFilter === 'submitted' && <FileText size={20} className="text-gray-400" />}
+                                        {queueFilter === 'all' && <List size={20} className="text-gray-400" />}
+                                    </>
+                                )}
                             </div>
-                            <h4 className="text-sm font-semibold text-gray-700 mb-1">No tickets found</h4>
+                            <h4 className="text-sm font-semibold text-gray-700 mb-1">
+                                {searchTerm || statusFilter !== 'all' || priorityFilter !== 'all' ? 'No matches found' : 'No tickets found'}
+                            </h4>
                             <p className="text-xs text-gray-500">
-                                {queueFilter === 'assigned' && 'No tickets assigned to you yet'}
-                                {queueFilter === 'submitted' && 'You haven\'t submitted any tickets'}
-                                {queueFilter === 'all' && 'No tickets in your team queue'}
+                                {searchTerm || statusFilter !== 'all' || priorityFilter !== 'all'
+                                    ? 'Try adjusting your search or filters'
+                                    : queueFilter === 'assigned'
+                                        ? 'No tickets assigned to you yet'
+                                        : queueFilter === 'submitted'
+                                            ? 'You haven\'t submitted any tickets'
+                                            : 'No tickets in your team queue'}
                             </p>
                         </div>
                     ) : (
-                        tickets.map(ticket => (
-                            <div
-                                key={ticket.id}
-                                onClick={() => setSelectedTicketId(ticket.id)}
-                                className={`px-4 py-3 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedTicketId === ticket.id ? 'bg-blue-50/50' : ''}`}
-                            >
-                                <div className="flex justify-between items-start mb-1">
-                                    <div className="flex items-center gap-2">
-                                        <div className={`w-2 h-2 rounded-full ${ticket.priority === 'High' ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]'}`} />
-                                        <span className="font-bold text-xs text-blue-600">{ticket.ticket_number}</span>
+                        filteredTickets.map(ticket => {
+                            // Time Since Last Activity
+                            const ticketCreatedAt = new Date(ticket.created_at);
+                            const ticketUpdatedAt = new Date(ticket.updated_at);
+                            const diffMs = now.getTime() - ticketUpdatedAt.getTime();
+                            const diffMins = Math.floor(diffMs / 60000);
+                            const timeAgo = diffMins < 60 ? `${diffMins}m ago` :
+                                diffMins < 1440 ? `${Math.floor(diffMins / 60)}h ago` :
+                                    `${Math.floor(diffMins / 1440)}d ago`;
+
+                            // SLA Calculation (Dynamic)
+                            const schedule = ticket.group?.business_hours?.weekly_schedule || [];
+                            const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(ticket.ticket_statuses?.status_name);
+
+                            // Check if already responded to decide which SLA to show
+                            // Note: messages isn't available for ALL tickets at once, so we assume response if status bukan Open
+                            const likelyHasResponse = ticket.ticket_statuses?.status_name !== 'Open';
+                            const activeSlaType = likelyHasResponse ? 'resolution' : 'response';
+
+                            // Find matching policy (Simplified for list performance)
+                            const linkedSlaIds = ticket.group?.group_sla_policies?.map((ug: any) => ug.sla_policy_id) || [];
+                            const matchingPolicy = slaPolicies.find(policy => {
+                                if (linkedSlaIds.length > 0 && !linkedSlaIds.includes(policy.id)) return false;
+                                if (!policy.conditions || !Array.isArray(policy.conditions)) return false;
+                                return policy.conditions.every((cond: any) => {
+                                    let val: any;
+                                    if (cond.field === 'ticket_type') val = ticket.ticket_type;
+                                    else if (cond.field === 'priority') val = ticket.priority;
+                                    else return true; // Skip complex conditions for list
+                                    return String(val).toLowerCase() === String(cond.value).toLowerCase();
+                                });
+                            });
+
+                            const target = slaTargets.find(t =>
+                                t.sla_policy_id === matchingPolicy?.id &&
+                                t.sla_type === activeSlaType &&
+                                t.priority?.toLowerCase() === (ticket.priority || 'Medium').toLowerCase()
+                            );
+
+                            const elapsed = calculateBusinessElapsed(ticketCreatedAt, now, schedule);
+                            const targetMins = target?.target_minutes || (activeSlaType === 'response' ? 240 : 480);
+                            const remaining = Math.max(0, targetMins - elapsed);
+                            const remH = Math.floor(remaining / 60);
+                            const remM = remaining % 60;
+                            const isBreached = remaining === 0 && !isTerminal;
+
+                            return (
+                                <div
+                                    key={ticket.id}
+                                    onClick={() => setSelectedTicketId(ticket.id)}
+                                    className={`px-4 py-3 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedTicketId === ticket.id ? 'bg-blue-50/50' : ''}`}
+                                >
+                                    <div className="flex justify-between items-start mb-1">
+                                        <div className="flex items-center gap-2">
+                                            <div className={`w-2 h-2 rounded-full ${ticket.priority === 'High' ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]'}`} />
+                                            <span className="font-bold text-xs text-blue-600">{ticket.ticket_number}</span>
+                                        </div>
+                                        <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">{timeAgo}</span>
                                     </div>
-                                    <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">4m ago</span>
-                                </div>
-                                <h4 className="text-[13px] font-semibold text-gray-700 line-clamp-1 mb-1 leading-snug">
-                                    {ticket.subject}
-                                </h4>
-                                <div className="flex justify-between items-center text-[11px] font-medium">
-                                    <span className="text-gray-400 truncate max-w-[120px]">{ticket.requester?.full_name || 'Anonymous'}</span>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-red-500 font-bold tracking-tighter text-[10px]">00:14:21</span>
+                                    <h4 className="text-[13px] font-semibold text-gray-700 line-clamp-1 mb-1 leading-snug">
+                                        {ticket.subject}
+                                    </h4>
+                                    <div className="flex justify-between items-center text-[11px] font-medium">
+                                        <span className="text-gray-400 truncate max-w-[120px]">{ticket.requester?.full_name || 'Anonymous'}</span>
+                                        <div className="flex items-center gap-2">
+                                            {!isTerminal && (
+                                                <span className={`${isBreached ? 'text-rose-600' : 'text-red-500'} font-bold tracking-tighter text-[10px]`}>
+                                                    {isBreached ? 'OVERDUE' : `${String(remH).padStart(2, '0')}:${String(remM).padStart(2, '0')}:00`}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-between items-center mt-1.5">
+                                        <div className="px-1.5 py-0.5 bg-slate-50 border border-slate-100 rounded text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                                            PIC: {ticket.assigned_agent?.full_name || 'UNASSIGNED'}
+                                        </div>
+                                        <div className={`text-[10px] font-black uppercase tracking-tight ${ticket.ticket_statuses?.status_name === 'Open' ? 'text-blue-600' :
+                                            ticket.ticket_statuses?.status_name === 'In Progress' ? 'text-indigo-600' :
+                                                ticket.ticket_statuses?.status_name === 'Resolved' ? 'text-emerald-600' :
+                                                    ticket.ticket_statuses?.status_name === 'Canceled' ? 'text-rose-600' :
+                                                        ticket.ticket_statuses?.status_name === 'Closed' ? 'text-slate-400' :
+                                                            'text-gray-400'
+                                            }`}>
+                                            {ticket.ticket_statuses?.status_name}
+                                        </div>
                                     </div>
                                 </div>
-                                <div className="flex justify-between items-center mt-1.5">
-                                    <div className="px-1.5 py-0.5 bg-slate-50 border border-slate-100 rounded text-[9px] font-black text-slate-500 uppercase tracking-widest">
-                                        PIC: {ticket.assigned_agent?.full_name || 'UNASSIGNED'}
-                                    </div>
-                                    <div className="text-[10px] text-gray-400 italic">{ticket.ticket_statuses?.status_name}</div>
-                                </div>
-                            </div>
-                        ))
+                            );
+                        })
                     )}
                 </div>
             </div>
@@ -1456,22 +1870,80 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                         </div>
 
                         {/* Real SLA Bar */}
-                        <div className="mt-6 flex flex-col gap-1.5">
-                            <div className="flex justify-between text-[11px] font-bold">
-                                <span className="text-gray-400 font-black uppercase tracking-widest">Response SLA</span>
-                                <div className="flex items-center gap-3">
-                                    <span className="text-red-500">75% Used</span>
-                                    <span className="text-gray-900 bg-gray-100 px-2 py-0.5 rounded flex items-center gap-1">
-                                        <Clock size={10} /> 00:01:23
-                                    </span>
+                        {(() => {
+                            const schedule = selectedTicket.group?.business_hours?.weekly_schedule || [];
+                            const firstResponseTime = messages.find(m => !m.is_internal && m.sender_id !== selectedTicket.requester_id)?.created_at;
+
+                            const linkedSlaIds = selectedTicket.group?.group_sla_policies?.map((ug: any) => ug.sla_policy_id) || [];
+                            const matchingPolicy = slaPolicies.find(policy => {
+                                if (linkedSlaIds.length > 0 && !linkedSlaIds.includes(policy.id)) return false;
+                                if (!policy.conditions || !Array.isArray(policy.conditions)) return false;
+                                return policy.conditions.every((cond: any) => {
+                                    let ticketVal: any;
+                                    switch (cond.field) {
+                                        case 'company': ticketVal = selectedTicket.group?.company?.company_name; break;
+                                        case 'ticket_type': ticketVal = selectedTicket.ticket_type; break;
+                                        case 'category': ticketVal = selectedTicket.ticket_categories?.name; break;
+                                        case 'priority': ticketVal = selectedTicket.priority; break;
+                                        default: return false;
+                                    }
+                                    if (!ticketVal) return false;
+                                    const valLower = String(cond.value).toLowerCase();
+                                    const ticketValLower = String(ticketVal).toLowerCase();
+                                    if (cond.operator === 'equals') return ticketValLower === valLower;
+                                    if (cond.operator === 'not_equals') return ticketValLower !== valLower;
+                                    if (cond.operator === 'in') return valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+                                    if (cond.operator === 'not_in') return !valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+                                    return false;
+                                });
+                            });
+
+                            const targets = slaTargets.filter(t => t.sla_policy_id === matchingPolicy?.id && t.priority?.toLowerCase() === (selectedTicket.priority || 'Medium').toLowerCase());
+                            const responseTarget = targets.find(t => t.sla_type === 'response');
+                            const resolutionTarget = targets.find(t => t.sla_type === 'resolution');
+
+                            const activeSlaType = firstResponseTime ? 'Resolution' : 'Response';
+                            const activeTarget = firstResponseTime ? resolutionTarget : responseTarget;
+                            const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
+                            const stopTime = activityLogs.find(l => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('canceled'))?.created_at;
+
+                            const activeElapsed = firstResponseTime ?
+                                calculateBusinessElapsed(new Date(selectedTicket.created_at), stopTime ? new Date(stopTime) : now, schedule) :
+                                calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+
+                            const targetMins = activeTarget?.target_minutes || 60;
+                            const percentage = Math.min(100, (activeElapsed / targetMins) * 100);
+
+                            const h = Math.floor(activeElapsed / 60);
+                            const m = activeElapsed % 60;
+                            const remMins = Math.max(0, targetMins - activeElapsed);
+                            const rh = Math.floor(remMins / 60);
+                            const rm = remMins % 60;
+
+                            return (
+                                <div className="mt-6 flex flex-col gap-1.5">
+                                    <div className="flex justify-between text-[11px] font-bold">
+                                        <span className="text-gray-400 font-black uppercase tracking-widest">{activeSlaType} SLA</span>
+                                        <div className="flex items-center gap-3">
+                                            <span className={`${percentage >= 75 ? 'text-red-500' : 'text-amber-500'} font-black`}>{Math.floor(percentage)}% Used</span>
+                                            <span className="text-indigo-600 font-black flex items-center gap-1">Remaining: {rh}h {rm}m</span>
+                                            <span className="text-gray-900 bg-gray-100 px-2 py-0.5 rounded flex items-center gap-1 font-black">
+                                                <Clock size={10} /> {h}h {m}m
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="h-2.5 w-full bg-gray-100 rounded-full overflow-hidden flex shadow-inner">
+                                        <div
+                                            className={`h-full transition-all duration-500 ${percentage >= 75 ? 'bg-red-500' :
+                                                percentage >= 50 ? 'bg-amber-500' :
+                                                    'bg-green-500'
+                                                }`}
+                                            style={{ width: `${percentage}%` }}
+                                        />
+                                    </div>
                                 </div>
-                            </div>
-                            <div className="h-2.5 w-full bg-gray-100 rounded-full overflow-hidden flex shadow-inner">
-                                <div className="h-full bg-green-500 border-r border-white/20" style={{ width: '45%' }} />
-                                <div className="h-full bg-amber-500 border-r border-white/20" style={{ width: '30%' }} />
-                                <div className="h-full bg-gray-200" style={{ width: '25%' }} />
-                            </div>
-                        </div>
+                            );
+                        })()}
                     </div>
 
                     {/* Navigation Tabs */}
@@ -1496,7 +1968,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                         <div className="flex-1">
                                             <div className="flex items-center gap-2 mb-2">
                                                 <span className="text-[13px] font-black text-gray-900">{selectedTicket.requester?.full_name}</span>
-                                                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{new Date(selectedTicket.created_at).toLocaleString()}</span>
+                                                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{new Date(selectedTicket.created_at).toLocaleString()} WIB</span>
                                                 <span className="bg-slate-50 text-slate-500 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
                                                     Requester
                                                 </span>
@@ -1525,7 +1997,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                                 <div className={`flex items-center gap-2 mb-2 ${isAgent ? 'flex-row-reverse' : ''}`}>
                                                     <span className="text-[13px] font-black text-gray-900">{msg.sender_name}</span>
                                                     <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
-                                                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} WIB
                                                     </span>
                                                     {isAgent ? (
                                                         <span className="bg-indigo-50 text-indigo-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-indigo-100 flex items-center gap-1">
@@ -1591,7 +2063,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                         <DetailRow label="Assigned Agent" value={selectedTicket.assigned_agent?.full_name || 'Unassigned'} />
                                         <DetailRow label="Requester Name" value={selectedTicket.requester?.full_name} />
                                         <DetailRow label="Requester Email" value={selectedTicket.requester?.email} />
-                                        <DetailRow label="Created At" value={new Date(selectedTicket.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} />
+                                        <DetailRow label="Created At" value={`${new Date(selectedTicket.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} WIB`} />
                                     </div>
                                 </div>
                             </div>
@@ -1635,7 +2107,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                             <div className="flex-1 pb-4">
                                                 <div className="flex justify-between items-center mb-1">
                                                     <h4 className={`text-sm font-black uppercase tracking-widest ${item.status === 'pending' ? 'text-gray-300' : 'text-gray-800'}`}>{item.step}</h4>
-                                                    {item.date && <span className="text-[10px] font-bold text-gray-400">{new Date(item.date).toLocaleString()}</span>}
+                                                    {item.date && <span className="text-[10px] font-bold text-gray-400">{new Date(item.date).toLocaleString()} WIB</span>}
                                                 </div>
                                                 <p className={`text-xs ${item.status === 'pending' ? 'text-gray-300' : 'text-gray-500 font-medium'}`}>{item.desc}</p>
                                             </div>
@@ -1645,53 +2117,167 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             </div>
                         )}
 
-                        {activeTab === 'sla' && (
-                            <div className="max-w-4xl mx-auto space-y-6">
-                                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 flex items-center justify-between">
-                                    <div>
-                                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">Applied SLA Policy</h4>
-                                        <div className="text-lg font-black text-slate-800">Standard Enterprise - P1 Priority</div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Status</div>
-                                        <span className="px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-black border border-red-100">AT RISK</span>
-                                    </div>
-                                </div>
+                        {activeTab === 'sla' && (() => {
+                            // Calculate SLA data for the tab
+                            const linkedSlaIds = selectedTicket.group?.group_sla_policies?.map((ug: any) => ug.sla_policy_id) || [];
+                            const matchingPolicy = slaPolicies.find(policy => {
+                                if (linkedSlaIds.length > 0 && !linkedSlaIds.includes(policy.id)) return false;
+                                if (!policy.conditions || !Array.isArray(policy.conditions)) return false;
+                                return policy.conditions.every((cond: any) => {
+                                    let ticketValue: any;
+                                    switch (cond.field) {
+                                        case 'company': ticketValue = selectedTicket.group?.company?.company_name; break;
+                                        case 'ticket_type': ticketValue = selectedTicket.ticket_type; break;
+                                        case 'category': ticketValue = selectedTicket.ticket_categories?.name; break;
+                                        case 'priority': ticketValue = selectedTicket.priority; break;
+                                        default: return false;
+                                    }
+                                    if (!ticketValue) return false;
+                                    const valLower = String(cond.value).toLowerCase();
+                                    const ticketValLower = String(ticketValue).toLowerCase();
+                                    if (cond.operator === 'equals') return ticketValLower === valLower;
+                                    if (cond.operator === 'not_equals') return ticketValLower !== valLower;
+                                    if (cond.operator === 'in') return valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+                                    if (cond.operator === 'not_in') return !valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+                                    return false;
+                                });
+                            });
 
-                                <div className="grid grid-cols-2 gap-6">
-                                    <SLACard
-                                        label="First Response"
-                                        target="15 Minutes"
-                                        actual="12m 45s"
-                                        status="met"
-                                    />
-                                    <SLACard
-                                        label="Resolution"
-                                        target="4 Hours"
-                                        actual="3h 14m 21s (Elapsed)"
-                                        status="running"
-                                    />
-                                </div>
+                            const responseTarget = slaTargets.find(t =>
+                                t.sla_policy_id === matchingPolicy?.id &&
+                                t.sla_type === 'response' &&
+                                t.priority?.toLowerCase() === (selectedTicket.priority || 'Medium').toLowerCase()
+                            );
 
-                                <div className="pt-6 border-t border-gray-100">
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">Milestones History</h4>
-                                    <div className="space-y-3">
-                                        <div className="flex justify-between text-xs font-bold py-2 border-b border-gray-50">
-                                            <span className="text-gray-500">Ticket Created</span>
-                                            <span className="text-gray-800">{new Date(selectedTicket.created_at).toLocaleTimeString()}</span>
+                            const resolutionTarget = slaTargets.find(t =>
+                                t.sla_policy_id === matchingPolicy?.id &&
+                                t.sla_type === 'resolution' &&
+                                t.priority?.toLowerCase() === (selectedTicket.priority || 'Medium').toLowerCase()
+                            );
+
+                            // Deadlines are now calculated below using Business Hours logic
+
+                            const formatTarget = (mins: number) => {
+                                if (!mins) return 'No target';
+                                if (mins >= 1440) return `${Math.round(mins / 1440)} Days`;
+                                if (mins >= 60) return `${Math.round(mins / 60)} Hours`;
+                                return `${mins} Minutes`;
+                            };
+
+                            const firstResponseTime = messages.find(m => !m.is_internal && m.sender_id !== selectedTicket.requester_id)?.created_at;
+                            const schedule = selectedTicket.group?.business_hours?.weekly_schedule || [];
+
+                            const responseElapsed = firstResponseTime ?
+                                calculateBusinessElapsed(new Date(selectedTicket.created_at), new Date(firstResponseTime), schedule) :
+                                calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+
+                            const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
+                            const stopTime = activityLogs.find(l => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('canceled'))?.created_at;
+                            const resolutionElapsed = stopTime ?
+                                calculateBusinessElapsed(new Date(selectedTicket.created_at), new Date(stopTime), schedule) :
+                                calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+
+                            const responseDeadline = responseTarget?.target_minutes ?
+                                calculateBusinessDeadline(new Date(selectedTicket.created_at), responseTarget.target_minutes, schedule) : null;
+
+                            const resolutionDeadline = resolutionTarget?.target_minutes ?
+                                calculateBusinessDeadline(new Date(selectedTicket.created_at), resolutionTarget.target_minutes, schedule) : null;
+
+                            const getStatusSla = (elapsed: number, target: number, isMet: boolean) => {
+                                if (isMet) return 'met';
+                                if (!target) return 'running';
+                                if (elapsed > target) return 'breached';
+                                if (elapsed > target * 0.75) return 'at_risk';
+                                return 'running';
+                            };
+
+                            const getSlaPercentage = (elapsed: number, target: number, isMet: boolean) => {
+                                if (isMet) return 100;
+                                if (!target) return 0;
+                                return Math.min(100, (elapsed / target) * 100);
+                            };
+
+                            return (
+                                <div className="max-w-4xl mx-auto space-y-6">
+                                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 flex items-center justify-between">
+                                        <div>
+                                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">Applied SLA Policy</h4>
+                                            <div className="text-lg font-black text-slate-800">{matchingPolicy?.name || 'Default System Policy'}</div>
+                                            <div className="text-[10px] font-bold text-gray-400 mt-1 uppercase tracking-widest flex items-center gap-2">
+                                                <Building2 size={10} /> {selectedTicket.group?.company?.company_name || 'Generic'} • {selectedTicket.priority} Priority
+                                            </div>
                                         </div>
-                                        <div className="flex justify-between text-xs font-bold py-2 border-b border-gray-50">
-                                            <span className="text-gray-500">SLA Response Counter Started</span>
-                                            <span className="text-gray-800">{new Date(selectedTicket.created_at).toLocaleTimeString()}</span>
+                                        <div className="text-right">
+                                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Status</div>
+                                            {responseElapsed > (responseTarget?.target_minutes || 240) ? (
+                                                <span className="px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-black border border-red-100">OVERDUE</span>
+                                            ) : responseElapsed > (responseTarget?.target_minutes || 240) * 0.8 ? (
+                                                <span className="px-3 py-1 bg-amber-50 text-amber-600 rounded-full text-[10px] font-black border border-amber-100">AT RISK</span>
+                                            ) : (
+                                                <span className="px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full text-[10px] font-black border border-emerald-100">HEALTHY</span>
+                                            )}
                                         </div>
-                                        <div className="flex justify-between text-xs font-bold py-2">
-                                            <span className="text-gray-500">First Response Met</span>
-                                            <span className="text-green-600">SUCCESS</span>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-6">
+                                        <SLACard
+                                            label="First Response"
+                                            target={formatTarget(responseTarget?.target_minutes)}
+                                            actual={firstResponseTime ? `${Math.floor(responseElapsed / 60)}h ${responseElapsed % 60}m` : `${Math.floor(responseElapsed / 60)}h ${responseElapsed % 60}m (Elapsed)`}
+                                            remaining={!firstResponseTime && responseTarget?.target_minutes ? (() => {
+                                                const rem = Math.max(0, responseTarget.target_minutes - responseElapsed);
+                                                return `${Math.floor(rem / 60)}h ${rem % 60}m (Remaining)`;
+                                            })() : undefined}
+                                            status={getStatusSla(responseElapsed, responseTarget?.target_minutes, !!firstResponseTime)}
+                                            percentage={getSlaPercentage(responseElapsed, responseTarget?.target_minutes, !!firstResponseTime)}
+                                            deadline={responseDeadline ? responseDeadline.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                                        />
+                                        <SLACard
+                                            label="Resolution"
+                                            target={formatTarget(resolutionTarget?.target_minutes)}
+                                            actual={stopTime ? `${Math.floor(resolutionElapsed / 60)}h ${resolutionElapsed % 60}m` : `${Math.floor(resolutionElapsed / 60)}h ${resolutionElapsed % 60}m (Elapsed)`}
+                                            remaining={!isTerminal && resolutionTarget?.target_minutes ? (() => {
+                                                const rem = Math.max(0, resolutionTarget.target_minutes - resolutionElapsed);
+                                                return `${Math.floor(rem / 60)}h ${rem % 60}m (Remaining)`;
+                                            })() : undefined}
+                                            status={getStatusSla(resolutionElapsed, resolutionTarget?.target_minutes, isTerminal)}
+                                            percentage={getSlaPercentage(resolutionElapsed, resolutionTarget?.target_minutes, isTerminal)}
+                                            deadline={resolutionDeadline ? resolutionDeadline.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                                        />
+                                    </div>
+
+                                    <div className="pt-6 border-t border-gray-100">
+                                        <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">Milestones History</h4>
+                                        <div className="space-y-3">
+                                            <div className="flex justify-between text-xs font-bold py-2 border-b border-gray-50">
+                                                <span className="text-gray-500">Ticket Created</span>
+                                                <span className="text-gray-800">{new Date(selectedTicket.created_at).toLocaleString()} WIB</span>
+                                            </div>
+                                            <div className="flex justify-between text-xs font-bold py-2 border-b border-gray-50">
+                                                <span className="text-gray-500">SLA Response Counter Started</span>
+                                                <span className="text-gray-800">{new Date(selectedTicket.created_at).toLocaleTimeString()} WIB</span>
+                                            </div>
+                                            {firstResponseTime && (
+                                                <div className="flex justify-between text-xs font-bold py-2">
+                                                    <span className="text-gray-500">First Response Met</span>
+                                                    <span className="text-green-600 font-black">SUCCESS • {new Date(firstResponseTime).toLocaleTimeString()} WIB</span>
+                                                </div>
+                                            )}
+                                            {isTerminal && stopTime && (
+                                                <div className="flex justify-between text-xs font-bold py-2">
+                                                    <span className="text-gray-500">
+                                                        {selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'Ticket Canceled' : 'Resolution Met'}
+                                                    </span>
+                                                    <span className={`${selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'text-rose-600' : 'text-indigo-600'} font-black`}>
+                                                        {selectedTicket.ticket_statuses?.status_name?.toUpperCase()} • {new Date(stopTime).toLocaleTimeString()} WIB
+                                                    </span>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        )}
+                            );
+                        })()}
 
                         {activeTab === 'activities' && (
                             <div className="max-w-4xl mx-auto space-y-4">
@@ -1782,8 +2368,18 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     {activeTab === 'conversation' && (
                         <div className="p-6 border-t border-gray-100 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.02)]">
                             <div className="flex gap-5 mb-4 border-b border-gray-50">
-                                <button className="text-xs font-black uppercase tracking-widest text-indigo-600 border-b-2 border-indigo-600 pb-3">Reply</button>
-                                <button className="text-xs font-black uppercase tracking-widest text-gray-400 hover:text-gray-500 pb-3 transition-colors">Internal Note</button>
+                                <button
+                                    onClick={() => setIsInternalNote(false)}
+                                    className={`text-xs font-black uppercase tracking-widest pb-3 transition-all ${!isInternalNote ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-400 hover:text-gray-500'}`}
+                                >
+                                    Reply
+                                </button>
+                                <button
+                                    onClick={() => setIsInternalNote(true)}
+                                    className={`text-xs font-black uppercase tracking-widest pb-3 transition-all ${isInternalNote ? 'text-amber-600 border-b-2 border-amber-600' : 'text-gray-400 hover:text-gray-500'}`}
+                                >
+                                    Internal Note
+                                </button>
                             </div>
                             <RichTextEditor
                                 content={newMessage}
@@ -1802,7 +2398,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                 <button
                                     onClick={handleSendMessage}
                                     disabled={isSending}
-                                    className="flex items-center gap-3 bg-indigo-600 text-white px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className={`flex items-center gap-3 px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isInternalNote ? 'bg-amber-600 shadow-amber-100 hover:bg-amber-700 text-white' : 'bg-indigo-600 shadow-indigo-100 hover:bg-indigo-700 text-white'}`}
                                 >
                                     {isSending ? (
                                         <>
@@ -1810,7 +2406,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                         </>
                                     ) : (
                                         <>
-                                            <Send size={14} /> Send Reply
+                                            {isInternalNote ? <Lock size={14} /> : <Send size={14} />}
+                                            {isInternalNote ? 'Add Private Note' : 'Send Reply'}
                                         </>
                                     )}
                                 </button>
@@ -1910,12 +2507,18 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                 </p>
                                 <div className="flex gap-2">
                                     <button
-                                        onClick={() => setNewMessage(aiSuggestedReply)}
+                                        onClick={() => {
+                                            setNewMessage(aiSuggestedReply);
+                                            setIsInternalNote(false);
+                                        }}
                                         className="flex-1 py-2 bg-white text-green-700 text-[10px] font-black uppercase tracking-widest rounded-lg border border-green-200 flex items-center justify-center gap-2 shadow-sm hover:bg-green-50 transition-colors"
                                     >
                                         <Copy size={12} /> Insert
                                     </button>
-                                    <button className="flex-1 py-2 bg-white text-gray-400 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors">
+                                    <button
+                                        onClick={() => setAiReplyIndex(prev => prev + 1)}
+                                        className="flex-1 py-2 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
+                                    >
                                         <RefreshCw size={12} /> Rewrite
                                     </button>
                                 </div>
@@ -1923,7 +2526,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                         </AICard>
 
                         {/* Knowledge Card */}
-                        <AICard title="Knowledge & KB" icon={BookOpen}>
+                        <AICard title="Knowledge Base" icon={BookOpen}>
                             <div className="space-y-3">
                                 {suggestedKB.length > 0 ? (
                                     suggestedKB.map(kb => (
@@ -1980,28 +2583,57 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                         {/* SLA Risk Card */}
                         <AICard title="SLA Risk Analysis" icon={BarChart3}>
-                            <div className={`p-4 rounded-xl border space-y-4 ${slaRisk.percentage >= 75 ? 'bg-red-50/30 border-red-100' :
-                                slaRisk.percentage >= 50 ? 'bg-amber-50/30 border-amber-100' :
-                                    'bg-green-50/30 border-green-100'
+                            <div className={`p-4 rounded-xl border space-y-4 transition-all duration-500 ${slaRisk.percentage >= 90 ? 'bg-red-100/50 border-red-300 shadow-lg shadow-red-100' :
+                                slaRisk.percentage >= 75 ? 'bg-red-50/30 border-red-100' :
+                                    slaRisk.percentage >= 50 ? 'bg-amber-50/30 border-amber-100' :
+                                        'bg-green-50/30 border-green-100'
                                 }`}>
                                 <div className="flex justify-between items-center font-black">
-                                    <span className="text-[10px] text-gray-400 uppercase tracking-widest">SLA Used</span>
+                                    <span className="text-[10px] text-gray-400 uppercase tracking-widest">{slaRisk.hasResponse ? 'Resolution' : 'Response'} SLA Used</span>
                                     <span className={`text-xs tracking-tighter ${slaRisk.percentage >= 75 ? 'text-red-500' :
                                         slaRisk.percentage >= 50 ? 'text-amber-500' :
                                             'text-green-500'
                                         }`}>
-                                        {slaRisk.percentage}% {slaRisk.percentage >= 75 ? '- CRITICAL' : slaRisk.percentage >= 50 ? '- WARNING' : '- OK'}
+                                        {slaRisk.percentage}% {slaRisk.percentage >= 100 ? '- OVERDUE' : slaRisk.percentage >= 90 ? '- CRITICAL' : slaRisk.percentage >= 75 ? '- NEAR OVERDUE' : slaRisk.percentage >= 50 ? '- WARNING' : '- OK'}
                                     </span>
                                 </div>
-                                <div className="h-2 w-full bg-white rounded-full overflow-hidden shadow-inner">
-                                    <div className={`h-full transition-all duration-500 ${slaRisk.percentage >= 75 ? 'bg-red-500' :
-                                        slaRisk.percentage >= 50 ? 'bg-amber-500' :
-                                            'bg-green-500'
-                                        }`} style={{ width: `${slaRisk.percentage}%` }} />
+
+                                {/* Visual Stress Meter (Gradient) */}
+                                <div className="h-2.5 w-full bg-slate-200/50 rounded-full overflow-hidden shadow-inner p-0.5">
+                                    <div
+                                        className={`h-full rounded-full transition-all duration-1000 ease-out ${slaRisk.percentage >= 90 ? 'bg-gradient-to-r from-orange-500 via-red-500 to-rose-700 animate-pulse' :
+                                            slaRisk.percentage >= 75 ? 'bg-gradient-to-r from-amber-400 to-red-500' :
+                                                slaRisk.percentage >= 50 ? 'bg-gradient-to-r from-green-400 to-amber-500' :
+                                                    'bg-gradient-to-r from-emerald-400 to-green-500'
+                                            }`}
+                                        style={{ width: `${Math.min(100, slaRisk.percentage)}%` }}
+                                    />
                                 </div>
-                                <ul className="text-[10px] text-gray-500 font-bold space-y-1 mt-2">
-                                    <li>• Time elapsed: {slaRisk.timeElapsed}</li>
-                                    <li>• {slaRisk.hasResponse ? '✓ Agent has responded' : '⚠ No agent response yet'}</li>
+
+                                <div className="grid grid-cols-2 gap-3 mt-2">
+                                    <div className="bg-white/60 p-2 rounded-lg border border-white/50">
+                                        <span className="text-[8px] text-gray-400 uppercase font-black block mb-0.5">Predicted Overdue</span>
+                                        <span className="text-xs font-black text-gray-800">{slaRisk.breachTime || '-'}</span>
+                                    </div>
+                                    <div className="bg-white/60 p-2 rounded-lg border border-white/50">
+                                        <span className="text-[8px] text-gray-400 uppercase font-black block mb-0.5">Timer Pause</span>
+                                        <span className="text-xs font-black text-indigo-600">{slaRisk.pauseAt ? `${slaRisk.pauseAt} WIB` : 'Active 24/7'}</span>
+                                    </div>
+                                </div>
+
+                                <div className="p-3 bg-white/40 rounded-lg border border-white/60">
+                                    <div className="flex items-center gap-1.5 mb-1.5 text-[9px] font-black uppercase tracking-widest text-gray-400">
+                                        <Info size={10} /> Smart Recommendation
+                                    </div>
+                                    <p className={`text-[11px] font-bold leading-relaxed ${slaRisk.percentage >= 75 ? 'text-red-700' : 'text-slate-700'
+                                        }`}>
+                                        {slaRisk.recommendation}
+                                    </p>
+                                </div>
+
+                                <ul className="text-[9px] text-gray-400 font-bold space-y-1 pt-2 border-t border-gray-100/50">
+                                    <li className="flex justify-between"><span>Time elapsed</span> <span className="text-gray-600">{slaRisk.timeElapsed}</span></li>
+                                    <li className="flex justify-between"><span>Time remaining</span> <span className="text-indigo-600 font-black">{slaRisk.timeRemaining}</span></li>
                                 </ul>
                             </div>
                         </AICard>
@@ -2040,22 +2672,39 @@ const DetailRow: React.FC<{ label: string, value: string }> = ({ label, value })
     </div>
 );
 
-const SLACard: React.FC<{ label: string, target: string, actual: string, status: 'met' | 'breached' | 'running' }> = ({ label, target, actual, status }) => (
-    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+const SLACard: React.FC<{ label: string, target: string, actual: string, percentage: number, remaining?: string, deadline?: string, status: 'met' | 'breached' | 'running' | 'at_risk' }> = ({ label, target, actual, percentage, remaining, deadline, status }) => (
+    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden group">
         <div className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">{label}</div>
         <div className="space-y-4">
             <div className="flex justify-between text-xs font-bold">
                 <span className="text-gray-400">Target</span>
                 <span className="text-gray-800">{target}</span>
             </div>
+            {deadline && (
+                <div className="flex justify-between text-xs font-bold">
+                    <span className="text-gray-400">Deadline</span>
+                    <span className="text-indigo-600 font-black">{deadline}</span>
+                </div>
+            )}
             <div className="flex justify-between text-xs font-black">
-                <span className="text-gray-400 font-bold">{status === 'running' ? 'Elapsed' : 'Actual'}</span>
+                <span className="text-gray-400 font-bold">{status === 'running' || status === 'at_risk' ? 'Elapsed' : 'Actual'}</span>
                 <span className={status === 'met' ? 'text-green-600' : status === 'breached' ? 'text-red-600' : 'text-amber-600'}>{actual}</span>
             </div>
-            <div className="h-1.5 w-full bg-gray-50 rounded-full overflow-hidden mt-2">
-                <div className={`h-full ${status === 'met' ? 'bg-green-500' : status === 'breached' ? 'bg-red-500' : 'bg-amber-500'}`} style={{ width: status === 'met' ? '100%' : '75%' }} />
+            {remaining && (status === 'running' || status === 'at_risk') && (
+                <div className="flex justify-between text-xs font-black border-t border-dashed border-gray-100 pt-2 mt-2">
+                    <span className="text-gray-400 font-bold">Remaining</span>
+                    <span className="text-indigo-500">{remaining}</span>
+                </div>
+            )}
+            <div className="h-1.5 w-full bg-gray-50 rounded-full overflow-hidden mt-2 border border-gray-100/50">
+                <div className={`h-full transition-all duration-700 ${status === 'met' ? 'bg-green-500' : status === 'breached' ? 'bg-red-500' : status === 'at_risk' ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${percentage}%` }} />
             </div>
         </div>
+        {status === 'breached' && (
+            <div className="absolute top-0 right-0 p-2 opacity-5 scale-150 rotate-12 group-hover:opacity-10 transition-opacity">
+                <AlertCircle size={48} className="text-red-600" />
+            </div>
+        )}
     </div>
 );
 

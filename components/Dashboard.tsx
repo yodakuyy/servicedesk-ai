@@ -52,6 +52,9 @@ import EscalationRules from './EscalationRules';
 import RequesterKBPortal from './RequesterKBPortal';
 import AgentTicketView from './AgentTicketView';
 import RequesterTicketManager from './RequesterTicketManager';
+import NotificationPanel from './NotificationPanel';
+import { useNotifications } from '../hooks/useNotifications';
+import { useRealtimeToast } from '../hooks/useRealtimeToast';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -123,6 +126,41 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ icon: Icon, label, active = f
   </div>
 );
 
+// Notification Badge Component
+const NotificationBadge: React.FC<{ userId: string | null }> = ({ userId }) => {
+  const { unreadCount } = useNotifications(userId);
+
+  if (unreadCount === 0) return null;
+
+  return (
+    <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white shadow-sm ring-2 ring-red-500/20 group-hover:scale-110 transition-transform animate-pulse">
+      {unreadCount > 9 ? '9+' : unreadCount}
+    </span>
+  );
+};
+
+// Notification Panel Wrapper Component
+const NotificationPanelWrapper: React.FC<{
+  userId: string | null;
+  onClose: () => void;
+  onNavigate?: (referenceType: string, referenceId: string) => void;
+}> = ({ userId, onClose, onNavigate }) => {
+  const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll } = useNotifications(userId);
+
+  return (
+    <NotificationPanel
+      notifications={notifications}
+      unreadCount={unreadCount}
+      onMarkAsRead={markAsRead}
+      onMarkAllAsRead={markAllAsRead}
+      onDelete={deleteNotification}
+      onClearAll={clearAll}
+      onClose={onClose}
+      onNavigate={onNavigate}
+    />
+  );
+};
+
 const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, initialView }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -151,7 +189,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [previousViewBeforeProfile, setPreviousViewBeforeProfile] = useState<'user-dashboard' | 'profile'>('user-dashboard');
   const [editingSlaPolicyId, setEditingSlaPolicyId] = useState<string | null>(null);
+  const [showNotificationPanel, setShowNotificationPanel] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const notificationRef = useRef<HTMLDivElement>(null);
 
   // Handle initial view prop changes (Deep Linking)
   useEffect(() => {
@@ -159,6 +199,29 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       setCurrentView(initialView as any);
     }
   }, [initialView]);
+
+  // Enable realtime toast notifications
+  useRealtimeToast(userProfile?.id, (ticketId) => {
+    setSelectedTicketId(ticketId);
+    setCurrentView('incidents');
+  });
+
+  // Close notification panel when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setShowNotificationPanel(false);
+      }
+    };
+
+    if (showNotificationPanel) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showNotificationPanel]);
 
   // AUTO-CLOSE TICKETS: Resolved -> Closed after 24h
   useEffect(() => {
@@ -1300,12 +1363,28 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 px-8 py-4 flex justify-end items-center gap-6 sticky top-0 z-40">
           <div className="flex items-center gap-4">
             {/* Notification Bell */}
-            <button className="relative p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all group">
-              <Bell size={22} />
-              <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white shadow-sm ring-2 ring-red-500/20 group-hover:scale-110 transition-transform">
-                3
-              </span>
-            </button>
+            <div className="relative" ref={notificationRef}>
+              <button
+                onClick={() => setShowNotificationPanel(!showNotificationPanel)}
+                className={`relative p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all group ${showNotificationPanel ? 'text-indigo-600 bg-indigo-50' : ''}`}
+              >
+                <Bell size={22} />
+                <NotificationBadge userId={userProfile?.id} />
+              </button>
+
+              {showNotificationPanel && (
+                <NotificationPanelWrapper
+                  userId={userProfile?.id}
+                  onClose={() => setShowNotificationPanel(false)}
+                  onNavigate={(refType, refId) => {
+                    if (refType === 'ticket') {
+                      setSelectedTicketId(refId);
+                      setCurrentView('incidents');
+                    }
+                  }}
+                />
+              )}
+            </div>
 
             {/* User Icon */}
             <button

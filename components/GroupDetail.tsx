@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { X, Edit2, Save, Loader2 } from 'lucide-react';
+import { X, Edit2, Save, Loader2, Clock } from 'lucide-react';
 // @ts-ignore
 import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
 
@@ -36,6 +36,7 @@ interface GroupData {
     business_hour_id?: string | null;
     business_hour_name?: string;
     business_hour_schedule?: any[];
+    sla_policies: any[]; // Array of {id, name}
 }
 
 interface BusinessHourOption {
@@ -48,6 +49,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ isOpen, groupId, onClose, onU
     const [departments, setDepartments] = useState<Department[]>([]);
     const [supervisors, setSupervisors] = useState<User[]>([]);
     const [businessHoursList, setBusinessHoursList] = useState<BusinessHourOption[]>([]);
+    const [allSlaPolicies, setAllSlaPolicies] = useState<any[]>([]);
     const [supervisorSearch, setSupervisorSearch] = useState('');
     const [showSupervisorDropdown, setShowSupervisorDropdown] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -62,6 +64,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ isOpen, groupId, onClose, onU
             fetchDepartments();
             fetchSupervisors();
             fetchBusinessHoursList();
+            fetchSLAPolicies();
         }
     }, [isOpen, groupId]);
 
@@ -129,7 +132,18 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ isOpen, groupId, onClose, onU
 
             const [companyRes, profilesRes] = await Promise.all(promises) as [any, any];
 
-            // 3. Combine Data and Set State
+            // 3. Fetch Linked SLA Policies
+            const { data: linkedSlasRes } = await supabase
+                .from('group_sla_policies')
+                .select('sla_policy_id, sla_policies(id, name)')
+                .eq('group_id', groupId);
+
+            const linkedSlas = (linkedSlasRes || []).map((item: any) => ({
+                id: item.sla_policies.id,
+                name: item.sla_policies.name
+            }));
+
+            // 4. Combine Data and Set State
             const supervisorsList = (profilesRes.data || []).map((p: any) => {
                 const role = roles.find((r: any) => r.role_id === p.role_id);
                 return {
@@ -152,7 +166,8 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ isOpen, groupId, onClose, onU
                 assign_to_supervisor_first: groupInfo.assign_to_supervisor_first || false,
                 business_hour_id: groupInfo.business_hour_id,
                 business_hour_name: groupInfo.business_hour_id ? await fetchBusinessHourName(groupInfo.business_hour_id) : undefined,
-                business_hour_schedule: groupInfo.business_hour_id ? await fetchBusinessHourSchedule(groupInfo.business_hour_id) : undefined
+                business_hour_schedule: groupInfo.business_hour_id ? await fetchBusinessHourSchedule(groupInfo.business_hour_id) : undefined,
+                sla_policies: linkedSlas
             });
 
         } catch (error: any) {
@@ -199,6 +214,37 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ isOpen, groupId, onClose, onU
         if (data) {
             setBusinessHoursList(data);
         }
+    };
+
+    const fetchSLAPolicies = async () => {
+        const { data } = await supabase
+            .from('sla_policies')
+            .select('id, name, company_id')
+            .eq('is_active', true)
+            .order('name');
+
+        if (data) {
+            setAllSlaPolicies(data);
+        }
+    };
+
+    const handleSlaSelect = (policyId: string) => {
+        if (!groupData) return;
+        const policy = allSlaPolicies.find(p => p.id === policyId);
+        if (policy && !groupData.sla_policies.some(p => p.id === policyId)) {
+            setGroupData({
+                ...groupData,
+                sla_policies: [...groupData.sla_policies, { id: policy.id, name: policy.name }]
+            });
+        }
+    };
+
+    const handleSlaRemove = (policyId: string) => {
+        if (!groupData) return;
+        setGroupData({
+            ...groupData,
+            sla_policies: groupData.sla_policies.filter(p => p.id !== policyId)
+        });
     };
 
     const fetchBusinessHourName = async (id: string) => {
@@ -332,13 +378,30 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ isOpen, groupId, onClose, onU
                 .update({
                     name: groupData.name,
                     company_id: groupData.company_id,
-                    is_active: groupData.is_active,
                     assign_to_supervisor_first: groupData.assign_to_supervisor_first,
                     business_hour_id: groupData.business_hour_id
                 })
                 .eq('id', groupData.id);
 
             if (updateError) throw updateError;
+
+            // Delete existing SLA policies for this group
+            await supabase
+                .from('group_sla_policies')
+                .delete()
+                .eq('group_id', groupData.id);
+
+            // Insert new SLA policies
+            if (groupData.sla_policies.length > 0) {
+                const slaInserts = groupData.sla_policies.map(p => ({
+                    group_id: groupData.id,
+                    sla_policy_id: p.id
+                }));
+                const { error: slaError } = await supabase
+                    .from('group_sla_policies')
+                    .insert(slaInserts);
+                if (slaError) throw slaError;
+            }
 
             // Delete existing supervisors
             await supabase
@@ -704,15 +767,57 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ isOpen, groupId, onClose, onU
                             </div>
 
                             {/* Choose Service-level Agreement */}
-                            <div className="space-y-1.5">
+                            <div className="space-y-3">
                                 <label className="text-sm font-semibold text-gray-700">Choose Service-level Agreement:</label>
-                                <button
-                                    type="button"
-                                    disabled={!isEditing}
-                                    className="w-full px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    <span>+</span> Add SLA
-                                </button>
+
+                                {/* Selected SLAs Tags */}
+                                {groupData.sla_policies.length > 0 && (
+                                    <div className="flex flex-wrap gap-2">
+                                        {groupData.sla_policies.map(policy => (
+                                            <div key={policy.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-bold border border-indigo-100 shadow-sm">
+                                                <Clock size={12} />
+                                                <span>{policy.name}</span>
+                                                {isEditing && (
+                                                    <button
+                                                        onClick={() => handleSlaRemove(policy.id)}
+                                                        className="ml-1 hover:text-indigo-900 focus:outline-none transition-colors"
+                                                    >
+                                                        <X size={14} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {isEditing ? (
+                                    <div className="relative">
+                                        <select
+                                            value=""
+                                            onChange={(e) => handleSlaSelect(e.target.value)}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white shadow-sm"
+                                        >
+                                            <option value="" disabled>-- Add SLA Policy --</option>
+                                            {allSlaPolicies
+                                                .filter(p => (!p.company_id || p.company_id === groupData.company_id) && !groupData.sla_policies.some(selected => selected.id === p.id))
+                                                .map((policy) => (
+                                                    <option key={policy.id} value={policy.id}>
+                                                        {policy.name}
+                                                    </option>
+                                                ))}
+                                        </select>
+                                        {allSlaPolicies.filter(p => (!p.company_id || p.company_id === groupData.company_id) && !groupData.sla_policies.some(selected => selected.id === p.id)).length === 0 && (
+                                            <p className="text-[10px] text-gray-400 italic mt-1.5">No more policies available for this department.</p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    groupData.sla_policies.length === 0 && (
+                                        <div className="w-full px-4 py-6 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center gap-2 bg-gray-50/30">
+                                            <Clock size={24} className="text-gray-300" />
+                                            <span className="text-xs text-gray-400 font-medium">No SLA Assigned</span>
+                                        </div>
+                                    )
+                                )}
                             </div>
                         </div>
 

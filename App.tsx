@@ -6,6 +6,40 @@ import VisualSection from './components/VisualSection';
 import DepartmentSelection from './components/DepartmentSelection';
 import Dashboard from './components/Dashboard';
 import RequesterKBPortal from './components/RequesterKBPortal';
+import { ToastProvider } from './components/ToastProvider';
+
+// Toast animation styles
+const toastStyles = document.createElement('style');
+toastStyles.textContent = `
+@keyframes slide-in-right {
+    from {
+        transform: translateX(100%) scale(0.95);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0) scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes progress {
+    from {
+        width: 100%;
+    }
+    to {
+        width: 0%;
+    }
+}
+
+.animate-slide-in-right {
+    animation: slide-in-right 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-progress {
+    animation: progress linear forwards;
+}
+`;
+document.head.appendChild(toastStyles);
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<'login' | 'departments' | 'dashboard' | 'kb-portal'>('login');
@@ -30,42 +64,52 @@ const App: React.FC = () => {
 
   // KB Portal - Public access (no login required)
   if (currentView === 'kb-portal') {
-    return <RequesterKBPortal />;
+    return (
+      <ToastProvider>
+        <RequesterKBPortal />
+      </ToastProvider>
+    );
   }
 
   if (currentView === 'dashboard') {
     return (
-      <Dashboard
-        onLogout={() => setCurrentView('login')}
-        onChangeDepartment={() => setCurrentView('departments')}
-        initialView={dashboardInitialView}
-      />
+      <ToastProvider>
+        <Dashboard
+          onLogout={() => setCurrentView('login')}
+          onChangeDepartment={() => setCurrentView('departments')}
+          initialView={dashboardInitialView}
+        />
+      </ToastProvider>
     );
   }
 
   if (currentView === 'departments') {
     return (
-      <DepartmentSelection
-        onSelectDepartment={(deptId) => {
-          console.log(`Selected department: ${deptId}`);
-          setCurrentView('dashboard');
-        }}
-      />
+      <ToastProvider>
+        <DepartmentSelection
+          onSelectDepartment={(deptId) => {
+            console.log(`Selected department: ${deptId}`);
+            setCurrentView('dashboard');
+          }}
+        />
+      </ToastProvider>
     );
   }
 
   return (
-    <div className="min-h-screen w-full flex bg-white">
-      {/* Left Side - Login Form */}
-      <div className="w-full lg:w-1/2 flex flex-col justify-center items-center p-8 lg:p-16 xl:p-24 overflow-y-auto">
-        <LoginSection onLogin={() => setCurrentView('departments')} />
-      </div>
+    <ToastProvider>
+      <div className="min-h-screen w-full flex bg-white">
+        {/* Left Side - Login Form */}
+        <div className="w-full lg:w-1/2 flex flex-col justify-center items-center p-8 lg:p-16 xl:p-24 overflow-y-auto">
+          <LoginSection onLogin={() => setCurrentView('departments')} />
+        </div>
 
-      {/* Right Side - Visuals (Hidden on mobile) */}
-      <div className="hidden lg:flex w-1/2 bg-brand-primary relative overflow-hidden items-center justify-center">
-        <VisualSection />
+        {/* Right Side - Visuals (Hidden on mobile) */}
+        <div className="hidden lg:flex w-1/2 bg-brand-primary relative overflow-hidden items-center justify-center">
+          <VisualSection />
+        </div>
       </div>
-    </div>
+    </ToastProvider>
   );
 };
 
