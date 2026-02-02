@@ -12,6 +12,7 @@ import RichTextEditor from './RichTextEditor';
 interface AgentTicketViewProps {
     userProfile?: any;
     initialQueueFilter?: 'assigned' | 'submitted' | 'all';
+    initialTicketId?: string | null;
 }
 
 const workflowMap: Record<string, string[]> = {
@@ -23,10 +24,10 @@ const workflowMap: Record<string, string[]> = {
     'Canceled': ['Open']
 };
 
-const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQueueFilter = 'assigned' }) => {
+const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQueueFilter = 'assigned', initialTicketId = null }) => {
     // State
     const [tickets, setTickets] = useState<any[]>([]);
-    const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+    const [selectedTicketId, setSelectedTicketId] = useState<string | null>(initialTicketId);
     const [selectedTicket, setSelectedTicket] = useState<any | null>(null);
     const [activeTab, setActiveTab] = useState<'conversation' | 'details' | 'workflow' | 'sla' | 'activities' | 'attachments'>('conversation');
     const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
@@ -81,6 +82,15 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         }, 60000); // Tick every minute for performance & accuracy
         return () => clearInterval(timer);
     }, []);
+
+    // Sync initialTicketId from parent (e.g., from notification click)
+    useEffect(() => {
+        if (initialTicketId && initialTicketId !== selectedTicketId) {
+            setSelectedTicketId(initialTicketId);
+            // Switch to 'all' queue to ensure we can view the ticket regardless of assignment
+            setQueueFilter('all');
+        }
+    }, [initialTicketId]);
 
     // SLA Data States
     const [slaPolicies, setSlaPolicies] = useState<any[]>([]);
@@ -589,7 +599,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 // 4. AI SUMMARY GENERATION (Client-side NLP simulation)
                 // ==========================================
                 const summaryPoints: string[] = [];
-                const descLower = (selectedTicket.description || '').toLowerCase();
+                const descLower = `${selectedTicket.subject || ''} ${selectedTicket.description || ''}`.toLowerCase();
 
                 // Extract key information
                 if (selectedTicket.requester?.full_name) {
@@ -631,13 +641,15 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 let suggestedPriority = 'medium';
 
                 // Category detection
-                if (descLower.includes('login') || descLower.includes('password') || descLower.includes('akses') || descLower.includes('permission')) {
+                if (descLower.includes('dm') || descLower.includes('duta mall') || descLower.includes('tenant')) {
+                    suggestedCategory = 'DM Support';
+                } else if (descLower.includes('login') || descLower.includes('password') || descLower.includes('akses') || descLower.includes('permission')) {
                     suggestedCategory = 'Access & Authentication';
                 } else if (descLower.includes('hardware') || descLower.includes('laptop') || descLower.includes('monitor')) {
                     suggestedCategory = 'Hardware';
                 } else if (descLower.includes('network') || descLower.includes('wifi') || descLower.includes('internet') || descLower.includes('vpn')) {
                     suggestedCategory = 'Network & Connectivity';
-                } else if (descLower.includes('software') || descLower.includes('install') || descLower.includes('app')) {
+                } else if (descLower.includes('software') || descLower.includes('install') || descLower.includes('app') || descLower.includes('sap') || descLower.includes('erp')) {
                     suggestedCategory = 'Software & Applications';
                 }
 
@@ -2020,7 +2032,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                                         : isAgent
                                                             ? 'bg-white border-2 border-indigo-50 text-slate-700 hover:border-indigo-100 hover:shadow-indigo-50/50'
                                                             : 'bg-slate-50 border border-slate-100 text-slate-700'}`}>
-                                                    <div className="prose prose-slate prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: msg.content }} />
+                                                    <div className="prose prose-slate prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: msg.content || '' }} />
                                                 </div>
                                             </div>
                                         </div>
@@ -2476,28 +2488,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             </div>
                         </AICard>
 
-                        {/* Classification Card */}
-                        <AICard title="Suggested Classification" icon={Shield}>
-                            <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-3">
-                                <div className="flex justify-between text-xs">
-                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">Category</span>
-                                    <span className="text-gray-800 font-black">{aiClassification?.category || 'Analyzing...'}</span>
-                                </div>
-                                <div className="flex justify-between text-xs">
-                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">Priority</span>
-                                    <span className={`font-black ${aiClassification?.priority === 'urgent' ? 'text-red-500' :
-                                        aiClassification?.priority === 'high' ? 'text-orange-500' :
-                                            aiClassification?.priority === 'medium' ? 'text-amber-500' : 'text-green-500'
-                                        }`}>
-                                        {aiClassification?.priority?.toUpperCase() || 'N/A'}
-                                    </span>
-                                </div>
-                                <div className="grid grid-cols-2 gap-2 mt-2">
-                                    <button className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm hover:bg-indigo-700 transition-colors">Apply</button>
-                                    <button className="py-2.5 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors">Edit</button>
-                                </div>
-                            </div>
-                        </AICard>
+
 
                         {/* Suggested Reply Card */}
                         <AICard title="Suggested Reply" icon={Zap}>
@@ -2635,6 +2626,29 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     <li className="flex justify-between"><span>Time elapsed</span> <span className="text-gray-600">{slaRisk.timeElapsed}</span></li>
                                     <li className="flex justify-between"><span>Time remaining</span> <span className="text-indigo-600 font-black">{slaRisk.timeRemaining}</span></li>
                                 </ul>
+                            </div>
+                        </AICard>
+
+                        {/* Classification Card (Moved to bottom) */}
+                        <AICard title="Suggested Classification" icon={Shield}>
+                            <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-3">
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">Category</span>
+                                    <span className="text-gray-800 font-black">{aiClassification?.category || 'Analyzing...'}</span>
+                                </div>
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">Priority</span>
+                                    <span className={`font-black ${aiClassification?.priority === 'urgent' ? 'text-red-500' :
+                                        aiClassification?.priority === 'high' ? 'text-orange-500' :
+                                            aiClassification?.priority === 'medium' ? 'text-amber-500' : 'text-green-500'
+                                        }`}>
+                                        {aiClassification?.priority?.toUpperCase() || 'N/A'}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 mt-2">
+                                    <button className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm hover:bg-indigo-700 transition-colors">Apply</button>
+                                    <button className="py-2.5 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors">Edit</button>
+                                </div>
                             </div>
                         </AICard>
                     </div>

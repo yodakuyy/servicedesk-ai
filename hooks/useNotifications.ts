@@ -6,7 +6,7 @@ export interface Notification {
     user_id: string;
     title: string;
     message: string | null;
-    type: 'info' | 'warning' | 'success' | 'error' | 'ticket_new' | 'ticket_reply' | 'ticket_assigned' | 'sla_warning' | 'escalation';
+    type: 'info' | 'warning' | 'success' | 'error' | 'ticket_new' | 'ticket_reply' | 'ticket_assigned' | 'sla_warning' | 'escalation' | 'user_confirmed';
     reference_type: string | null;
     reference_id: string | null;
     is_read: boolean;
@@ -18,6 +18,25 @@ export function useNotifications(userId: string | null) {
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
     const [loading, setLoading] = useState(true);
+
+    // Reset read notifications from previous days
+    const resetDailyNotifications = useCallback(async () => {
+        if (!userId) return;
+
+        try {
+            // Call the database function to reset notifications read on previous days
+            const { error } = await supabase.rpc('reset_daily_read_notifications');
+            if (error) {
+                // If function doesn't exist yet, silently ignore
+                if (!error.message.includes('does not exist')) {
+                    console.warn('Daily reset function not available:', error.message);
+                }
+            }
+        } catch (error) {
+            // Silently ignore if function not available
+            console.warn('Could not reset daily notifications:', error);
+        }
+    }, [userId]);
 
     // Fetch notifications
     const fetchNotifications = useCallback(async () => {
@@ -123,10 +142,16 @@ export function useNotifications(userId: string | null) {
         }
     }, [userId]);
 
-    // Initial fetch
+    // Initial fetch with daily reset
     useEffect(() => {
-        fetchNotifications();
-    }, [fetchNotifications]);
+        const initializeNotifications = async () => {
+            // First, reset notifications read on previous days
+            await resetDailyNotifications();
+            // Then fetch current notifications
+            await fetchNotifications();
+        };
+        initializeNotifications();
+    }, [fetchNotifications, resetDailyNotifications]);
 
     // Real-time subscription
     useEffect(() => {
@@ -222,6 +247,8 @@ export function getNotificationIcon(type: Notification['type']) {
             return 'XCircle';
         case 'warning':
             return 'AlertCircle';
+        case 'user_confirmed':
+            return 'PartyPopper'; // Special icon for user confirmation
         default:
             return 'Bell';
     }
@@ -243,6 +270,8 @@ export function getNotificationColor(type: Notification['type']) {
             return 'text-green-600 bg-green-100';
         case 'error':
             return 'text-red-600 bg-red-100';
+        case 'user_confirmed':
+            return 'text-emerald-600 bg-emerald-100 ring-2 ring-emerald-300'; // Prominent green with ring
         default:
             return 'text-gray-600 bg-gray-100';
     }

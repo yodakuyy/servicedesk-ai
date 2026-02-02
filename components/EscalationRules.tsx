@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Plus, Search, Edit2, Trash2, X, ChevronDown, ChevronLeft, ChevronRight,
     Clock, AlertTriangle, Save, ArrowLeft, Bell, Users, User, Mail,
@@ -23,6 +23,7 @@ interface EscalationRule {
     sla_type: 'response' | 'resolution';
     trigger_type: 'percentage' | 'overdue_minutes';
     trigger_value: number;
+    trigger_source: 'sla' | 'user_confirmation'; // NEW: Source of escalation
     actions: EscalationAction[];
     notification_channels: ('in_app' | 'email')[];
     notification_message?: string;
@@ -38,7 +39,7 @@ interface UserData { id: string; full_name: string; email: string; }
 const mockRules: EscalationRule[] = [
     {
         id: '1', name: 'IT General - 80% Warning', sla_policy_id: '1', sla_policy_name: 'IT Support - Standard',
-        sla_type: 'response', trigger_type: 'percentage', trigger_value: 80,
+        sla_type: 'response', trigger_type: 'percentage', trigger_value: 80, trigger_source: 'sla',
         actions: [{ type: 'notify_supervisor' }],
         notification_channels: ['in_app', 'email'],
         notification_message: 'SLA is at 80% for ticket #{ticket_id}. Please take action.',
@@ -46,7 +47,7 @@ const mockRules: EscalationRule[] = [
     },
     {
         id: '2', name: 'IT General - Breach Alert', sla_policy_id: '1', sla_policy_name: 'IT Support - Standard',
-        sla_type: 'response', trigger_type: 'percentage', trigger_value: 100,
+        sla_type: 'response', trigger_type: 'percentage', trigger_value: 100, trigger_source: 'sla',
         actions: [{ type: 'notify_supervisor' }, { type: 'notify_group', target_id: '1', target_name: 'IT Managers' }, { type: 'change_priority', new_priority: 'Urgent' }],
         notification_channels: ['in_app', 'email'],
         notification_message: 'SLA BREACH for ticket #{ticket_id}! Immediate action required.',
@@ -54,7 +55,7 @@ const mockRules: EscalationRule[] = [
     },
     {
         id: '3', name: 'HR - Resolution Overdue', sla_policy_id: '2', sla_policy_name: 'HR - General Request',
-        sla_type: 'resolution', trigger_type: 'overdue_minutes', trigger_value: 60,
+        sla_type: 'resolution', trigger_type: 'overdue_minutes', trigger_value: 60, trigger_source: 'sla',
         actions: [{ type: 'reassign' }, { type: 'add_note', note_text: 'Ticket reassigned due to SLA breach.' }],
         notification_channels: ['email'],
         notification_message: 'Resolution SLA breached by 1 hour. Ticket #{ticket_id} has been reassigned.',
@@ -79,6 +80,109 @@ const actionTypes = [
     { value: 'add_note', label: 'Add Internal Note', icon: MessageSquare }
 ];
 
+// Searchable Dropdown Component
+interface SearchableDropdownProps {
+    value: string;
+    onChange: (value: string) => void;
+    options: { id: string; label: string }[];
+    placeholder: string;
+    searchPlaceholder?: string;
+}
+
+const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
+    value,
+    onChange,
+    options,
+    placeholder,
+    searchPlaceholder = 'Search...'
+}) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    const selectedOption = options.find(o => o.id === value);
+    const filteredOptions = options.filter(o =>
+        o.label.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+                setSearchTerm('');
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    // Focus input when dropdown opens
+    useEffect(() => {
+        if (isOpen && inputRef.current) {
+            inputRef.current.focus();
+        }
+    }, [isOpen]);
+
+    return (
+        <div ref={dropdownRef} className="relative mt-2">
+            <button
+                type="button"
+                onClick={() => setIsOpen(!isOpen)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-left flex items-center justify-between bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            >
+                <span className={selectedOption ? 'text-gray-800' : 'text-gray-400'}>
+                    {selectedOption ? selectedOption.label : placeholder}
+                </span>
+                <ChevronDown size={16} className={`text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isOpen && (
+                <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+                    {/* Search Input */}
+                    <div className="p-2 border-b border-gray-100">
+                        <div className="relative">
+                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input
+                                ref={inputRef}
+                                type="text"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder={searchPlaceholder}
+                                className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                            />
+                        </div>
+                    </div>
+
+                    {/* Options List */}
+                    <div className="max-h-48 overflow-y-auto">
+                        {filteredOptions.length === 0 ? (
+                            <div className="px-3 py-4 text-sm text-gray-500 text-center">No results found</div>
+                        ) : (
+                            filteredOptions.map(option => (
+                                <button
+                                    key={option.id}
+                                    type="button"
+                                    onClick={() => {
+                                        onChange(option.id);
+                                        setIsOpen(false);
+                                        setSearchTerm('');
+                                    }}
+                                    className={`w-full px-3 py-2 text-sm text-left hover:bg-indigo-50 flex items-center gap-2 ${value === option.id ? 'bg-indigo-100 text-indigo-700 font-medium' : 'text-gray-700'
+                                        }`}
+                                >
+                                    {option.label}
+                                </button>
+                            ))
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 const EscalationRules: React.FC = () => {
     const [view, setView] = useState<'list' | 'editor'>('list');
     const [rules, setRules] = useState<EscalationRule[]>([]);
@@ -94,7 +198,7 @@ const EscalationRules: React.FC = () => {
     // Form state  
     const [formData, setFormData] = useState<EscalationRule>({
         id: '', name: '', sla_policy_id: '', sla_type: 'response',
-        trigger_type: 'percentage', trigger_value: 80,
+        trigger_type: 'percentage', trigger_value: 80, trigger_source: 'sla',
         actions: [], notification_channels: ['in_app'],
         notification_message: 'SLA alert for ticket #{ticket_id}. Current status: {sla_status}.',
         is_active: true
@@ -103,6 +207,8 @@ const EscalationRules: React.FC = () => {
     const [saving, setSaving] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [ruleToDelete, setRuleToDelete] = useState<EscalationRule | null>(null);
+    const [showToggleConfirm, setShowToggleConfirm] = useState(false);
+    const [ruleToToggle, setRuleToToggle] = useState<EscalationRule | null>(null);
     const [showPreview, setShowPreview] = useState(false);
 
     // Pagination
@@ -155,6 +261,7 @@ const EscalationRules: React.FC = () => {
                     sla_type: esc.sla_type || 'response',
                     trigger_type: esc.trigger_type || 'percentage',
                     trigger_value: esc.trigger_value || 80,
+                    trigger_source: esc.trigger_source || 'sla',
                     actions: esc.actions || [],
                     notification_channels: esc.notification_channels || ['in_app'],
                     notification_message: esc.notification_message || '',
@@ -178,8 +285,8 @@ const EscalationRules: React.FC = () => {
         setSelectedRule(null);
         setFormData({
             id: '', name: '', sla_policy_id: '', sla_type: 'response',
-            trigger_type: 'percentage', trigger_value: 80, actions: [],
-            notification_channels: ['in_app'],
+            trigger_type: 'percentage', trigger_value: 80, trigger_source: 'sla',
+            actions: [], notification_channels: ['in_app'],
             notification_message: 'SLA alert for ticket #{ticket_id}. Current status: {sla_status}.',
             is_active: true
         });
@@ -242,6 +349,7 @@ const EscalationRules: React.FC = () => {
                 sla_type: formData.sla_type,
                 trigger_type: formData.trigger_type,
                 trigger_value: formData.trigger_value,
+                trigger_source: formData.trigger_source,
                 actions: formData.actions,
                 notification_channels: formData.notification_channels,
                 notification_message: formData.notification_message,
@@ -377,9 +485,14 @@ const EscalationRules: React.FC = () => {
                                     </td>
                                     <td className="px-6 py-4 text-center">
                                         <div className="flex flex-col items-center">
-                                            <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${rule.is_active ? 'bg-green-500' : 'bg-gray-300'}`}>
+                                            <button
+                                                type="button"
+                                                onClick={() => { setRuleToToggle(rule); setShowToggleConfirm(true); }}
+                                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer hover:opacity-80 ${rule.is_active ? 'bg-green-500' : 'bg-gray-300'}`}
+                                                title={`Click to ${rule.is_active ? 'deactivate' : 'activate'} this rule`}
+                                            >
                                                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${rule.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
-                                            </div>
+                                            </button>
                                             <span className="text-[10px] text-gray-400 mt-1">{rule.is_active ? 'Active' : 'Inactive'}</span>
                                         </div>
                                     </td>
@@ -419,6 +532,63 @@ const EscalationRules: React.FC = () => {
                             <div className="flex justify-end gap-3 mt-6">
                                 <button onClick={() => setShowDeleteConfirm(false)} className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg border">Cancel</button>
                                 <button onClick={handleDelete} className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg">Delete</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Toggle Status Confirmation Modal */}
+                {showToggleConfirm && ruleToToggle && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+                            <div className="flex items-start gap-4">
+                                <div className={`w-12 h-12 ${ruleToToggle.is_active ? 'bg-orange-100' : 'bg-green-100'} rounded-full flex items-center justify-center`}>
+                                    <PlayCircle size={24} className={ruleToToggle.is_active ? 'text-orange-600' : 'text-green-600'} />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-800">
+                                        {ruleToToggle.is_active ? 'Deactivate Rule?' : 'Activate Rule?'}
+                                    </h3>
+                                    <p className="text-sm text-gray-600 mt-1">
+                                        {ruleToToggle.is_active
+                                            ? `Rule "${ruleToToggle.name}" will be deactivated and won't trigger any escalations.`
+                                            : `Rule "${ruleToToggle.name}" will be activated and start triggering escalations.`
+                                        }
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex justify-end gap-3 mt-6">
+                                <button
+                                    onClick={() => { setShowToggleConfirm(false); setRuleToToggle(null); }}
+                                    className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg border"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        try {
+                                            const newStatus = !ruleToToggle.is_active;
+                                            const { error } = await supabase
+                                                .from('sla_escalations')
+                                                .update({ is_active: newStatus })
+                                                .eq('id', ruleToToggle.id);
+
+                                            if (error) throw error;
+
+                                            setRules(rules.map(r =>
+                                                r.id === ruleToToggle.id ? { ...r, is_active: newStatus } : r
+                                            ));
+                                            setShowToggleConfirm(false);
+                                            setRuleToToggle(null);
+                                        } catch (error: any) {
+                                            console.error('Toggle Error:', error);
+                                            alert('Error updating status: ' + (error.message || 'Check console'));
+                                        }
+                                    }}
+                                    className={`px-4 py-2 text-sm font-medium text-white rounded-lg ${ruleToToggle.is_active ? 'bg-orange-600 hover:bg-orange-700' : 'bg-green-600 hover:bg-green-700'}`}
+                                >
+                                    {ruleToToggle.is_active ? 'Deactivate' : 'Activate'}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -565,16 +735,22 @@ const EscalationRules: React.FC = () => {
                                             <div className="flex-1">
                                                 <p className="text-sm font-medium text-gray-800">{actionInfo?.label}</p>
                                                 {action.type === 'notify_group' && (
-                                                    <select value={action.target_id || ''} onChange={(e) => updateAction(idx, 'target_id', e.target.value)} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
-                                                        <option value="">Select Group</option>
-                                                        {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                                                    </select>
+                                                    <SearchableDropdown
+                                                        value={action.target_id || ''}
+                                                        onChange={(val) => updateAction(idx, 'target_id', val)}
+                                                        options={groups.map(g => ({ id: g.id, label: g.name }))}
+                                                        placeholder="Select Group"
+                                                        searchPlaceholder="Search groups..."
+                                                    />
                                                 )}
                                                 {action.type === 'notify_user' && (
-                                                    <select value={action.target_id || ''} onChange={(e) => updateAction(idx, 'target_id', e.target.value)} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
-                                                        <option value="">Select User</option>
-                                                        {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-                                                    </select>
+                                                    <SearchableDropdown
+                                                        value={action.target_id || ''}
+                                                        onChange={(val) => updateAction(idx, 'target_id', val)}
+                                                        options={users.map(u => ({ id: u.id, label: u.full_name }))}
+                                                        placeholder="Select User"
+                                                        searchPlaceholder="Search users..."
+                                                    />
                                                 )}
                                                 {action.type === 'change_priority' && (
                                                     <select value={action.new_priority || ''} onChange={(e) => updateAction(idx, 'new_priority', e.target.value)} className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">

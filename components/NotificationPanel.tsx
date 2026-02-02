@@ -10,7 +10,8 @@ import {
     X,
     Check,
     Trash2,
-    ExternalLink
+    ExternalLink,
+    PartyPopper
 } from 'lucide-react';
 import { Notification, formatRelativeTime, getNotificationColor } from '../hooks/useNotifications';
 
@@ -51,6 +52,8 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
                 return <CheckCircle {...iconProps} />;
             case 'error':
                 return <XCircle {...iconProps} />;
+            case 'user_confirmed':
+                return <PartyPopper {...iconProps} />;
             default:
                 return <Bell {...iconProps} />;
         }

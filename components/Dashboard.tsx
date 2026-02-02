@@ -527,7 +527,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} />;
       } else {
         // Agent/SPV uses the new Agent Workspace View with tabs
-        return <AgentTicketView userProfile={userProfile} />;
+        return <AgentTicketView userProfile={userProfile} initialTicketId={selectedTicketId} />;
       }
     }
 
@@ -1063,7 +1063,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   label={displayLabel}
                   badge={badgeCount}
                   active={currentView === view}
-                  onClick={() => setCurrentView(view)}
+                  onClick={() => {
+                    setSelectedTicketId(null); // Reset ticket selection when navigating via menu
+                    setCurrentView(view);
+                  }}
                 />
               );
             })

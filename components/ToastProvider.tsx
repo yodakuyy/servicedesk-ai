@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
-import { Bell, Ticket, MessageSquare, AlertTriangle, CheckCircle, XCircle, X, ExternalLink } from 'lucide-react';
+import { Bell, Ticket, MessageSquare, AlertTriangle, CheckCircle, XCircle, X, ExternalLink, PartyPopper } from 'lucide-react';
 
 export interface Toast {
     id: string;
     title: string;
     message?: string;
-    type: 'info' | 'success' | 'warning' | 'error' | 'ticket_new' | 'ticket_reply' | 'ticket_assigned' | 'sla_warning' | 'escalation';
+    type: 'info' | 'success' | 'warning' | 'error' | 'ticket_new' | 'ticket_reply' | 'ticket_assigned' | 'sla_warning' | 'escalation' | 'user_confirmed';
     duration?: number; // ms, default 5000
     referenceType?: string;
     referenceId?: string;
@@ -96,6 +96,8 @@ const ToastItem: React.FC<{ toast: Toast; onRemove: () => void; index: number }>
                 return <CheckCircle {...iconProps} />;
             case 'error':
                 return <XCircle {...iconProps} />;
+            case 'user_confirmed':
+                return <PartyPopper {...iconProps} />;
             default:
                 return <Bell {...iconProps} />;
         }
@@ -140,6 +142,13 @@ const ToastItem: React.FC<{ toast: Toast; onRemove: () => void; index: number }>
                     iconBg: 'bg-white/20',
                     text: 'text-white',
                     subtext: 'text-white/80'
+                };
+            case 'user_confirmed':
+                return {
+                    bg: 'bg-gradient-to-r from-emerald-400 via-teal-500 to-cyan-500',
+                    iconBg: 'bg-white/30',
+                    text: 'text-white',
+                    subtext: 'text-white/90'
                 };
             default:
                 return {
