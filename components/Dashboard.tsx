@@ -133,8 +133,8 @@ const NotificationBadge: React.FC<{ userId: string | null }> = ({ userId }) => {
   if (unreadCount === 0) return null;
 
   return (
-    <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white shadow-sm ring-2 ring-red-500/20 group-hover:scale-110 transition-transform animate-pulse">
-      {unreadCount > 9 ? '9+' : unreadCount}
+    <span className="absolute top-1.5 right-1.5 min-w-[16px] h-4 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white shadow-sm ring-2 ring-red-500/20 group-hover:scale-110 transition-transform animate-pulse px-0.5">
+      {unreadCount}
     </span>
   );
 };

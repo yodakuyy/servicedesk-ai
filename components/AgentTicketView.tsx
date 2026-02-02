@@ -4,7 +4,7 @@ import {
     MessageSquare, FileText, GitBranch, Shield, Send, Sparkles,
     ChevronRight, ChevronLeft, ChevronDown, Paperclip, Mic, User, Copy, ExternalLink,
     ThumbsUp, RefreshCw, AlertTriangle, Loader2, Zap, X, Info, BookOpen,
-    ArrowUpRight, ArrowRight, BarChart3, Lock, List, Users, Building2
+    ArrowUpRight, ArrowRight, BarChart3, Lock, List, Users, Building2, Upload
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
@@ -44,6 +44,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
     const [isAssigning, setIsAssigning] = useState(false);
     const [isTransferring, setIsTransferring] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
 
     // AI Copilot States
     const [aiSummary, setAiSummary] = useState<string[]>([]);
@@ -334,6 +335,64 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         };
         fetchSLAData();
     }, [userProfile]);
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files || e.target.files.length === 0 || !selectedTicketId) return;
+        const file = e.target.files[0];
+
+        try {
+            setIsUploading(true);
+            const fileExt = file.name.split('.').pop();
+            const fileName = `${selectedTicketId}/${Date.now()}.${fileExt}`;
+
+            const { error: uploadError } = await supabase.storage
+                .from('ticket-attachments')
+                .upload(fileName, file);
+
+            if (uploadError) throw uploadError;
+
+            const { data: attData, error: dbError } = await supabase
+                .from('ticket_attachments')
+                .insert({
+                    ticket_id: selectedTicketId,
+                    file_name: file.name,
+                    file_path: fileName,
+                    file_size: file.size,
+                    mime_type: file.type,
+                    uploaded_by: userProfile?.id
+                })
+                .select()
+                .single();
+
+            if (dbError) throw dbError;
+
+            // Update local state
+            setSelectedTicket((prev: any) => ({
+                ...prev,
+                ticket_attachments: [...(prev.ticket_attachments || []), attData]
+            }));
+
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                toast: true,
+                position: 'top-end',
+                icon: 'success',
+                title: 'File attached successfully',
+                showConfirmButton: false,
+                timer: 3000
+            });
+
+        } catch (error: any) {
+            console.error('Upload error:', error);
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire('Error', error.message || 'Failed to upload file.', 'error');
+        } finally {
+            setIsUploading(false);
+            e.target.value = '';
+        }
+    };
 
     useEffect(() => {
         const fetchTickets = async () => {
@@ -971,6 +1030,34 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 .order('created_at', { ascending: false });
             if (logs) setActivityLogs(logs);
 
+            // Refetch ticket details to keep SLA and timers in sync
+            if (selectedTicket.ticket_statuses?.status_name !== 'Open') {
+                const { data: updatedTicket } = await supabase
+                    .from('tickets')
+                    .select(`
+                        *,
+                        ticket_statuses!fk_tickets_status (status_name),
+                        ticket_categories (name),
+                        services (name),
+                        requester:profiles!fk_tickets_requester (full_name, email),
+                        assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                        group:groups!assignment_group_id (
+                            id, name, company_id,
+                            company:company_id(company_name),
+                            group_sla_policies(sla_policy_id),
+                            business_hours(weekly_schedule)
+                        ),
+                        ticket_attachments (*)
+                    `)
+                    .eq('id', selectedTicketId)
+                    .single();
+
+                if (updatedTicket) {
+                    setSelectedTicket(updatedTicket);
+                    setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
+                }
+            }
+
             // Success feedback (optional, toast is better)
             // @ts-ignore
             const Swal = (await import('sweetalert2')).default;
@@ -1047,7 +1134,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
-                    group:groups!assignment_group_id (name)
+                    group:groups!assignment_group_id (
+                        id, name, company_id,
+                        company:company_id(company_name),
+                        group_sla_policies(sla_policy_id),
+                        business_hours(weekly_schedule)
+                    ),
+                    ticket_attachments (*)
                 `)
                 .eq('id', selectedTicketId)
                 .single();
@@ -2339,6 +2432,11 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             <div className="max-w-4xl mx-auto p-4 space-y-4">
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">Attached Files</h3>
+                                    <label className={`flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors cursor-pointer ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                                        <input type="file" className="hidden" onChange={handleFileUpload} disabled={isUploading} />
+                                        {isUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                                        {isUploading ? 'Uploading...' : 'Upload File'}
+                                    </label>
                                 </div>
                                 {(!selectedTicket.ticket_attachments || selectedTicket.ticket_attachments.length === 0) ? (
                                     <div className="text-sm text-gray-500 italic bg-gray-50 p-8 rounded-xl border border-gray-100 flex flex-col items-center justify-center gap-2 text-center">

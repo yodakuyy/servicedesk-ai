@@ -126,7 +126,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
                         {notifications.map((notif) => (
                             <div
                                 key={notif.id}
-                                className={`px-4 py-3.5 hover:bg-gray-50/80 transition-colors cursor-pointer group relative ${!notif.is_read ? 'bg-indigo-50/30' : ''
+                                className={`px-4 py-3.5 hover:bg-gray-50/80 transition-colors cursor-pointer group relative border-l-2 ${!notif.is_read ? 'bg-blue-50 border-indigo-500' : 'bg-white border-transparent'
                                     }`}
                                 onClick={() => handleNotificationClick(notif)}
                             >
