@@ -193,9 +193,20 @@ export function useNotifications(userId: string | null) {
                 },
                 (payload) => {
                     const updatedNotification = payload.new as Notification;
+                    const oldNotification = payload.old as Notification;
+
                     setNotifications(prev =>
                         prev.map(n => n.id === updatedNotification.id ? updatedNotification : n)
                     );
+
+                    // Update unread count if is_read status changed
+                    if (!oldNotification.is_read && updatedNotification.is_read) {
+                        // Was unread, now read -> decrease count
+                        setUnreadCount(prev => Math.max(0, prev - 1));
+                    } else if (oldNotification.is_read && !updatedNotification.is_read) {
+                        // Was read, now unread -> increase count
+                        setUnreadCount(prev => prev + 1);
+                    }
                 }
             )
             .on(
@@ -207,8 +218,13 @@ export function useNotifications(userId: string | null) {
                     filter: `user_id=eq.${userId}`
                 },
                 (payload) => {
-                    const deletedId = (payload.old as any).id;
-                    setNotifications(prev => prev.filter(n => n.id !== deletedId));
+                    const deletedNotif = payload.old as Notification;
+                    setNotifications(prev => prev.filter(n => n.id !== deletedNotif.id));
+
+                    // Update unread count if deleted notification was unread
+                    if (!deletedNotif.is_read) {
+                        setUnreadCount(prev => Math.max(0, prev - 1));
+                    }
                 }
             )
             .subscribe();

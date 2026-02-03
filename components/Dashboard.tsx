@@ -26,9 +26,14 @@ import {
   Wrench,
   Shield,
   Zap,
-  Globe
+  Globe,
+  Eye,
+  AlertCircle,
+  Clock,
+  Briefcase,
+  CheckCircle
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import IncidentList from './IncidentList';
 import KnowledgeBase from './KnowledgeBase';
 import OutOfOffice from './OutOfOffice';
@@ -62,37 +67,8 @@ interface DashboardProps {
   initialView?: string;
 }
 
-// Data for charts/tables
-const ticketData = [
-  { id: 'INC4568', date: '04/12/23', time: '08:24AM', subject: 'Error when starting Microsoft Word', user: 'Marso.27', status: 'WIP', lastUpdate: '23min', updateColor: 'bg-green-100 text-green-700', urgency: 'High' },
-  { id: 'RITM4321', date: '04/11/23', time: '10:07AM', subject: 'Assistance moving desktop computer', user: 'Deppert.5', status: 'Assigned', lastUpdate: '1hr', updateColor: 'bg-green-100 text-green-700', urgency: 'Low' },
-  { id: 'RITM4268', date: '04/10/23', time: '02:34PM', subject: "I'd like to order a new webcam", user: 'Miller.409', status: 'Pending', lastUpdate: '2 days', updateColor: 'bg-red-100 text-red-700', urgency: 'Medium' },
-  { id: 'RITM4599', date: '04/10/23', time: '09:15AM', subject: 'Need access to shared drive', user: 'Smith.839', status: 'WIP', lastUpdate: '4min', updateColor: 'bg-green-100 text-green-700', urgency: 'Urgent' },
-  { id: 'INC4567', date: '04/08/23', time: '08:24AM', subject: "Can't sign into app", user: 'Shulz.45', status: 'Pending', lastUpdate: '1 day', updateColor: 'bg-yellow-100 text-yellow-700', urgency: 'Medium' },
-];
-
-const overdueData = [
-  { id: 'RITM4579', date: '04/12/23', time: '10:40PM', subject: 'Need assistance with powerpoint', user: 'Lynn.2', urgency: 'Medium', eta: '-2h', assignedTo: 'Unassigned' },
-  { id: 'RITM4344', date: '04/12/23', time: '10:17AM', subject: 'Requesting info about new app', user: 'Mackay.43', urgency: 'High', eta: '-4h', assignedTo: 'John.D' },
-  { id: 'INC4298', date: '04/12/23', time: '08:34PM', subject: 'Keyboard not responding', user: 'Wilson.25', assignedTo: 'Levinson.2', urgency: 'Low', eta: '-1d' },
-  { id: 'RITM4601', date: '04/11/23', time: '07:37AM', subject: 'Financial app access needed', user: 'Fry.36', urgency: 'Urgent', eta: '-30m', assignedTo: 'Sarah.K' },
-];
-
-const topServiceRequestsData = [
-  { name: 'New Account', count: 65, fill: '#3b82f6' },
-  { name: 'Password', count: 48, fill: '#8b5cf6' },
-  { name: 'Software', count: 32, fill: '#ec4899' },
-  { name: 'Hardware', count: 24, fill: '#10b981' },
-  { name: 'Access', count: 18, fill: '#f59e0b' },
-];
-
-const topIncidentsData = [
-  { name: 'Network', count: 42, fill: '#ef4444' },
-  { name: 'Software', count: 35, fill: '#f97316' },
-  { name: 'Hardware', count: 28, fill: '#eab308' },
-  { name: 'Printer', count: 15, fill: '#06b6d4' },
-  { name: 'Email', count: 12, fill: '#6366f1' },
-];
+// Data for charts will be fetched from database
+// Static data removed - now using dashboardData state
 
 // Reusable Sidebar Item
 interface SidebarItemProps {
@@ -127,9 +103,7 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ icon: Icon, label, active = f
 );
 
 // Notification Badge Component
-const NotificationBadge: React.FC<{ userId: string | null }> = ({ userId }) => {
-  const { unreadCount } = useNotifications(userId);
-
+const NotificationBadge: React.FC<{ unreadCount: number }> = ({ unreadCount }) => {
   if (unreadCount === 0) return null;
 
   return (
@@ -141,12 +115,15 @@ const NotificationBadge: React.FC<{ userId: string | null }> = ({ userId }) => {
 
 // Notification Panel Wrapper Component
 const NotificationPanelWrapper: React.FC<{
-  userId: string | null;
+  notifications: any[];
+  unreadCount: number;
+  markAsRead: (id: string) => Promise<void>;
+  markAllAsRead: () => Promise<void>;
+  deleteNotification: (id: string) => Promise<void>;
+  clearAll: () => Promise<void>;
   onClose: () => void;
   onNavigate?: (referenceType: string, referenceId: string) => void;
-}> = ({ userId, onClose, onNavigate }) => {
-  const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll } = useNotifications(userId);
-
+}> = ({ notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll, onClose, onNavigate }) => {
   return (
     <NotificationPanel
       notifications={notifications}
@@ -192,6 +169,28 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   const [showNotificationPanel, setShowNotificationPanel] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
+
+  // Dashboard data states
+  const [dashboardData, setDashboardData] = useState<{
+    newTickets: any[];
+    overdueTickets: any[];
+    topIncidents: { name: string; count: number; fill: string }[];
+    topServiceRequests: { name: string; count: number; fill: string }[];
+    stats: { current: number; closed: number; overdue: number; unassigned: number; satisfaction: string };
+    weeklyTrend: { name: string; incidents: number; requests: number }[];
+    teamPulse: { name: string; active: number; resolved: number; status: string; score: number }[];
+  }>({
+    newTickets: [],
+    overdueTickets: [],
+    topIncidents: [],
+    topServiceRequests: [],
+    stats: { current: 0, closed: 0, overdue: 0, unassigned: 0, satisfaction: "0.0" },
+    weeklyTrend: [],
+    teamPulse: []
+  });
+
+  // Shared notification state - single source of truth
+  const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll } = useNotifications(userProfile?.id);
 
   // Handle initial view prop changes (Deep Linking)
   useEffect(() => {
@@ -288,6 +287,257 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       handleAutoClose();
     }
   }, [userProfile?.id]);
+
+  // Fetch dashboard data
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      if (!userProfile?.id) return;
+
+      try {
+        const { supabase } = await import('../lib/supabase');
+
+        // Get new tickets (Open status, last 7 days)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const isAgent = userProfile?.role_id === 3 || userProfile?.role_id === '3';
+
+        let newTicketsQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, subject, priority, created_at,
+            requester:profiles!fk_tickets_requester(full_name),
+            assigned_agent:profiles!fk_tickets_assigned_agent(full_name),
+            ticket_statuses!fk_tickets_status(status_name)
+          `)
+          .in('status_id', (
+            await supabase.from('ticket_statuses').select('status_id').in('status_name', ['Open', 'In Progress'])
+          ).data?.map(s => s.status_id) || [])
+          .order('created_at', { ascending: false })
+          .limit(5);
+
+        // Filter for specific agent if needed
+        if (isAgent) {
+          newTicketsQuery = newTicketsQuery.eq('assigned_to', userProfile.id);
+        } else {
+          newTicketsQuery = newTicketsQuery.gte('created_at', sevenDaysAgo.toISOString());
+        }
+
+        const { data: newTickets } = await newTicketsQuery;
+
+        // Get overdue tickets (simplified - tickets open > 24h)
+        const twentyFourHoursAgo = new Date();
+        twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+        let overdueQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, subject, priority, created_at, updated_at,
+            requester:profiles!fk_tickets_requester(full_name),
+            assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
+          `)
+          .in('status_id', (
+            await supabase.from('ticket_statuses').select('status_id').in('status_name', ['Open', 'In Progress'])
+          ).data?.map(s => s.status_id) || [])
+          .lt('created_at', twentyFourHoursAgo.toISOString())
+          .order('created_at', { ascending: true })
+          .limit(4);
+
+        if (isAgent) {
+          overdueQuery = overdueQuery.eq('assigned_to', userProfile.id);
+        }
+
+        const { data: overdueTickets } = await overdueQuery;
+
+        // Get top 5 incident categories
+        const { data: incidentCategories } = await supabase
+          .from('tickets')
+          .select('category_id, ticket_categories(name)')
+          .eq('ticket_type', 'Incident');
+
+        const categoryCount: Record<string, number> = {};
+        incidentCategories?.forEach(t => {
+          const catName = (t.ticket_categories as any)?.name || 'Uncategorized';
+          categoryCount[catName] = (categoryCount[catName] || 0) + 1;
+        });
+
+        const colors = ['#ef4444', '#f97316', '#eab308', '#06b6d4', '#6366f1'];
+        const topIncidents = Object.entries(categoryCount)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([name, count], i) => ({ name, count, fill: colors[i] || '#9ca3af' }));
+
+        // Get top 5 service request categories
+        const { data: srCategories } = await supabase
+          .from('tickets')
+          .select('category_id, ticket_categories(name)')
+          .eq('ticket_type', 'Service Request');
+
+        const srCategoryCount: Record<string, number> = {};
+        srCategories?.forEach(t => {
+          const catName = (t.ticket_categories as any)?.name || 'Uncategorized';
+          srCategoryCount[catName] = (srCategoryCount[catName] || 0) + 1;
+        });
+
+        const srColors = ['#3b82f6', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b'];
+        const topSR = Object.entries(srCategoryCount)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([name, count], i) => ({ name, count, fill: srColors[i] || '#9ca3af' }));
+
+        // Get stats (Personal for Agent, Global for SPV)
+        let currentQuery = supabase
+          .from('tickets')
+          .select('*', { count: 'exact', head: true })
+          .in('status_id', (
+            await supabase.from('ticket_statuses').select('status_id').in('status_name', ['Open', 'In Progress', 'Pending'])
+          ).data?.map(s => s.status_id) || []);
+
+        if (isAgent) {
+          currentQuery = currentQuery.eq('assigned_to', userProfile.id);
+        }
+
+        const { count: currentCount } = await currentQuery;
+
+        let closedQuery = supabase
+          .from('tickets')
+          .select('*', { count: 'exact', head: true })
+          .in('status_id', (
+            await supabase.from('ticket_statuses').select('status_id').in('status_name', ['Resolved', 'Closed'])
+          ).data?.map(s => s.status_id) || []);
+
+        // For "Resolved Today", only count tickets resolved/closed today
+        closedQuery = closedQuery.gte('updated_at', new Date().toISOString().split('T')[0]);
+
+        if (isAgent) {
+          closedQuery = closedQuery.eq('assigned_to', userProfile.id);
+        }
+
+        const { count: closedCount } = await closedQuery;
+
+        // Unassigned Tickets Count (Using correct assigned_to column)
+        const { count: unassignedCount } = await supabase
+          .from('tickets')
+          .select('*', { count: 'exact', head: true })
+          .is('assigned_to', null)
+          .in('status_id', (
+            await supabase.from('ticket_statuses').select('status_id').neq('status_name', 'Closed').neq('status_name', 'Resolved')
+          ).data?.map(s => s.status_id) || []);
+
+        // REAL DATA: AVERAGE SATISFACTION (CSAT)
+        const { data: satisfactionData } = await supabase
+          .from('tickets')
+          .select('satisfaction_rating')
+          .not('satisfaction_rating', 'is', null);
+
+        const avgSatisfaction = satisfactionData?.length
+          ? (satisfactionData.reduce((acc, curr) => acc + (curr.satisfaction_rating || 0), 0) / satisfactionData.length).toFixed(1)
+          : "0.0";
+
+        // REAL DATA: WEEKLY TREND
+        const sevenDaysAgoDate = new Date();
+        sevenDaysAgoDate.setDate(sevenDaysAgoDate.getDate() - 6);
+        const { data: trendTickets } = await supabase
+          .from('tickets')
+          .select('created_at, ticket_type')
+          .gte('created_at', sevenDaysAgoDate.toISOString().split('T')[0]);
+
+        const weeklyTrendMap: Record<string, { incidents: number; requests: number }> = {};
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+        // Initialize last 7 days
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          const dayName = days[d.getDay()];
+          weeklyTrendMap[dayName] = { incidents: 0, requests: 0 };
+        }
+
+        trendTickets?.forEach(t => {
+          const d = new Date(t.created_at);
+          const dayName = days[d.getDay()];
+          if (weeklyTrendMap[dayName]) {
+            if (t.ticket_type === 'Incident') weeklyTrendMap[dayName].incidents++;
+            else weeklyTrendMap[dayName].requests++;
+          }
+        });
+
+        // Convert map to array ensuring correct order (simplified: just standard week order or current logic)
+        // Better logic: loop 7 days again to build array
+        const weeklyTrend = [];
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          const dayName = days[d.getDay()];
+          weeklyTrend.push({
+            name: dayName,
+            incidents: weeklyTrendMap[dayName]?.incidents || 0,
+            requests: weeklyTrendMap[dayName]?.requests || 0
+          });
+        }
+
+        // REAL DATA: TEAM PULSE (RPC version to fix RLS 0 counts)
+        let teamPulse = [];
+        try {
+          const { data: rpcData, error: rpcError } = await supabase.rpc('get_team_pulse');
+
+          if (rpcError) throw rpcError;
+
+          if (rpcData) {
+            teamPulse = rpcData.map((agent: any) => {
+              const active = Number(agent.active_count);
+              const resolved = Number(agent.resolved_today_count);
+              const isSPV = agent.role_id === 2;
+
+              let score = 100 - (active * 5) + (resolved * 2);
+              score = Math.min(100, Math.max(0, score));
+
+              return {
+                name: agent.full_name || agent.email || 'Unknown Agent',
+                active: active,
+                overdue: Number(agent.overdue_count || 0),
+                resolved: resolved,
+                status: active > 8 ? 'Overload' : active > 3 ? 'Busy' : 'Free',
+                score: score,
+                isSPV: isSPV
+              };
+            });
+          }
+        } catch (err: any) {
+          console.error("Team Pulse RPC failed. Error details:", err);
+          // Log exact Postgres error if available
+          if (err?.message) console.error("Postgres Message:", err.message);
+          if (err?.code) console.error("Postgres Code:", err.code);
+        }
+
+        // Fallback jika kosong
+        if (teamPulse.length === 0) {
+          teamPulse = [{ name: 'Data Belum Tersedia', active: 0, resolved: 0, status: 'Free', score: 100, isSPV: false }];
+        }
+
+        setDashboardData({
+          newTickets: newTickets || [],
+          overdueTickets: overdueTickets || [],
+          topIncidents,
+          topServiceRequests: topSR,
+          stats: {
+            current: currentCount || 0,
+            closed: closedCount || 0,
+            overdue: overdueTickets?.length || 0,
+            unassigned: unassignedCount || 0,
+            satisfaction: avgSatisfaction
+          },
+          weeklyTrend: weeklyTrend,
+          teamPulse: teamPulse
+        });
+
+      } catch (error) {
+        console.error('Error fetching dashboard data:', error);
+      }
+    };
+
+    fetchDashboardData();
+  }, [userProfile?.id, currentView]);
 
   const toggleSettingsSub = (key: keyof typeof settingsSubOpen) => {
     setSettingsSubOpen(prev => ({ ...prev, [key]: !prev[key] }));
@@ -500,12 +750,87 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   const handleViewTicket = (id: string, fromView: 'incidents' | 'my-tickets' | 'user-dashboard' = 'incidents') => {
     setSelectedTicketId(id);
     setPreviousView(fromView);
-    if (fromView === 'user-dashboard') {
-      setCurrentView('my-tickets');
-    } else {
-      setCurrentView('ticket-detail');
-    }
+    // Always navigate to 'incidents' view to show the full ticket workspace (AgentTicketView or RequesterTicketManager)
+    setCurrentView('incidents');
   };
+
+  // Helper render common table to avoid duplication
+  const renderCommonTable = (tickets: any[]) => (
+    <table className="w-full text-left text-sm whitespace-nowrap">
+      <thead className="text-gray-400 font-medium border-b border-gray-50 bg-gray-50/30">
+        <tr>
+          <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Ticket Number</th>
+          <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Subject</th>
+          <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Request For</th>
+          <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Agent</th>
+          <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Urgency</th>
+          <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Action</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-gray-50">
+        {tickets.length === 0 ? (
+          <tr>
+            <td colSpan={6} className="px-6 py-8 text-center text-gray-400 text-sm">No tickets found</td>
+          </tr>
+        ) : tickets.map((ticket, i) => (
+          <tr key={ticket.id} className="hover:bg-gray-50/50 transition-colors group">
+            <td className="px-6 py-4 text-gray-500 font-medium text-xs">{ticket.ticket_number}</td>
+            <td className="px-6 py-4 text-gray-700 font-medium max-w-xs truncate text-xs">{ticket.subject}</td>
+            <td className="px-6 py-4">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-bold text-indigo-600">
+                  {(ticket.requester?.full_name || 'U').charAt(0).toUpperCase()}
+                </div>
+                <span className="text-xs text-gray-600">{ticket.requester?.full_name?.split(' ')[0] || 'Unknown'}</span>
+              </div>
+            </td>
+            <td className="px-6 py-4">
+              <div className="flex items-center gap-2">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${ticket.assigned_agent ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>
+                  {ticket.assigned_agent ? ticket.assigned_agent.full_name.charAt(0).toUpperCase() : '?'}
+                </div>
+                <span className="text-gray-500 text-xs">{ticket.assigned_agent?.full_name?.split(' ')[0] || 'Unassigned'}</span>
+              </div>
+            </td>
+            <td className="px-6 py-4">
+              {(() => {
+                const p = (ticket.priority || 'Low').toLowerCase();
+                let badgeClass = 'bg-slate-100 text-slate-600 border-slate-200';
+                let icon = null;
+
+                if (p.includes('urgent') || p.includes('critical')) {
+                  badgeClass = 'bg-red-50 text-red-600 border-red-100 animate-pulse';
+                  icon = <AlertCircle size={10} className="fill-red-600 text-white" />;
+                } else if (p.includes('high')) {
+                  badgeClass = 'bg-orange-50 text-orange-600 border-orange-100';
+                  icon = <TrendingUp size={10} />;
+                } else if (p.includes('medium')) {
+                  badgeClass = 'bg-amber-50 text-amber-600 border-amber-100';
+                } else {
+                  badgeClass = 'bg-emerald-50 text-emerald-600 border-emerald-100';
+                }
+
+                return (
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${badgeClass}`}>
+                    {icon}
+                    {ticket.priority || 'Low'}
+                  </span>
+                );
+              })()}
+            </td>
+            <td className="px-6 py-4">
+              <button
+                onClick={() => handleViewTicket(ticket.id)}
+                className="group flex items-center gap-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
+              >
+                OPEN <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+              </button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 
   const renderContent = () => {
     if (currentView === 'user-dashboard' || currentView === 'my-dashboard') {
@@ -730,221 +1055,341 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       );
     }
 
+    const isAgent = userProfile?.role_id === 3 || userProfile?.role_id === '3';
+    const isSPV = userProfile?.role_id === 2 || userProfile?.role_id === '2' || userProfile?.role_id === 1 || userProfile?.role_id === '1'; // SPV & Admin
+
+    // AGENT VIEW: Focus on "My Work"
+    if (isAgent) {
+      return (
+        <div className="p-8">
+          <div className="mb-6">
+            <h1 className="text-2xl font-bold text-gray-800">Good Morning, {userProfile?.full_name?.split(' ')[0] || 'Agent'}! 👋</h1>
+            <p className="text-gray-500">Here's what's on your plate today.</p>
+          </div>
+
+          <div className="grid grid-cols-12 gap-6">
+            {/* Agent Stats - Personal Focus */}
+            <div className="col-span-12 grid grid-cols-3 gap-6 mb-2">
+              <div className="bg-white p-5 rounded-2xl border border-indigo-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all">
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">My Open Tickets</p>
+                  <h3 className="text-3xl font-black text-gray-800 mt-1">{dashboardData.stats.current}</h3>
+                </div>
+                <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 group-hover:scale-110 transition-transform">
+                  <Briefcase size={24} />
+                </div>
+              </div>
+              <div className="bg-white p-5 rounded-2xl border border-emerald-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all">
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Resolved Today</p>
+                  <h3 className="text-3xl font-black text-gray-800 mt-1">{dashboardData.stats.closed}</h3>
+                </div>
+                <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 group-hover:scale-110 transition-transform">
+                  <CheckCircle size={24} />
+                </div>
+              </div>
+              <div className="bg-white p-5 rounded-2xl border border-red-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all">
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Overdue</p>
+                  <h3 className="text-3xl font-black text-red-600 mt-1">{dashboardData.stats.overdue}</h3>
+                </div>
+                <div className="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center text-red-600 group-hover:scale-110 transition-transform">
+                  <AlertCircle size={24} />
+                </div>
+              </div>
+            </div>
+
+            {/* Agent Work List */}
+            <div className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-gray-100/50 overflow-hidden">
+              <div className="p-6 border-b border-gray-50 flex justify-between items-center">
+                <h2 className="font-bold text-gray-800 flex items-center gap-2">
+                  <Users size={18} className="text-indigo-600" /> My Assigned Queue
+                </h2>
+                <button onClick={() => setCurrentView('my-tickets')} className="text-xs font-bold text-indigo-600 hover:text-indigo-800">View Full Queue</button>
+              </div>
+              {/* Reusing existing table logic but can filter specifically for agent later */}
+              <div className="p-0 overflow-x-auto">
+                {/* ... (Table content - same as below but simplified) ... */}
+                {/* For now rendering same table for demo consistency */}
+                {renderCommonTable(dashboardData.newTickets)}
+              </div>
+            </div>
+
+            {/* Agent Quick Actions / Knowledge */}
+            <div className="col-span-12 lg:col-span-4 space-y-6">
+              <div className="bg-indigo-600 text-white rounded-2xl p-6 shadow-lg shadow-indigo-200 relative overflow-hidden">
+                <div className="relative z-10">
+                  <h3 className="font-bold text-lg mb-2">Knowledge Base</h3>
+                  <p className="text-indigo-100 text-sm mb-4">Quickly find solutions for common issues.</p>
+                  <button onClick={() => setCurrentView('knowledge')} className="bg-white/20 hover:bg-white/30 backdrop-blur-sm px-4 py-2 rounded-lg text-sm font-bold transition-colors">
+                    Search Articles
+                  </button>
+                </div>
+                <BookOpen className="absolute -right-4 -bottom-4 text-white/10 w-32 h-32 rotate-12" />
+              </div>
+
+              {/* SLA Timer Mockup */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                  <Clock size={16} className="text-orange-500" /> Overdue
+                </h3>
+                <div className="space-y-4">
+                  {dashboardData.overdueTickets.length === 0 ? (
+                    <div className="text-center py-4 text-gray-400 text-xs italic">No urgent SLA warnings</div>
+                  ) : (
+                    dashboardData.overdueTickets.slice(0, 2).map((ticket, i) => (
+                      <div key={i} className="p-3 bg-orange-50 rounded-xl border border-orange-100">
+                        <div className="flex justify-between text-xs font-bold mb-1">
+                          <span className="text-orange-700">{ticket.ticket_number}</span>
+                          <span className="text-orange-600">Overdue</span>
+                        </div>
+                        <div className="text-xs text-gray-600 truncate">{ticket.subject}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // SPV / ADMIN VIEW
     return (
       <div className="p-8">
+        <div className="mb-6 flex justify-between items-end">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">Command Center</h1>
+            <p className="text-gray-500">System Overview & Team Performance</p>
+          </div>
+          <div className="flex gap-2">
+            <button className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold text-gray-600 shadow-sm">Last 7 Days</button>
+            <button className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg text-xs font-bold text-indigo-600 shadow-sm">Live</button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-12 gap-6">
 
-          {/* My Tickets */}
-          <div className="col-span-12 lg:col-span-7 bg-white rounded-2xl shadow-sm overflow-hidden border border-gray-100/50">
-            <div className="bg-[#e0e7ff]/40 p-6 border-b border-indigo-50 flex justify-between items-end">
-              <div>
-                <h2 className="text-lg font-bold text-gray-800">New Tickets</h2>
+          {/* 1. KEY METRICS GRID (4 Cards) */}
+          <div className="col-span-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Total Open */}
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-indigo-100 flex flex-col justify-between group hover:shadow-md transition-all relative overflow-hidden">
+              <div className="relative z-10">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Total Open Tickets</p>
+                <div className="flex items-end gap-2">
+                  <h3 className="text-4xl font-black text-gray-800 tracking-tight">{dashboardData.stats.current}</h3>
+                  <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded mb-1 flex items-center gap-0.5">
+                    <TrendingUp size={10} /> +8%
+                  </span>
+                </div>
               </div>
-              <div className="flex gap-6 items-center">
-                <div className="text-center">
-                  <span className="block text-xl font-bold text-gray-800 leading-none">8</span>
-                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Current</span>
+              <div className="absolute right-0 top-0 w-24 h-24 bg-gradient-to-br from-indigo-500/10 to-blue-500/0 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+              <Ticket className="absolute right-4 bottom-4 text-gray-100 mb-1 ml-1" size={48} />
+            </div>
+
+            {/* Unassigned (Critical) */}
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-amber-100 flex flex-col justify-between group hover:shadow-md transition-all relative overflow-hidden">
+              <div className="relative z-10">
+                <p className="text-xs font-bold text-amber-500 uppercase tracking-wider mb-2">Unassigned Queue</p>
+                <div className="flex items-end gap-2">
+                  <h3 className="text-4xl font-black text-gray-800 tracking-tight">{dashboardData.stats.unassigned}</h3>
+                  <span className="text-xs font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded mb-1">Action Req.</span>
                 </div>
-                <div className="text-center">
-                  <span className="block text-xl font-bold text-gray-800 leading-none">5</span>
-                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Closed</span>
+              </div>
+              <div className="absolute right-0 top-0 w-24 h-24 bg-gradient-to-br from-amber-500/10 to-orange-500/0 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+              <Users className="absolute right-4 bottom-4 text-amber-50" size={48} />
+            </div>
+
+            {/* Overdue (Danger) */}
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-red-100 flex flex-col justify-between group hover:shadow-md transition-all relative overflow-hidden">
+              <div className="relative z-10">
+                <p className="text-xs font-bold text-red-500 uppercase tracking-wider mb-2">Overdue</p>
+                <div className="flex items-end gap-2">
+                  <h3 className="text-4xl font-black text-gray-800 tracking-tight">{dashboardData.stats.overdue}</h3>
+                  <span className="text-xs font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded mb-1">Critical</span>
                 </div>
-                <button className="bg-white border border-gray-200 text-gray-600 text-xs font-medium px-3 py-2 rounded-lg flex items-center gap-1 shadow-sm hover:bg-gray-50 ml-2">
-                  View All Tickets <ChevronDown size={14} />
+              </div>
+              <div className="absolute right-0 top-0 w-24 h-24 bg-gradient-to-br from-red-500/10 to-rose-500/0 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+              <AlertCircle className="absolute right-4 bottom-4 text-red-50" size={48} />
+            </div>
+
+            {/* CSAT / Satisfaction */}
+            <div className="bg-gradient-to-br from-indigo-600 to-purple-700 p-5 rounded-2xl shadow-lg shadow-indigo-200 flex flex-col justify-between text-white relative overflow-hidden">
+              <div className="relative z-10">
+                <p className="text-xs font-bold text-indigo-200 uppercase tracking-wider mb-2">Avg. Satisfaction</p>
+                <div className="flex items-end gap-2">
+                  <h3 className="text-4xl font-black tracking-tight">{dashboardData.stats.satisfaction}</h3>
+                  <span className="text-xs font-bold bg-white/20 px-1.5 py-0.5 rounded mb-1">/ 5.0</span>
+                </div>
+                <div className="flex gap-1 mt-3">
+                  {[1, 2, 3, 4, 5].map(s => <Star key={s} size={12} className="fill-yellow-400 text-yellow-400" />)}
+                </div>
+              </div>
+              <Globe className="absolute -right-4 -bottom-4 text-white/10 w-32 h-32 rotate-12" />
+            </div>
+          </div>
+
+          {/* 2. MAIN CONTENT GRID */}
+          <div className="col-span-12 grid grid-cols-12 gap-6">
+
+            {/* Team Workload (Agent Performance) - NEW WIDGET */}
+            <div className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-gray-100/50 p-6 flex flex-col h-full">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  <Users size={18} className="text-indigo-500" /> Team Pulse
+                </h2>
+                <button className="text-xs text-gray-400 hover:text-indigo-600 font-bold">View Details</button>
+              </div>
+
+              <div className="space-y-5 flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                {dashboardData.teamPulse.length === 0 ? (
+                  <div className="text-center py-10 text-gray-400 text-sm">No active agents found</div>
+                ) : dashboardData.teamPulse.map((agent: any, i) => (
+                  <div key={i} className={`flex items-center gap-3 ${agent.isSPV ? 'bg-gradient-to-r from-purple-50 to-transparent p-2 -mx-2 rounded-lg' : ''}`}>
+                    <div className="relative">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs ${agent.isSPV
+                        ? 'bg-gradient-to-br from-purple-500 to-indigo-600 text-white'
+                        : 'bg-gray-100 text-gray-500'
+                        }`}>
+                        {agent.name.charAt(0)}
+                      </div>
+                      <span className={`absolute bottom-0 right-0 w-3 h-3 border-2 border-white rounded-full ${agent.status === 'Overload' ? 'bg-red-500' :
+                        agent.status === 'Busy' ? 'bg-amber-500' :
+                          'bg-emerald-500'
+                        }`}></span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between mb-1">
+                        <span className="text-sm font-bold text-gray-700 truncate flex items-center gap-1.5">
+                          {agent.name}
+                          {agent.isSPV && <span className="px-1.5 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700 rounded">SPV</span>}
+                        </span>
+                        <span className="text-xs font-medium text-gray-500 flex items-center gap-2">
+                          {agent.overdue > 0 && (
+                            <span className="text-[10px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded animate-pulse">
+                              {agent.overdue} Overdue
+                            </span>
+                          )}
+                          <span>{agent.active} Active</span>
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${agent.status === 'Overload' ? 'bg-red-500' :
+                            agent.status === 'Busy' ? 'bg-amber-500' :
+                              'bg-emerald-500'
+                            }`}
+                          style={{ width: `${(agent.active / 10) * 100}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Recent Activity Table (Simplified) */}
+            <div className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-gray-100/50 p-6 flex flex-col h-full">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  <Briefcase size={18} className="text-indigo-500" /> Recent Incoming
+                </h2>
+                <button onClick={() => setCurrentView('incidents')} className="text-xs text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg font-bold hover:bg-indigo-100">
+                  View All Queue
                 </button>
               </div>
-            </div>
-            <div className="p-0 overflow-x-auto">
-              <table className="w-full text-left text-sm whitespace-nowrap">
-                <thead className="text-gray-400 font-medium border-b border-gray-50 bg-gray-50/30">
-                  <tr>
-                    <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Ticket Number</th>
-                    <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Subject</th>
-                    <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Request For</th>
-                    <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Agent</th>
-                    <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Urgency</th>
-                    <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {ticketData.map((ticket, i) => (
-                    <tr key={i} className="hover:bg-gray-50/50 transition-colors group">
-                      <td className="px-6 py-4 text-gray-500 font-medium text-xs">{ticket.id}</td>
-                      <td className="px-6 py-4 text-gray-700 font-medium max-w-xs truncate text-xs">{ticket.subject}</td>
-                      <td className="px-6 py-4 text-gray-500 text-xs">{ticket.user}</td>
-                      <td className="px-6 py-4 text-gray-500 text-xs">-</td>
-                      <td className="px-6 py-4">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${ticket.urgency === 'High' ? 'bg-red-100 text-red-700' :
-                          ticket.urgency === 'Medium' ? 'bg-orange-100 text-orange-700' :
-                            ticket.urgency === 'Low' ? 'bg-green-100 text-green-700' :
-                              ticket.urgency === 'Urgent' ? 'bg-red-200 text-red-900' :
-                                'bg-gray-100 text-gray-700'
-                          }`}>
-                          {ticket.urgency || 'Low'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <button
-                          onClick={() => handleViewTicket(ticket.id)}
-                          className="text-indigo-600 hover:text-indigo-800 font-bold text-xs"
-                        >
-                          Open
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+              {/* Table area */}
 
-          {/* Overdue Tickets */}
-          <div className="col-span-12 lg:col-span-5 bg-white rounded-2xl shadow-sm border border-gray-100/50 p-6 flex flex-col">
-            <div className="flex justify-between items-center mb-6">
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-gray-800">Overdue Tickets</h2>
-                <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full shadow-md shadow-red-200">4</span>
+              <div className="p-0 overflow-x-auto">
+                <table className="w-full text-left text-sm whitespace-nowrap">
+                  <thead className="text-gray-400 font-medium border-b border-gray-50 bg-gray-50/30">
+                    <tr>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Ticket Number</th>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Subject</th>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Request For</th>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Agent</th>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Urgency</th>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {dashboardData.newTickets.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-8 text-center text-gray-400 text-sm">No new tickets</td>
+                      </tr>
+                    ) : dashboardData.newTickets.map((ticket, i) => (
+                      <tr key={ticket.id} className="hover:bg-gray-50/50 transition-colors group">
+                        <td className="px-6 py-4 text-gray-500 font-medium text-xs">{ticket.ticket_number}</td>
+                        <td className="px-6 py-4 text-gray-700 font-medium max-w-xs truncate text-xs">{ticket.subject}</td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-bold text-indigo-600">
+                              {(ticket.requester?.full_name || 'U').charAt(0).toUpperCase()}
+                            </div>
+                            <span className="text-xs text-gray-600">{ticket.requester?.full_name?.split(' ')[0] || 'Unknown'}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${ticket.assigned_agent ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>
+                              {ticket.assigned_agent ? ticket.assigned_agent.full_name.charAt(0).toUpperCase() : '?'}
+                            </div>
+                            <span className="text-gray-500 text-xs">{ticket.assigned_agent?.full_name?.split(' ')[0] || 'Unassigned'}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          {(() => {
+                            const p = (ticket.priority || 'Low').toLowerCase();
+                            let badgeClass = 'bg-slate-100 text-slate-600 border-slate-200';
+                            let icon = null;
+
+                            if (p.includes('urgent') || p.includes('critical')) {
+                              badgeClass = 'bg-red-50 text-red-600 border-red-100 animate-pulse';
+                              icon = <AlertCircle size={10} className="fill-red-600 text-white" />;
+                            } else if (p.includes('high')) {
+                              badgeClass = 'bg-orange-50 text-orange-600 border-orange-100';
+                              icon = <TrendingUp size={10} />;
+                            } else if (p.includes('medium')) {
+                              badgeClass = 'bg-amber-50 text-amber-600 border-amber-100';
+                            } else {
+                              badgeClass = 'bg-emerald-50 text-emerald-600 border-emerald-100';
+                            }
+
+                            return (
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${badgeClass}`}>
+                                {icon}
+                                {ticket.priority || 'Low'}
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-6 py-4">
+                          <button
+                            onClick={() => handleViewTicket(ticket.id)}
+                            className="group flex items-center gap-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
+                          >
+                            OPEN <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <button className="text-gray-400 hover:text-gray-600 text-xs flex items-center gap-1 font-medium">
-                View All <ChevronDown size={14} />
-              </button>
             </div>
-            <div className="p-0 overflow-x-auto">
-              <table className="w-full text-left text-sm whitespace-nowrap">
-                <thead className="text-gray-400 font-medium border-b border-gray-50 bg-gray-50/30">
-                  <tr>
-                    <th className="px-4 py-3 font-normal text-[10px] uppercase tracking-wider">Number</th>
-                    <th className="px-4 py-3 font-normal text-[10px] uppercase tracking-wider">Subject</th>
-                    <th className="px-4 py-3 font-normal text-[10px] uppercase tracking-wider">Request For</th>
-                    <th className="px-4 py-3 font-normal text-[10px] uppercase tracking-wider">Agent</th>
-                    <th className="px-4 py-3 font-normal text-[10px] uppercase tracking-wider">Urgency</th>
-                    <th className="px-4 py-3 font-normal text-[10px] uppercase tracking-wider">ETA</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {overdueData.map((ticket, i) => (
-                    <tr key={i} className="hover:bg-gray-50/50 transition-colors">
-                      <td className="px-4 py-3 text-gray-500 font-medium text-[10px]">{ticket.id}</td>
-                      <td className="px-4 py-3 text-gray-700 font-medium max-w-[100px] truncate text-[10px]">{ticket.subject}</td>
-                      <td className="px-4 py-3 text-gray-500 text-[10px]">{ticket.user}</td>
-                      <td className="px-4 py-3 text-gray-500 text-[10px]">{ticket.assignedTo || '-'}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide ${ticket.urgency === 'High' ? 'bg-red-100 text-red-700' :
-                          ticket.urgency === 'Medium' ? 'bg-orange-100 text-orange-700' :
-                            ticket.urgency === 'Low' ? 'bg-green-100 text-green-700' : 'bg-red-200 text-red-900'
-                          }`}>
-                          {ticket.urgency}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-red-500 font-bold text-[10px]">{ticket.eta}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+
+            {/* Overdue Tickets Removed */}
+
+
+
+
+
+            {/* Weekly Trend Analytics (Replaced Top 5 Incident) */}
           </div>
-
-          {/* Top 5 Incident */}
-          <div className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-gray-100/50 p-6 flex flex-col">
-            <h2 className="text-lg font-bold text-gray-800 mb-1">Top 5 Incident</h2>
-            <p className="text-xs text-gray-400 mb-4 font-medium uppercase tracking-wide">By Category</p>
-
-            <div className="flex-1 min-h-[180px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topIncidentsData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} barSize={24}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                  <XAxis
-                    dataKey="name"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: '#9ca3af', fontSize: 10, fontWeight: 500 }}
-                    dy={10}
-                    interval={0}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: '#9ca3af', fontSize: 11 }}
-                  />
-                  <Tooltip
-                    cursor={{ fill: '#f3f4f6', opacity: 0.4 }}
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '12px', fontWeight: 'bold' }}
-                  />
-                  <Bar dataKey="count" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Today's Appointments */}
-          <div className="col-span-12 lg:col-span-4 bg-[#eef2ff] rounded-2xl shadow-sm border border-indigo-50 p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-bold text-gray-800">Today's Appointments</h2>
-              <button className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-colors">
-                <Plus size={18} />
-              </button>
-            </div>
-            <div className="relative space-y-2">
-              <div className="absolute top-3 bottom-3 left-[17px] w-0.5 bg-indigo-200/50"></div>
-
-              {/* Time Blocks */}
-              {[
-                { time: 8, label: '8:30 - 9:30 AM - Team Meeting' },
-                { time: 9, label: null },
-                { time: 10, label: '10 - 10:30 AM - INC4567 Call' },
-                { time: 11, label: null },
-                { time: 12, label: '12 - 1PM - Lunch Break' },
-                { time: 1, label: null },
-                { time: 2, label: null },
-                { time: 3, label: null },
-              ].map((slot, index) => (
-                <div key={index} className="flex gap-4 relative min-h-[32px]">
-                  <div className="w-8 text-xs text-gray-400 pt-2 text-right font-medium">{slot.time}</div>
-                  {slot.label ? (
-                    <div className="flex-1 bg-white p-3 rounded-xl border border-indigo-100 shadow-sm z-10">
-                      <p className="text-xs font-bold text-gray-700">{slot.label}</p>
-                    </div>
-                  ) : <div className="flex-1 py-3"></div>}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Inventory Management */}
-          {/* Top 5 Service Request */}
-          <div className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-gray-100/50 p-6 flex flex-col">
-            <h2 className="text-lg font-bold text-gray-800 mb-1">Top 5 Service Request</h2>
-            <p className="text-xs text-gray-400 mb-4 font-medium uppercase tracking-wide">Most Popular</p>
-
-            <div className="flex-1 min-h-[180px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topServiceRequestsData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} barSize={24}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                  <XAxis
-                    dataKey="name"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: '#9ca3af', fontSize: 10, fontWeight: 500 }}
-                    dy={10}
-                    interval={0}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: '#9ca3af', fontSize: 11 }}
-                  />
-                  <Tooltip
-                    cursor={{ fill: '#f3f4f6', opacity: 0.4 }}
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '12px', fontWeight: 'bold' }}
-                  />
-                  <Bar dataKey="count" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
         </div>
       </div>
+
     );
   };
 
@@ -1372,12 +1817,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 className={`relative p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all group ${showNotificationPanel ? 'text-indigo-600 bg-indigo-50' : ''}`}
               >
                 <Bell size={22} />
-                <NotificationBadge userId={userProfile?.id} />
+                <NotificationBadge unreadCount={unreadCount} />
               </button>
 
               {showNotificationPanel && (
                 <NotificationPanelWrapper
-                  userId={userProfile?.id}
+                  notifications={notifications}
+                  unreadCount={unreadCount}
+                  markAsRead={markAsRead}
+                  markAllAsRead={markAllAsRead}
+                  deleteNotification={deleteNotification}
+                  clearAll={clearAll}
                   onClose={() => setShowNotificationPanel(false)}
                   onNavigate={(refType, refId) => {
                     if (refType === 'ticket') {

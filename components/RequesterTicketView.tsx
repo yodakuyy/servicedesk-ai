@@ -275,13 +275,22 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                     confirmButtonText: 'Yes, it is resolved!',
                                     html: `
                                         <p class="mb-4 text-sm text-gray-600">You can optionally provide feedback:</p>
-                                        <div class="flex justify-center gap-2 mb-4 text-2xl">
-                                            <input type="radio" name="swal-rating" value="5" id="r5" class="hidden peer/5"/><label for="r5" class="cursor-pointer text-gray-300 peer-checked/5:text-yellow-400 hover:text-yellow-400 transition-colors">★</label>
-                                            <input type="radio" name="swal-rating" value="4" id="r4" class="hidden peer/4"/><label for="r4" class="cursor-pointer text-gray-300 peer-checked/4:text-yellow-400 hover:text-yellow-400 transition-colors">★</label>
-                                            <input type="radio" name="swal-rating" value="3" id="r3" class="hidden peer/3"/><label for="r3" class="cursor-pointer text-gray-300 peer-checked/3:text-yellow-400 hover:text-yellow-400 transition-colors">★</label>
-                                            <input type="radio" name="swal-rating" value="2" id="r2" class="hidden peer/2"/><label for="r2" class="cursor-pointer text-gray-300 peer-checked/2:text-yellow-400 hover:text-yellow-400 transition-colors">★</label>
-                                            <input type="radio" name="swal-rating" value="1" id="r1" class="hidden peer/1"/><label for="r1" class="cursor-pointer text-gray-300 peer-checked/1:text-yellow-400 hover:text-yellow-400 transition-colors">★</label>
+                                        <div class="star-rating flex justify-center gap-1 mb-4 text-2xl" style="flex-direction: row-reverse;">
+                                            <input type="radio" name="swal-rating" value="5" id="r5" class="hidden"/>
+                                            <label for="r5" class="cursor-pointer text-gray-300 hover:text-yellow-400 transition-colors">★</label>
+                                            <input type="radio" name="swal-rating" value="4" id="r4" class="hidden"/>
+                                            <label for="r4" class="cursor-pointer text-gray-300 hover:text-yellow-400 transition-colors">★</label>
+                                            <input type="radio" name="swal-rating" value="3" id="r3" class="hidden"/>
+                                            <label for="r3" class="cursor-pointer text-gray-300 hover:text-yellow-400 transition-colors">★</label>
+                                            <input type="radio" name="swal-rating" value="2" id="r2" class="hidden"/>
+                                            <label for="r2" class="cursor-pointer text-gray-300 hover:text-yellow-400 transition-colors">★</label>
+                                            <input type="radio" name="swal-rating" value="1" id="r1" class="hidden"/>
+                                            <label for="r1" class="cursor-pointer text-gray-300 hover:text-yellow-400 transition-colors">★</label>
                                         </div>
+                                        <style>
+                                            .star-rating input:checked ~ label { color: #facc15; }
+                                            .star-rating label:hover, .star-rating label:hover ~ label { color: #facc15; }
+                                        </style>
                                         <textarea id="swal-feedback" class="swal2-textarea" placeholder="Optional feedback..." style="margin: 0; width: 100%; font-size: 0.9em;"></textarea>
                                     `,
                                     preConfirm: () => {
@@ -311,11 +320,24 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                         if (rpcError) throw rpcError;
 
                                         if (rpcData && rpcData.success) {
-                                            // Refresh UI
+                                            // Refresh ticket status
                                             setTicket((prev: any) => ({
                                                 ...prev,
                                                 ticket_statuses: { status_name: 'Resolved' }
                                             }));
+
+                                            // Refetch messages to show the feedback message immediately
+                                            const { data: newMessages } = await supabase
+                                                .from('ticket_messages')
+                                                .select('*, sender:profiles!sender_id(full_name)')
+                                                .eq('ticket_id', ticketId)
+                                                .eq('is_internal', false)
+                                                .order('created_at', { ascending: true });
+
+                                            if (newMessages) {
+                                                setMessages(newMessages);
+                                            }
+
                                             Swal.fire('Resolved!', 'Ticket has been closed successfully.', 'success');
                                         } else {
                                             throw new Error(rpcData?.error || 'Failed to close ticket');
