@@ -91,6 +91,27 @@ const NotificationSettings: React.FC = () => {
             description: 'When a ticket is approaching SLA breach',
             enabled: true,
             channels: { email: true, push: true, inApp: true }
+        },
+        {
+            id: 'ticket_status_changed',
+            label: 'Ticket Status Changed',
+            description: 'When a ticket status is updated by customer or system',
+            enabled: true,
+            channels: { email: false, push: false, inApp: true }
+        },
+        {
+            id: 'ticket_due_soon',
+            label: 'Ticket Due Soon',
+            description: 'Reminder when ticket deadline is approaching',
+            enabled: true,
+            channels: { email: true, push: true, inApp: true }
+        },
+        {
+            id: 'kb_article_update',
+            label: 'Knowledge Base Update',
+            description: 'When a KB article you follow is updated',
+            enabled: false,
+            channels: { email: false, push: false, inApp: true }
         }
     ]);
 
@@ -110,6 +131,13 @@ const NotificationSettings: React.FC = () => {
             channels: { email: true, push: true, inApp: true }
         },
         {
+            id: 'ticket_status_update',
+            label: 'Status Update',
+            description: 'When ticket status changes (In Progress, On Hold, etc.)',
+            enabled: true,
+            channels: { email: true, push: false, inApp: true }
+        },
+        {
             id: 'ticket_resolved',
             label: 'Ticket Resolved',
             description: 'When their ticket is marked as resolved',
@@ -122,6 +150,13 @@ const NotificationSettings: React.FC = () => {
             description: 'When their ticket is officially closed',
             enabled: false,
             channels: { email: true, push: false, inApp: true }
+        },
+        {
+            id: 'auto_close_warning',
+            label: 'Auto-Close Warning',
+            description: 'Warning before ticket is auto-closed due to inactivity',
+            enabled: true,
+            channels: { email: true, push: true, inApp: true }
         },
         {
             id: 'satisfaction_survey',
@@ -174,6 +209,27 @@ const NotificationSettings: React.FC = () => {
             description: 'When assigned agent goes offline with pending tickets',
             enabled: false,
             channels: { email: false, push: true, inApp: true }
+        },
+        {
+            id: 'unassigned_ticket_alert',
+            label: 'Unassigned Ticket Alert',
+            description: 'When a ticket remains unassigned for too long',
+            enabled: true,
+            channels: { email: true, push: true, inApp: true }
+        },
+        {
+            id: 'new_agent_joined',
+            label: 'New Agent Joined Team',
+            description: 'When a new agent is added to your team',
+            enabled: false,
+            channels: { email: true, push: false, inApp: true }
+        },
+        {
+            id: 'customer_complaint',
+            label: 'Customer Complaint',
+            description: 'When a ticket receives negative feedback or complaint',
+            enabled: true,
+            channels: { email: true, push: true, inApp: true }
         }
     ]);
 
@@ -288,8 +344,8 @@ const NotificationSettings: React.FC = () => {
         <div
             key={setting.id}
             className={`p-4 rounded-xl border transition-all ${setting.enabled
-                    ? 'bg-white border-gray-200 shadow-sm'
-                    : 'bg-gray-50 border-gray-100 opacity-75'
+                ? 'bg-white border-gray-200 shadow-sm'
+                : 'bg-gray-50 border-gray-100 opacity-75'
                 }`}
         >
             <div className="flex items-start justify-between gap-4">
@@ -310,8 +366,8 @@ const NotificationSettings: React.FC = () => {
                             <button
                                 onClick={() => handleToggleChannel(activeTab, setting.id, 'email')}
                                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${setting.channels.email
-                                        ? 'bg-blue-100 text-blue-700'
-                                        : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                                    ? 'bg-blue-100 text-blue-700'
+                                    : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
                                     }`}
                             >
                                 <Mail size={12} />
@@ -320,8 +376,8 @@ const NotificationSettings: React.FC = () => {
                             <button
                                 onClick={() => handleToggleChannel(activeTab, setting.id, 'push')}
                                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${setting.channels.push
-                                        ? 'bg-purple-100 text-purple-700'
-                                        : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                                    ? 'bg-purple-100 text-purple-700'
+                                    : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
                                     }`}
                             >
                                 <Smartphone size={12} />
@@ -330,8 +386,8 @@ const NotificationSettings: React.FC = () => {
                             <button
                                 onClick={() => handleToggleChannel(activeTab, setting.id, 'inApp')}
                                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${setting.channels.inApp
-                                        ? 'bg-emerald-100 text-emerald-700'
-                                        : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
                                     }`}
                             >
                                 <Globe size={12} />
@@ -371,8 +427,8 @@ const NotificationSettings: React.FC = () => {
                     onClick={handleSave}
                     disabled={!hasChanges || saving}
                     className={`px-5 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-all ${hasChanges
-                            ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'
-                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'
+                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                         }`}
                 >
                     {saving ? (
@@ -440,8 +496,8 @@ const NotificationSettings: React.FC = () => {
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
                             className={`flex-1 px-6 py-4 flex items-center justify-center gap-2 font-medium transition-colors relative ${activeTab === tab.id
-                                    ? 'text-indigo-600'
-                                    : 'text-gray-500 hover:text-gray-700'
+                                ? 'text-indigo-600'
+                                : 'text-gray-500 hover:text-gray-700'
                                 }`}
                         >
                             <tab.icon size={18} />

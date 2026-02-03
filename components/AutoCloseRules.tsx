@@ -43,6 +43,8 @@ interface TicketStatus {
     status_name: string;
 }
 
+type ConditionType = 'status' | 'user_confirmed' | 'no_response' | 'pending';
+
 const AutoCloseRules: React.FC = () => {
     const [rules, setRules] = useState<AutoCloseRule[]>([]);
     const [statuses, setStatuses] = useState<TicketStatus[]>([]);
@@ -56,10 +58,22 @@ const AutoCloseRules: React.FC = () => {
     const [ruleToDelete, setRuleToDelete] = useState<AutoCloseRule | null>(null);
 
     // Form state
-    const [formData, setFormData] = useState({
+    const [formData, setFormData] = useState<{
+        name: string;
+        description: string;
+        condition_type: ConditionType;
+        condition_value: string;
+        after_days: number;
+        after_hours: number;
+        notify_user: boolean;
+        notify_agent: boolean;
+        add_note: boolean;
+        note_text: string;
+        is_active: boolean;
+    }>({
         name: '',
         description: '',
-        condition_type: 'status' as const,
+        condition_type: 'status',
         condition_value: '',
         after_days: 3,
         after_hours: 0,
@@ -602,8 +616,8 @@ const AutoCloseRules: React.FC = () => {
                                     key={page}
                                     onClick={() => setCurrentPage(page)}
                                     className={`w-8 h-8 rounded-lg text-sm font-medium ${currentPage === page
-                                            ? 'bg-indigo-600 text-white'
-                                            : 'hover:bg-gray-100 text-gray-600'
+                                        ? 'bg-indigo-600 text-white'
+                                        : 'hover:bg-gray-100 text-gray-600'
                                         }`}
                                 >
                                     {page}
@@ -683,7 +697,7 @@ const AutoCloseRules: React.FC = () => {
                                         value={formData.condition_type}
                                         onChange={(e) => setFormData(prev => ({
                                             ...prev,
-                                            condition_type: e.target.value as any,
+                                            condition_type: e.target.value as ConditionType,
                                             condition_value: ''
                                         }))}
                                         className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"

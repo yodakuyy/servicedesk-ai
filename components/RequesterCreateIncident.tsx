@@ -409,6 +409,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 assignment_group_id: assignedGroupId,
                 category_id: category_id,
                 service_id: service_id,
+                is_category_verified: false,
             };
 
             console.log("Submitting Ticket Payload:", ticketPayload); // Debug

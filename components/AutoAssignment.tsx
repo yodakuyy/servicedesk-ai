@@ -25,7 +25,7 @@ interface AssignmentRule {
     name: string;
     description?: string;
     conditions: RuleCondition[];
-    assign_to_type: 'group' | 'agent' | 'round_robin';
+    assign_to_type: AssignToType;
     assign_to_id?: string;
     assign_to_name?: string;
     priority: number;
@@ -35,10 +35,19 @@ interface AssignmentRule {
     tickets_routed?: number;
 }
 
+type ConditionOperator = 'equals' | 'contains' | 'not_equals' | 'in';
+type AssignToType = 'group' | 'agent' | 'round_robin';
+
 interface RuleCondition {
     field: string;
-    operator: 'equals' | 'contains' | 'not_equals' | 'in';
+    operator: ConditionOperator;
     value: string | string[];
+}
+
+interface FormCondition {
+    field: string;
+    operator: ConditionOperator;
+    value: string;
 }
 
 interface Group {
@@ -65,11 +74,19 @@ const AutoAssignment: React.FC = () => {
     const [ruleToDelete, setRuleToDelete] = useState<AssignmentRule | null>(null);
 
     // Form state
-    const [formData, setFormData] = useState({
+    const [formData, setFormData] = useState<{
+        name: string;
+        description: string;
+        conditions: FormCondition[];
+        assign_to_type: AssignToType;
+        assign_to_id: string;
+        priority: number;
+        is_active: boolean;
+    }>({
         name: '',
         description: '',
-        conditions: [{ field: 'category', operator: 'equals' as const, value: '' }],
-        assign_to_type: 'group' as const,
+        conditions: [{ field: 'category', operator: 'equals', value: '' }],
+        assign_to_type: 'group',
         assign_to_id: '',
         priority: 1,
         is_active: true
@@ -228,7 +245,11 @@ const AutoAssignment: React.FC = () => {
             setFormData({
                 name: rule.name,
                 description: rule.description || '',
-                conditions: rule.conditions,
+                conditions: rule.conditions.map(c => ({
+                    field: c.field,
+                    operator: c.operator,
+                    value: Array.isArray(c.value) ? c.value.join(', ') : c.value
+                })),
                 assign_to_type: rule.assign_to_type,
                 assign_to_id: rule.assign_to_id || '',
                 priority: rule.priority,
@@ -600,8 +621,8 @@ const AutoAssignment: React.FC = () => {
                                     key={page}
                                     onClick={() => setCurrentPage(page)}
                                     className={`w-8 h-8 rounded-lg text-sm font-medium ${currentPage === page
-                                            ? 'bg-indigo-600 text-white'
-                                            : 'hover:bg-gray-100 text-gray-600'
+                                        ? 'bg-indigo-600 text-white'
+                                        : 'hover:bg-gray-100 text-gray-600'
                                         }`}
                                 >
                                     {page}

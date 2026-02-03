@@ -45,6 +45,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     const [isAssigning, setIsAssigning] = useState(false);
     const [isTransferring, setIsTransferring] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
+    const [isEditingCategory, setIsEditingCategory] = useState(false);
+    const [catSearch, setCatSearch] = useState('');
 
     // AI Copilot States
     const [aiSummary, setAiSummary] = useState<string[]>([]);
@@ -408,7 +410,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 .from('tickets')
                 .select(`
                     id, ticket_number, subject, priority, created_at, updated_at, ticket_type,
-                    assignment_group_id, status_id, assigned_to, requester_id,
+                    assignment_group_id, status_id, assigned_to, requester_id, is_category_verified,
                     ticket_statuses!fk_tickets_status (status_name),
                     requester:profiles!fk_tickets_requester (full_name),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
@@ -1036,6 +1038,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     .from('tickets')
                     .select(`
                         *,
+                        is_category_verified,
                         ticket_statuses!fk_tickets_status (status_name),
                         ticket_categories (name),
                         services (name),
@@ -1498,6 +1501,244 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         }
     };
 
+    const handleApplyClassification = async () => {
+        if (!selectedTicketId || !aiClassification || !selectedTicket) return;
+
+        // @ts-ignore
+        const Swal = (await import('sweetalert2')).default;
+        const result = await Swal.fire({
+            title: 'Konfirmasi Klasifikasi',
+            text: `Apakah Anda yakin ingin menerapkan kategori "${aiClassification.category}" dan prioritas "${aiClassification.priority.toUpperCase()}" serta menandainya sebagai terverifikasi?`,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#4f46e5',
+            cancelButtonColor: '#94a3b8',
+            confirmButtonText: 'Ya, Terapkan & Verifikasi',
+            cancelButtonText: 'Batal'
+        });
+
+        if (!result.isConfirmed) return;
+
+        const cat = allCategories.find(c => c.name.toLowerCase() === aiClassification.category.toLowerCase());
+
+        try {
+            const updatePayload: any = {
+                is_category_verified: true,
+                category_verified_by: userProfile?.id,
+                category_verified_at: new Date().toISOString()
+            };
+
+            if (cat) {
+                updatePayload.category_id = cat.id;
+            }
+            if (aiClassification.priority) {
+                updatePayload.priority = aiClassification.priority;
+            }
+
+            const { error } = await supabase
+                .from('tickets')
+                .update(updatePayload)
+                .eq('id', selectedTicketId);
+
+            if (error) throw error;
+
+            // Refresh ticket details to be sure everything is in sync
+            const { data: updatedTicket } = await supabase
+                .from('tickets')
+                .select(`
+                    *,
+                    is_category_verified,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_categories (name),
+                    services (name),
+                    requester:profiles!fk_tickets_requester (full_name, email),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (
+                        id, name, company_id,
+                        company:company_id(company_name),
+                        group_sla_policies(sla_policy_id),
+                        business_hours(weekly_schedule)
+                    ),
+                    ticket_attachments (*)
+                `)
+                .eq('id', selectedTicketId)
+                .single();
+
+            if (updatedTicket) {
+                setSelectedTicket(updatedTicket);
+                setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
+            }
+
+            // Log activity
+            const catName = cat?.name || aiClassification.category;
+            await supabase.from('ticket_activity_log').insert({
+                ticket_id: selectedTicketId,
+                actor_id: userProfile?.id,
+                action: `AI Classification applied & verified: ${catName}`
+            });
+
+            // Refresh activity logs
+            const { data: logs } = await supabase
+                .from('ticket_activity_log')
+                .select('*')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: false });
+            if (logs) setActivityLogs(logs);
+
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Classification Applied',
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 1500
+            });
+        } catch (err: any) {
+            console.error('Apply Classification Error:', err);
+        }
+    };
+
+    const handleManualCategoryUpdate = async (catId: string) => {
+        if (!selectedTicketId || !selectedTicket) return;
+
+        try {
+            const { error } = await supabase
+                .from('tickets')
+                .update({
+                    category_id: catId,
+                    is_category_verified: true,
+                    category_verified_by: userProfile?.id,
+                    category_verified_at: new Date().toISOString()
+                })
+                .eq('id', selectedTicketId);
+
+            if (error) throw error;
+
+            // Refresh ticket details
+            const { data: updatedTicket } = await supabase
+                .from('tickets')
+                .select(`
+                    *,
+                    is_category_verified,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_categories (name),
+                    services (name),
+                    requester:profiles!fk_tickets_requester (full_name, email),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (
+                        id, name, company_id,
+                        company:company_id(company_name),
+                        group_sla_policies(sla_policy_id),
+                        business_hours(weekly_schedule)
+                    ),
+                    ticket_attachments (*)
+                `)
+                .eq('id', selectedTicketId)
+                .single();
+
+            if (updatedTicket) {
+                setSelectedTicket(updatedTicket);
+                setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
+            }
+
+            const catPath = getCategoryPath(catId);
+            await supabase.from('ticket_activity_log').insert({
+                ticket_id: selectedTicketId,
+                actor_id: userProfile?.id,
+                action: `Category manually updated & verified: ${catPath}`
+            });
+
+            // Refresh activity logs
+            const { data: logs } = await supabase
+                .from('ticket_activity_log')
+                .select('*')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: false });
+            if (logs) setActivityLogs(logs);
+
+            setIsEditingCategory(false);
+            setCatSearch('');
+
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Category Updated',
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 1500
+            });
+        } catch (err: any) {
+            console.error('Update Category Error:', err);
+        }
+    };
+
+    const handleVerifyCategory = async () => {
+        if (!selectedTicketId || !selectedTicket) return;
+
+        // @ts-ignore
+        const Swal = (await import('sweetalert2')).default;
+        const result = await Swal.fire({
+            title: 'Verifikasi Kategori',
+            text: 'Apakah Anda yakin kategori ini sudah benar?',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#4f46e5',
+            cancelButtonColor: '#94a3b8',
+            confirmButtonText: 'Ya, Sudah Benar',
+            cancelButtonText: 'Batal'
+        });
+
+        if (!result.isConfirmed) return;
+
+        try {
+            const { error } = await supabase
+                .from('tickets')
+                .update({
+                    is_category_verified: true,
+                    category_verified_by: userProfile?.id,
+                    category_verified_at: new Date().toISOString()
+                })
+                .eq('id', selectedTicketId);
+
+            if (error) throw error;
+
+            setSelectedTicket(prev => prev ? { ...prev, is_category_verified: true } : null);
+            setTickets(prev => prev.map(t => t.id === selectedTicketId ? { ...t, is_category_verified: true } : t));
+
+            const catName = getCategoryPath(selectedTicket.category_id) || selectedTicket.ticket_categories?.name || 'Uncategorized';
+            await supabase.from('ticket_activity_log').insert({
+                ticket_id: selectedTicketId,
+                actor_id: userProfile?.id,
+                action: `Category verified by agent: ${catName}`
+            });
+
+            // Refresh activity logs
+            const { data: logs } = await supabase
+                .from('ticket_activity_log')
+                .select('*')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: false });
+            if (logs) setActivityLogs(logs);
+
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Category Verified',
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 1500
+            });
+        } catch (err: any) {
+            console.error('Verify Category Error:', err);
+        }
+    };
+
     return (
         <div className="flex h-full bg-[#f8f9fa] font-sans overflow-hidden text-[#333]">
 
@@ -1746,7 +1987,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                 >
                                     <div className="flex justify-between items-start mb-1">
                                         <div className="flex items-center gap-2">
-                                            <div className={`w-2 h-2 rounded-full ${ticket.priority === 'High' ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]'}`} />
+                                            <div className="flex items-center gap-1.5">
+                                                <div className={`w-2 h-2 rounded-full ${ticket.priority === 'High' ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]'}`} />
+                                                {ticket.is_category_verified ? (
+                                                    <CheckCircle2 size={10} className="text-green-500" />
+                                                ) : (
+                                                    <Sparkles size={10} className="text-amber-500" />
+                                                )}
+                                            </div>
                                             <span className="font-bold text-xs text-blue-600">{ticket.ticket_number}</span>
                                         </div>
                                         <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">{timeAgo}</span>
@@ -2157,7 +2405,85 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                                 return 'P4 - Low';
                                             })()
                                         } />
-                                        <DetailRow label="Category" value={getCategoryPath(selectedTicket.category_id) || selectedTicket.ticket_categories?.name || 'System Classification Pending'} />
+                                        <div className="flex flex-col gap-1 py-1.5 border-b border-gray-50 last:border-0">
+                                            <div className="flex items-center justify-between mb-1">
+                                                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Category</span>
+                                                {selectedTicket.is_category_verified ? (
+                                                    <span className="flex items-center gap-1 text-[9px] font-black text-green-600 bg-green-50 px-1.5 py-0.5 rounded border border-green-100 uppercase tracking-tight">
+                                                        <CheckCircle2 size={10} /> Verified
+                                                    </span>
+                                                ) : (
+                                                    <span className="flex items-center gap-1 text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 uppercase tracking-tight">
+                                                        <Sparkles size={10} /> System Proposed
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="bg-slate-50/80 p-2.5 rounded-lg border border-slate-100 flex flex-col gap-2">
+                                                {!isEditingCategory ? (
+                                                    <>
+                                                        <span className="text-[13px] font-bold text-gray-800 leading-snug">
+                                                            {getCategoryPath(selectedTicket.category_id) || selectedTicket.ticket_categories?.name || 'Uncategorized'}
+                                                        </span>
+                                                        <div className="flex items-center gap-2 mt-1">
+                                                            {!selectedTicket.is_category_verified && (
+                                                                <button
+                                                                    onClick={handleVerifyCategory}
+                                                                    className="text-[9px] font-black text-white bg-indigo-600 hover:bg-indigo-700 uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all"
+                                                                >
+                                                                    Verify Correct
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                onClick={() => setIsEditingCategory(true)}
+                                                                className="text-[9px] font-black text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all"
+                                                            >
+                                                                Change Category
+                                                            </button>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="relative flex-1">
+                                                                <Search className="absolute left-2 top-2.5 text-gray-400" size={12} />
+                                                                <input
+                                                                    type="text"
+                                                                    autoFocus
+                                                                    placeholder="Search category..."
+                                                                    value={catSearch}
+                                                                    onChange={(e) => setCatSearch(e.target.value)}
+                                                                    className="w-full bg-white border border-gray-200 rounded px-2.5 py-1.5 pl-7 text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-500/20"
+                                                                />
+                                                            </div>
+                                                            <button
+                                                                onClick={() => { setIsEditingCategory(false); setCatSearch(''); }}
+                                                                className="p-1.5 text-gray-400 hover:text-gray-600"
+                                                            >
+                                                                <X size={16} />
+                                                            </button>
+                                                        </div>
+                                                        <div className="max-h-[200px] overflow-y-auto custom-scrollbar border border-gray-100 rounded-md bg-white">
+                                                            {allCategories
+                                                                .filter(c => !catSearch || c.name.toLowerCase().includes(catSearch.toLowerCase()) || getCategoryPath(c.id).toLowerCase().includes(catSearch.toLowerCase()))
+                                                                .slice(0, 50)
+                                                                .map(cat => (
+                                                                    <button
+                                                                        key={cat.id}
+                                                                        onClick={() => handleManualCategoryUpdate(cat.id)}
+                                                                        className="w-full text-left px-3 py-2 text-[11px] font-bold border-b border-gray-50 last:border-0 hover:bg-indigo-50 hover:text-indigo-600 transition-colors"
+                                                                    >
+                                                                        {getCategoryPath(cat.id)}
+                                                                    </button>
+                                                                ))
+                                                            }
+                                                            {allCategories.filter(c => !catSearch || c.name.toLowerCase().includes(catSearch.toLowerCase()) || getCategoryPath(c.id).toLowerCase().includes(catSearch.toLowerCase())).length === 0 && (
+                                                                <div className="p-4 text-center text-[10px] text-gray-400 italic">No categories found</div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
                                         <DetailRow label="Affected Service" value={selectedTicket.services?.name || '-'} />
                                     </div>
                                 </div>
@@ -2728,25 +3054,52 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                         </AICard>
 
                         {/* Classification Card (Moved to bottom) */}
-                        <AICard title="Suggested Classification" icon={Shield}>
-                            <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-3">
+                        <AICard title={selectedTicket.is_category_verified ? "Incident Classification" : "Suggested Classification"} icon={Shield}>
+                            <div className={`p-4 rounded-xl border space-y-3 transition-all ${selectedTicket.is_category_verified ? 'bg-green-50/50 border-green-100' : 'bg-slate-50/50 border-slate-100'}`}>
                                 <div className="flex justify-between text-xs">
-                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">Category</span>
-                                    <span className="text-gray-800 font-black">{aiClassification?.category || 'Analyzing...'}</span>
-                                </div>
-                                <div className="flex justify-between text-xs">
-                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">Priority</span>
-                                    <span className={`font-black ${aiClassification?.priority === 'urgent' ? 'text-red-500' :
-                                        aiClassification?.priority === 'high' ? 'text-orange-500' :
-                                            aiClassification?.priority === 'medium' ? 'text-amber-500' : 'text-green-500'
-                                        }`}>
-                                        {aiClassification?.priority?.toUpperCase() || 'N/A'}
+                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">{selectedTicket.is_category_verified ? 'Current Category' : 'Category'}</span>
+                                    <span className="text-gray-800 font-black text-right pl-4">
+                                        {selectedTicket.is_category_verified
+                                            ? (selectedTicket.ticket_categories?.name || 'Uncategorized')
+                                            : (aiClassification?.category || 'Analyzing...')}
                                     </span>
                                 </div>
-                                <div className="grid grid-cols-2 gap-2 mt-2">
-                                    <button className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm hover:bg-indigo-700 transition-colors">Apply</button>
-                                    <button className="py-2.5 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors">Edit</button>
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">{selectedTicket.is_category_verified ? 'Current Priority' : 'Priority'}</span>
+                                    <span className={`font-black ${(selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'urgent' ? 'text-red-500' :
+                                            (selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'high' ? 'text-orange-500' :
+                                                (selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'medium' ? 'text-amber-500' : 'text-green-500'
+                                        }`}>
+                                        {(selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toUpperCase() || 'N/A'}
+                                    </span>
                                 </div>
+
+                                {selectedTicket.is_category_verified ? (
+                                    <div className="pt-2 border-t border-green-100 mt-2">
+                                        <div className="flex items-center gap-2 text-[10px] text-green-600 font-black uppercase tracking-widest">
+                                            <CheckCircle2 size={12} /> Verifikasi Selesai
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-2 gap-2 mt-2">
+                                        <button
+                                            onClick={handleApplyClassification}
+                                            disabled={!aiClassification}
+                                            className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            Apply & Verify
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setActiveTab('details');
+                                                setIsEditingCategory(true);
+                                            }}
+                                            className="py-2.5 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors"
+                                        >
+                                            Edit Manual
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </AICard>
                     </div>
