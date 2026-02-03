@@ -58,6 +58,9 @@ import RequesterKBPortal from './RequesterKBPortal';
 import AgentTicketView from './AgentTicketView';
 import RequesterTicketManager from './RequesterTicketManager';
 import NotificationPanel from './NotificationPanel';
+import AutoAssignment from './AutoAssignment';
+import AutoCloseRules from './AutoCloseRules';
+import NotificationSettings from './NotificationSettings';
 import { useNotifications } from '../hooks/useNotifications';
 import { useRealtimeToast } from '../hooks/useRealtimeToast';
 
@@ -287,6 +290,48 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       handleAutoClose();
     }
   }, [userProfile?.id]);
+
+  // SLA PERCENTAGE ESCALATION CHECK: Run periodically to trigger escalation rules
+  useEffect(() => {
+    const checkSLAEscalations = async () => {
+      try {
+        const { supabase } = await import('../lib/supabase');
+
+        // Call the RPC function to check and trigger SLA escalations
+        const { data, error } = await supabase.rpc('check_sla_percentage_escalations');
+
+        if (error) {
+          // Function may not exist yet - just log and continue
+          if (error.code === '42883') { // function does not exist
+            console.log('SLA escalation function not yet installed. Run sla_percentage_escalation.sql in Supabase.');
+          } else {
+            console.error('SLA escalation check error:', error);
+          }
+          return;
+        }
+
+        if (data?.notifications_sent > 0) {
+          console.log(`SLA Escalation: ${data.notifications_sent} notifications sent for ${data.processed_tickets} tickets.`);
+        }
+      } catch (err) {
+        console.error('Error checking SLA escalations:', err);
+      }
+    };
+
+    // Only run for supervisors/admins (role_id 1 or 2)
+    const isSupervisorOrAdmin = userProfile?.role_id === 1 || userProfile?.role_id === 2 ||
+      userProfile?.role_id === '1' || userProfile?.role_id === '2';
+
+    if (userProfile?.id && isSupervisorOrAdmin) {
+      // Run immediately on load
+      checkSLAEscalations();
+
+      // Then run every 5 minutes
+      const intervalId = setInterval(checkSLAEscalations, 5 * 60 * 1000);
+
+      return () => clearInterval(intervalId);
+    }
+  }, [userProfile?.id, userProfile?.role_id]);
 
   // Fetch dashboard data
   useEffect(() => {
@@ -988,13 +1033,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       return <EscalationRules />;
     }
 
-    if (currentView === 'service-request-fields' || currentView === 'portal-highlights' || currentView === 'auto-assignment' || currentView === 'auto-close-rules' || currentView === 'notifications') {
+    if (currentView === 'auto-assignment') {
+      return <AutoAssignment />;
+    }
+
+    if (currentView === 'auto-close-rules') {
+      return <AutoCloseRules />;
+    }
+
+    if (currentView === 'notifications') {
+      return <NotificationSettings />;
+    }
+
+    if (currentView === 'service-request-fields' || currentView === 'portal-highlights') {
       const titleMap: any = {
         'service-request-fields': 'Service Request Fields',
-        'portal-highlights': 'Portal Highlights',
-        'auto-assignment': 'Auto Assignment',
-        'auto-close-rules': 'Auto Close Rules',
-        'notifications': 'Notifications'
+        'portal-highlights': 'Portal Highlights'
       };
       return (
         <div className="p-8 flex flex-col items-center justify-center h-full text-center">

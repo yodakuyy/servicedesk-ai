@@ -171,6 +171,40 @@ const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
                 .from('sla_targets')
                 .select('*');
 
+            // Fetch groups with their SLA policies to count tickets
+            const { data: groupsData } = await supabase
+                .from('groups')
+                .select('id, sla_policy_id');
+
+            // Fetch ticket counts per group (only active tickets)
+            const { data: ticketCountsData } = await supabase
+                .from('tickets')
+                .select('assignment_group_id, ticket_statuses!inner(status_name)')
+                .not('assignment_group_id', 'is', null);
+
+            // Calculate ticket counts per SLA policy
+            const ticketCountByPolicy: Record<string, number> = {};
+            if (groupsData && ticketCountsData) {
+                // Create a map of group_id to sla_policy_id
+                const groupPolicyMap = new Map<string, string>();
+                groupsData.forEach((g: any) => {
+                    if (g.sla_policy_id) {
+                        groupPolicyMap.set(g.id, g.sla_policy_id);
+                    }
+                });
+
+                // Count tickets per policy (excluding resolved/closed/canceled)
+                ticketCountsData.forEach((t: any) => {
+                    const statusName = t.ticket_statuses?.status_name;
+                    if (statusName && !['Resolved', 'Closed', 'Canceled'].includes(statusName)) {
+                        const policyId = groupPolicyMap.get(t.assignment_group_id);
+                        if (policyId) {
+                            ticketCountByPolicy[policyId] = (ticketCountByPolicy[policyId] || 0) + 1;
+                        }
+                    }
+                });
+            }
+
             if (policiesError) {
                 console.error('Error fetching SLA policies:', policiesError);
                 // Fallback to mock data
@@ -210,7 +244,7 @@ const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
                         company_name: policy.company?.company_name || 'Unknown',
                         sla_type: slaType,
                         is_active: policy.is_active ?? true,
-                        used_by_count: policy.used_by_count || 0,
+                        used_by_count: ticketCountByPolicy[policy.id] || 0,
                         description: policy.description || '',
                         response_time_hours: getHours(responseTarget),
                         resolve_time_hours: getHours(resolutionTarget),
@@ -221,6 +255,7 @@ const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
                 });
                 setSlaConfigs(transformedData);
             }
+
 
         } catch (error) {
             console.error('Error fetching data:', error);
