@@ -6,11 +6,14 @@ import RequesterCreateIncident from './RequesterCreateIncident';
 interface RequesterTicketManagerProps {
     userProfile?: any;
     initialTicketId?: string | null;
+    initialView?: 'list' | 'detail' | 'create';
 }
 
-const RequesterTicketManager: React.FC<RequesterTicketManagerProps> = ({ userProfile, initialTicketId }) => {
+const RequesterTicketManager: React.FC<RequesterTicketManagerProps> = ({ userProfile, initialTicketId, initialView }) => {
     // State to manage view (List, Detail, or Create)
-    const [currentView, setCurrentView] = useState<'list' | 'detail' | 'create'>(initialTicketId ? 'detail' : 'list');
+    const [currentView, setCurrentView] = useState<'list' | 'detail' | 'create'>(
+        initialView || (initialTicketId ? 'detail' : 'list')
+    );
     const [selectedTicketId, setSelectedTicketId] = useState<string | null>(initialTicketId || null);
 
     // Update view if initialTicketId changes

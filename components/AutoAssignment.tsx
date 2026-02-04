@@ -129,26 +129,32 @@ const AutoAssignment: React.FC = () => {
 
             if (agentsData) setAgents(agentsData);
 
-            // Fetch assignment rules
+            // Fetch assignment rules from database
             const { data: rulesData, error } = await supabase
                 .from('auto_assignment_rules')
                 .select('*')
                 .order('priority', { ascending: true });
 
+            console.log('Auto Assignment Rules fetch result:', { rulesData, error });
+
             if (error) {
                 console.error('Error fetching rules:', error);
-                // Use mock data if table doesn't exist
+                // Only use mock data if there's an actual database error
                 setRules(getMockRules());
-            } else if (rulesData) {
-                setRules(rulesData);
+            } else {
+                // Use database data (even if empty array)
+                setRules(rulesData || []);
             }
 
-            // Calculate stats
-            const activeCount = (rulesData || getMockRules()).filter(r => r.is_active).length;
+            // Calculate stats from actual data
+            const actualRules = rulesData && rulesData.length > 0 ? rulesData : getMockRules();
+            const activeCount = actualRules.filter(r => r.is_active).length;
+            const totalRouted = actualRules.reduce((sum, r) => sum + (r.tickets_routed || 0), 0);
+
             setStats({
                 activeRules: activeCount,
-                ticketsRoutedToday: Math.floor(Math.random() * 100) + 50,
-                assignmentRate: Math.floor(Math.random() * 20) + 80
+                ticketsRoutedToday: totalRouted,
+                assignmentRate: activeCount > 0 ? Math.round((activeCount / actualRules.length) * 100) : 0
             });
 
         } catch (error) {
@@ -758,26 +764,38 @@ const AutoAssignment: React.FC = () => {
                                         }))}
                                         className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                     >
-                                        <option value="group">Group</option>
+                                        <option value="group">Direct to Group</option>
                                         <option value="agent">Specific Agent</option>
-                                        <option value="round_robin">Round Robin</option>
+                                        <option value="round_robin">Round Robin (Distribute Evenly)</option>
                                     </select>
+                                    {formData.assign_to_type === 'round_robin' && (
+                                        <p className="text-xs text-gray-500 mt-1">Tickets will be distributed evenly among agents in the selected group</p>
+                                    )}
                                 </div>
-                                {formData.assign_to_type !== 'round_robin' && (
+                                {formData.assign_to_type !== 'agent' ? (
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            {formData.assign_to_type === 'group' ? 'Select Group' : 'Select Agent'}
+                                            {formData.assign_to_type === 'round_robin' ? 'Round Robin Group' : 'Select Group'}
                                         </label>
                                         <select
                                             value={formData.assign_to_id}
                                             onChange={(e) => setFormData(prev => ({ ...prev, assign_to_id: e.target.value }))}
                                             className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                         >
-                                            <option value="">Select...</option>
-                                            {formData.assign_to_type === 'group'
-                                                ? groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)
-                                                : agents.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)
-                                            }
+                                            <option value="">Select Group...</option>
+                                            {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                                        </select>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Select Agent</label>
+                                        <select
+                                            value={formData.assign_to_id}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, assign_to_id: e.target.value }))}
+                                            className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="">Select Agent...</option>
+                                            {agents.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
                                         </select>
                                     </div>
                                 )}

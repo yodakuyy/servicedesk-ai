@@ -11,7 +11,9 @@ import {
     XCircle,
     X,
     Building2,
-    Globe
+    Globe,
+    Clock,
+    AlertTriangle
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
@@ -22,6 +24,7 @@ interface Department {
     is_active: boolean;
     services?: string[];
     created_at?: string;
+    sla_escalation_mode?: 'immediate' | 'fresh_start' | 'proportional';
 }
 
 interface AdminUser {
@@ -43,7 +46,8 @@ const DepartmentManagement: React.FC = () => {
         company_name: '',
         description: '',
         services: [] as string[],
-        is_active: true
+        is_active: true,
+        sla_escalation_mode: 'immediate' as 'immediate' | 'fresh_start' | 'proportional'
     });
 
     // Pagination state
@@ -108,7 +112,8 @@ const DepartmentManagement: React.FC = () => {
                 company_name: dept.company_name,
                 description: dept.description || '',
                 services: Array.isArray(services) ? services : [],
-                is_active: dept.is_active
+                is_active: dept.is_active,
+                sla_escalation_mode: dept.sla_escalation_mode || 'immediate'
             });
             await fetchDepartmentAdmins(dept.company_id);
         } else {
@@ -117,7 +122,8 @@ const DepartmentManagement: React.FC = () => {
                 company_name: '',
                 description: '',
                 services: [],
-                is_active: true
+                is_active: true,
+                sla_escalation_mode: 'immediate'
             });
             setDepartmentAdmins([]);
         }
@@ -134,7 +140,8 @@ const DepartmentManagement: React.FC = () => {
                         company_name: formData.company_name,
                         description: formData.description,
                         services: formData.services,
-                        is_active: formData.is_active
+                        is_active: formData.is_active,
+                        sla_escalation_mode: formData.sla_escalation_mode
                     })
                     .eq('company_id', editingDepartment.company_id);
 
@@ -149,7 +156,8 @@ const DepartmentManagement: React.FC = () => {
                         company_name: formData.company_name,
                         description: formData.description,
                         services: formData.services,
-                        is_active: formData.is_active
+                        is_active: formData.is_active,
+                        sla_escalation_mode: formData.sla_escalation_mode
                     }]);
 
                 if (error) throw error;
@@ -302,174 +310,229 @@ const DepartmentManagement: React.FC = () => {
             {/* Add/Edit Modal */}
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 flex-shrink-0">
                             <h3 className="text-lg font-bold text-gray-800">
                                 {editingDepartment ? 'Edit Department' : 'Add Department'}
                             </h3>
                             <button
                                 onClick={() => setIsModalOpen(false)}
-                                className="text-gray-400 hover:text-gray-600 transition-colors"
+                                className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100"
                             >
                                 <X size={20} />
                             </button>
                         </div>
 
-                        <div className="p-6 space-y-5">
-                            {/* Department Name */}
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Department Name</label>
-                                <input
-                                    type="text"
-                                    value={formData.company_name}
-                                    onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm"
-                                    placeholder="e.g. Marketing Team"
-                                />
-                            </div>
+                        <div className="flex-1 overflow-y-auto">
 
-                            {/* Description */}
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Description</label>
-                                <input
-                                    type="text"
-                                    value={formData.description}
-                                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm"
-                                    placeholder="e.g. Team handling..."
-                                />
-                            </div>
+                            <div className="p-6 space-y-5">
+                                {/* Department Name */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Department Name</label>
+                                    <input
+                                        type="text"
+                                        value={formData.company_name}
+                                        onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm"
+                                        placeholder="e.g. Marketing Team"
+                                    />
+                                </div>
 
-                            {/* Services (Dynamic List) */}
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Services / Contexts</label>
-                                <div className="space-y-2">
-                                    <div className="flex gap-2">
-                                        <input
-                                            type="text"
-                                            id="service-input"
-                                            className="flex-1 px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm"
-                                            placeholder="Add a service (e.g. Network Security)"
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    e.preventDefault();
-                                                    const val = e.currentTarget.value.trim();
+                                {/* Description */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Description</label>
+                                    <input
+                                        type="text"
+                                        value={formData.description}
+                                        onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm"
+                                        placeholder="e.g. Team handling..."
+                                    />
+                                </div>
+
+                                {/* Services (Dynamic List) */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Services / Contexts</label>
+                                    <div className="space-y-2">
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                id="service-input"
+                                                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm"
+                                                placeholder="Add a service (e.g. Network Security)"
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        e.preventDefault();
+                                                        const val = e.currentTarget.value.trim();
+                                                        if (val && !formData.services.includes(val)) {
+                                                            setFormData({
+                                                                ...formData,
+                                                                services: [...formData.services, val]
+                                                            });
+                                                            e.currentTarget.value = '';
+                                                        }
+                                                    }
+                                                }}
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const input = document.getElementById('service-input') as HTMLInputElement;
+                                                    const val = input.value.trim();
                                                     if (val && !formData.services.includes(val)) {
                                                         setFormData({
                                                             ...formData,
                                                             services: [...formData.services, val]
                                                         });
-                                                        e.currentTarget.value = '';
+                                                        input.value = '';
                                                     }
-                                                }
-                                            }}
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                const input = document.getElementById('service-input') as HTMLInputElement;
-                                                const val = input.value.trim();
-                                                if (val && !formData.services.includes(val)) {
-                                                    setFormData({
-                                                        ...formData,
-                                                        services: [...formData.services, val]
-                                                    });
-                                                    input.value = '';
-                                                }
-                                            }}
-                                            className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
-                                        >
-                                            <Plus size={18} />
-                                        </button>
+                                                }}
+                                                className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
+                                            >
+                                                <Plus size={18} />
+                                            </button>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {formData.services.map((service, idx) => (
+                                                <div key={idx} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs font-medium border border-indigo-100">
+                                                    <span>{service}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const newServices = [...formData.services];
+                                                            newServices.splice(idx, 1);
+                                                            setFormData({ ...formData, services: newServices });
+                                                        }}
+                                                        className="hover:text-indigo-900"
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            {formData.services.length === 0 && (
+                                                <span className="text-xs text-gray-400 italic">No services added yet.</span>
+                                            )}
+                                        </div>
                                     </div>
-                                    <div className="flex flex-wrap gap-2">
-                                        {formData.services.map((service, idx) => (
-                                            <div key={idx} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs font-medium border border-indigo-100">
-                                                <span>{service}</span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const newServices = [...formData.services];
-                                                        newServices.splice(idx, 1);
-                                                        setFormData({ ...formData, services: newServices });
-                                                    }}
-                                                    className="hover:text-indigo-900"
-                                                >
-                                                    <X size={12} />
-                                                </button>
+                                </div>
+
+                                {/* Default Language (Static for UI) */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Default Language</label>
+                                    <div className="relative">
+                                        <div className="flex items-center gap-2 w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 text-sm cursor-not-allowed">
+                                            <Globe size={16} />
+                                            <span>English</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* SLA Escalation Mode */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
+                                        <Clock size={14} className="text-indigo-500" />
+                                        SLA Priority Change Mode
+                                    </label>
+                                    <div className="space-y-2 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                        <label className={`flex items-start gap-3 p-2 rounded-lg cursor-pointer transition-all ${formData.sla_escalation_mode === 'immediate' ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-gray-100 border border-transparent'}`}>
+                                            <input
+                                                type="radio"
+                                                name="sla_mode"
+                                                value="immediate"
+                                                checked={formData.sla_escalation_mode === 'immediate'}
+                                                onChange={() => setFormData({ ...formData, sla_escalation_mode: 'immediate' })}
+                                                className="mt-0.5 accent-indigo-600"
+                                            />
+                                            <div>
+                                                <span className="text-sm font-semibold text-gray-800">Immediate Breach</span>
+                                                <p className="text-[11px] text-gray-500 mt-0.5">Target calculated from ticket creation time. If new target is already exceeded, it breaches immediately.</p>
                                             </div>
-                                        ))}
-                                        {formData.services.length === 0 && (
-                                            <span className="text-xs text-gray-400 italic">No services added yet.</span>
-                                        )}
+                                        </label>
+                                        <label className={`flex items-start gap-3 p-2 rounded-lg cursor-pointer transition-all ${formData.sla_escalation_mode === 'fresh_start' ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-gray-100 border border-transparent'}`}>
+                                            <input
+                                                type="radio"
+                                                name="sla_mode"
+                                                value="fresh_start"
+                                                checked={formData.sla_escalation_mode === 'fresh_start'}
+                                                onChange={() => setFormData({ ...formData, sla_escalation_mode: 'fresh_start' })}
+                                                className="mt-0.5 accent-indigo-600"
+                                            />
+                                            <div>
+                                                <span className="text-sm font-semibold text-gray-800">Fresh Start</span>
+                                                <p className="text-[11px] text-gray-500 mt-0.5">Timer resets from the time priority is changed. New target calculated from that moment.</p>
+                                            </div>
+                                        </label>
+                                        <label className={`flex items-start gap-3 p-2 rounded-lg cursor-pointer transition-all ${formData.sla_escalation_mode === 'proportional' ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-gray-100 border border-transparent'}`}>
+                                            <input
+                                                type="radio"
+                                                name="sla_mode"
+                                                value="proportional"
+                                                checked={formData.sla_escalation_mode === 'proportional'}
+                                                onChange={() => setFormData({ ...formData, sla_escalation_mode: 'proportional' })}
+                                                className="mt-0.5 accent-indigo-600"
+                                            />
+                                            <div>
+                                                <span className="text-sm font-semibold text-gray-800">Proportional</span>
+                                                <p className="text-[11px] text-gray-500 mt-0.5">Remaining time calculated proportionally based on time already elapsed.</p>
+                                            </div>
+                                        </label>
                                     </div>
                                 </div>
-                            </div>
 
-                            {/* Default Language (Static for UI) */}
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Default Language</label>
-                                <div className="relative">
-                                    <div className="flex items-center gap-2 w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 text-sm cursor-not-allowed">
-                                        <Globe size={16} />
-                                        <span>English</span>
-                                    </div>
-                                </div>
-                            </div>
+                                {/* Admin Users */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Admin Users</label>
 
-                            {/* Admin Users */}
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Admin Users</label>
-
-                                {editingDepartment ? (
-                                    <div className="bg-gray-50 rounded-lg border border-gray-100 p-3">
-                                        {adminsLoading ? (
-                                            <div className="text-xs text-gray-400 text-center py-2">Loading admins...</div>
-                                        ) : departmentAdmins.length > 0 ? (
-                                            <div className="flex flex-wrap gap-2">
-                                                {departmentAdmins.map(admin => (
-                                                    <div key={admin.id} className="flex items-center gap-2 bg-white pl-1 pr-3 py-1 rounded-full border border-gray-200 shadow-sm">
-                                                        <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold">
-                                                            {admin.full_name.charAt(0)}
+                                    {editingDepartment ? (
+                                        <div className="bg-gray-50 rounded-lg border border-gray-100 p-3">
+                                            {adminsLoading ? (
+                                                <div className="text-xs text-gray-400 text-center py-2">Loading admins...</div>
+                                            ) : departmentAdmins.length > 0 ? (
+                                                <div className="flex flex-wrap gap-2">
+                                                    {departmentAdmins.map(admin => (
+                                                        <div key={admin.id} className="flex items-center gap-2 bg-white pl-1 pr-3 py-1 rounded-full border border-gray-200 shadow-sm">
+                                                            <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold">
+                                                                {admin.full_name.charAt(0)}
+                                                            </div>
+                                                            <span className="text-xs font-medium text-gray-700">{admin.full_name}</span>
                                                         </div>
-                                                        <span className="text-xs font-medium text-gray-700">{admin.full_name}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        ) : (
-                                            <div className="text-center py-2">
-                                                <p className="text-xs text-amber-600 font-medium mb-1">No admin assigned</p>
-                                                <p className="text-[10px] text-gray-500 leading-tight">
-                                                    To assign an admin, please go to <span className="font-bold text-gray-700">User Management</span> and set the user as Department Admin.
-                                                </p>
-                                            </div>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <div className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-lg border border-gray-100">
-                                        Admins can be assigned after creating the department.
-                                    </div>
-                                )}
-                            </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="text-center py-2">
+                                                    <p className="text-xs text-amber-600 font-medium mb-1">No admin assigned</p>
+                                                    <p className="text-[10px] text-gray-500 leading-tight">
+                                                        To assign an admin, please go to <span className="font-bold text-gray-700">User Management</span> and set the user as Department Admin.
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                            Admins can be assigned after creating the department.
+                                        </div>
+                                    )}
+                                </div>
 
-                            {/* Active Toggle */}
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">Active</label>
-                                <button
-                                    onClick={() => setFormData({ ...formData, is_active: !formData.is_active })}
-                                    className={`relative w-11 h-6 rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${formData.is_active ? 'bg-emerald-500' : 'bg-gray-200'}`}
-                                >
-                                    <span
-                                        className={`inline-block w-4 h-4 transform transition-transform duration-200 ease-in-out bg-white rounded-full shadow-sm mt-1 ml-1 ${formData.is_active ? 'translate-x-5' : 'translate-x-0'}`}
-                                    />
-                                    <span className={`absolute left-full ml-3 text-sm font-medium ${formData.is_active ? 'text-gray-900' : 'text-gray-400'}`}>
-                                        {formData.is_active ? 'ON' : 'OFF'}
-                                    </span>
-                                </button>
+                                {/* Active Toggle */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Active</label>
+                                    <button
+                                        onClick={() => setFormData({ ...formData, is_active: !formData.is_active })}
+                                        className={`relative w-11 h-6 rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${formData.is_active ? 'bg-emerald-500' : 'bg-gray-200'}`}
+                                    >
+                                        <span
+                                            className={`inline-block w-4 h-4 transform transition-transform duration-200 ease-in-out bg-white rounded-full shadow-sm mt-1 ml-1 ${formData.is_active ? 'translate-x-5' : 'translate-x-0'}`}
+                                        />
+                                        <span className={`absolute left-full ml-3 text-sm font-medium ${formData.is_active ? 'text-gray-900' : 'text-gray-400'}`}>
+                                            {formData.is_active ? 'ON' : 'OFF'}
+                                        </span>
+                                    </button>
+                                </div>
                             </div>
-                        </div>
+                        </div> {/* Close scrollable content div */}
 
-                        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
+                        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3 flex-shrink-0">
                             <button
                                 onClick={() => setIsModalOpen(false)}
                                 className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200 bg-white"

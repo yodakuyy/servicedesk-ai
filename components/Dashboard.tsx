@@ -31,7 +31,8 @@ import {
   AlertCircle,
   Clock,
   Briefcase,
-  CheckCircle
+  CheckCircle,
+  X
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import IncidentList from './IncidentList';
@@ -153,7 +154,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     portal: false
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'access-policy'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'access-policy' | 'create-incident'>('dashboard');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile' | 'user-dashboard'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
@@ -172,11 +173,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   const [showNotificationPanel, setShowNotificationPanel] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
+  const [detailModal, setDetailModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    type: 'open' | 'unassigned' | 'overdue' | 'satisfaction' | 'resolved';
+    data: any[];
+  }>({
+    isOpen: false,
+    title: '',
+    type: 'open',
+    data: []
+  });
 
   // Dashboard data states
   const [dashboardData, setDashboardData] = useState<{
     newTickets: any[];
     overdueTickets: any[];
+    openTicketsList: any[];
+    unassignedTicketsList: any[];
+    resolvedTicketsList: any[];
+    satisfactionDetails: any[];
     topIncidents: { name: string; count: number; fill: string }[];
     topServiceRequests: { name: string; count: number; fill: string }[];
     stats: { current: number; closed: number; overdue: number; unassigned: number; satisfaction: string };
@@ -185,6 +201,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   }>({
     newTickets: [],
     overdueTickets: [],
+    openTicketsList: [],
+    unassignedTicketsList: [],
+    resolvedTicketsList: [],
+    satisfactionDetails: [],
     topIncidents: [],
     topServiceRequests: [],
     stats: { current: 0, closed: 0, overdue: 0, unassigned: 0, satisfaction: "0.0" },
@@ -340,13 +360,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
       try {
         const { supabase } = await import('../lib/supabase');
-
-        // Get new tickets (Open status, last 7 days)
+        const isAgent = userProfile?.role_id === 3 || userProfile?.role_id === '3';
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-        const isAgent = userProfile?.role_id === 3 || userProfile?.role_id === '3';
+        // 1. Get Status IDs for "Open" definition (Open + In Progress only)
+        const { data: openStatusesResult } = await supabase
+          .from('ticket_statuses')
+          .select('status_id')
+          .in('status_name', ['Open', 'In Progress']);
+        const openStatusIds = openStatusesResult?.map(s => s.status_id) || [];
 
+        // 2. Get All Active Status IDs (Excluding Resolved, Closed, Canceled)
+        const { data: activeStatusesResult } = await supabase
+          .from('ticket_statuses')
+          .select('status_id')
+          .not('status_name', 'in', '("Resolved", "Closed", "Canceled")');
+        const activeStatusIds = activeStatusesResult?.map(s => s.status_id) || [];
+
+        // 2. NEW TICKETS (Last 7 days)
         let newTicketsQuery = supabase
           .from('tickets')
           .select(`
@@ -355,22 +387,32 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             assigned_agent:profiles!fk_tickets_assigned_agent(full_name),
             ticket_statuses!fk_tickets_status(status_name)
           `)
-          .in('status_id', (
-            await supabase.from('ticket_statuses').select('status_id').in('status_name', ['Open', 'In Progress'])
-          ).data?.map(s => s.status_id) || [])
+          .in('status_id', activeStatusIds)
           .order('created_at', { ascending: false })
           .limit(5);
 
-        // Filter for specific agent if needed
         if (isAgent) {
           newTicketsQuery = newTicketsQuery.eq('assigned_to', userProfile.id);
         } else {
           newTicketsQuery = newTicketsQuery.gte('created_at', sevenDaysAgo.toISOString());
         }
-
         const { data: newTickets } = await newTicketsQuery;
 
-        // Get overdue tickets (simplified - tickets open > 24h)
+        // 3. TEAM/MY OPEN TICKETS (Specifically Open & In Progress)
+        let openTicketsQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, subject, priority, created_at,
+            requester:profiles!fk_tickets_requester(full_name),
+            assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
+          `)
+          .in('status_id', openStatusIds)
+          .order('created_at', { ascending: false });
+
+        if (isAgent) openTicketsQuery = openTicketsQuery.eq('assigned_to', userProfile.id);
+        const { data: openTicketsFullList } = await openTicketsQuery;
+
+        // 4. OVERDUE TICKETS (Simplified - tickets open > 24h)
         const twentyFourHoursAgo = new Date();
         twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
 
@@ -381,20 +423,61 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             requester:profiles!fk_tickets_requester(full_name),
             assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
           `)
-          .in('status_id', (
-            await supabase.from('ticket_statuses').select('status_id').in('status_name', ['Open', 'In Progress'])
-          ).data?.map(s => s.status_id) || [])
+          .in('status_id', activeStatusIds)
           .lt('created_at', twentyFourHoursAgo.toISOString())
-          .order('created_at', { ascending: true })
-          .limit(4);
+          .order('created_at', { ascending: true });
 
-        if (isAgent) {
-          overdueQuery = overdueQuery.eq('assigned_to', userProfile.id);
-        }
+        if (isAgent) overdueQuery = overdueQuery.eq('assigned_to', userProfile.id);
+        const { data: overdueTicketsFullList } = await overdueQuery;
 
-        const { data: overdueTickets } = await overdueQuery;
+        // 5. UNASSIGNED TICKETS
+        let unassignedQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, subject, priority, created_at,
+            requester:profiles!fk_tickets_requester(full_name)
+          `)
+          .is('assigned_to', null)
+          .in('status_id', activeStatusIds)
+          .order('created_at', { ascending: false });
 
-        // Get top 5 incident categories
+        // Even for agents, unassigned is usually global within group or system
+        const { data: unassignedTicketsFullList } = await unassignedQuery;
+
+        // 6. RESOLVED TODAY (Full List)
+        const midNight = new Date(); midNight.setHours(0, 0, 0, 0);
+        let resolvedQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, subject, priority, created_at, updated_at,
+            requester:profiles!fk_tickets_requester(full_name),
+            assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
+          `)
+          .in('status_id', (
+            await supabase.from('ticket_statuses').select('status_id').in('status_name', ['Resolved', 'Closed'])
+          ).data?.map(s => s.status_id) || [])
+          .gte('updated_at', midNight.toISOString())
+          .order('updated_at', { ascending: false });
+
+        if (isAgent) resolvedQuery = resolvedQuery.eq('assigned_to', userProfile.id);
+        const { data: resolvedTicketsFullList } = await resolvedQuery;
+
+        // 7. SATISFACTION REVIEWS
+        const { data: satisfactionData } = await supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, satisfaction_rating, user_feedback, updated_at,
+            requester:profiles!fk_tickets_requester(full_name)
+          `)
+          .not('satisfaction_rating', 'is', null)
+          .order('updated_at', { ascending: false });
+
+        const satisfactionReviewsList = satisfactionData || [];
+        const avgSatisfaction = satisfactionReviewsList.length
+          ? (satisfactionReviewsList.reduce((acc, curr) => acc + (curr.satisfaction_rating || 0), 0) / satisfactionReviewsList.length).toFixed(1)
+          : "0.0";
+
+        // 8. TOP CATEGORIES (Existing logic)
         const { data: incidentCategories } = await supabase
           .from('tickets')
           .select('category_id, ticket_categories(name)')
@@ -412,7 +495,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .slice(0, 5)
           .map(([name, count], i) => ({ name, count, fill: colors[i] || '#9ca3af' }));
 
-        // Get top 5 service request categories
         const { data: srCategories } = await supabase
           .from('tickets')
           .select('category_id, ticket_categories(name)')
@@ -430,56 +512,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .slice(0, 5)
           .map(([name, count], i) => ({ name, count, fill: srColors[i] || '#9ca3af' }));
 
-        // Get stats (Personal for Agent, Global for SPV)
-        let currentQuery = supabase
-          .from('tickets')
-          .select('*', { count: 'exact', head: true })
-          .in('status_id', (
-            await supabase.from('ticket_statuses').select('status_id').in('status_name', ['Open', 'In Progress', 'Pending'])
-          ).data?.map(s => s.status_id) || []);
-
-        if (isAgent) {
-          currentQuery = currentQuery.eq('assigned_to', userProfile.id);
-        }
-
-        const { count: currentCount } = await currentQuery;
-
-        let closedQuery = supabase
-          .from('tickets')
-          .select('*', { count: 'exact', head: true })
-          .in('status_id', (
-            await supabase.from('ticket_statuses').select('status_id').in('status_name', ['Resolved', 'Closed'])
-          ).data?.map(s => s.status_id) || []);
-
-        // For "Resolved Today", only count tickets resolved/closed today
-        closedQuery = closedQuery.gte('updated_at', new Date().toISOString().split('T')[0]);
-
-        if (isAgent) {
-          closedQuery = closedQuery.eq('assigned_to', userProfile.id);
-        }
-
-        const { count: closedCount } = await closedQuery;
-
-        // Unassigned Tickets Count (Using correct assigned_to column)
-        const { count: unassignedCount } = await supabase
-          .from('tickets')
-          .select('*', { count: 'exact', head: true })
-          .is('assigned_to', null)
-          .in('status_id', (
-            await supabase.from('ticket_statuses').select('status_id').neq('status_name', 'Closed').neq('status_name', 'Resolved')
-          ).data?.map(s => s.status_id) || []);
-
-        // REAL DATA: AVERAGE SATISFACTION (CSAT)
-        const { data: satisfactionData } = await supabase
-          .from('tickets')
-          .select('satisfaction_rating')
-          .not('satisfaction_rating', 'is', null);
-
-        const avgSatisfaction = satisfactionData?.length
-          ? (satisfactionData.reduce((acc, curr) => acc + (curr.satisfaction_rating || 0), 0) / satisfactionData.length).toFixed(1)
-          : "0.0";
-
-        // REAL DATA: WEEKLY TREND
+        // 9. WEEKLY TREND
         const sevenDaysAgoDate = new Date();
         sevenDaysAgoDate.setDate(sevenDaysAgoDate.getDate() - 6);
         const { data: trendTickets } = await supabase
@@ -489,15 +522,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
         const weeklyTrendMap: Record<string, { incidents: number; requests: number }> = {};
         const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-        // Initialize last 7 days
         for (let i = 6; i >= 0; i--) {
           const d = new Date();
           d.setDate(d.getDate() - i);
           const dayName = days[d.getDay()];
           weeklyTrendMap[dayName] = { incidents: 0, requests: 0 };
         }
-
         trendTickets?.forEach(t => {
           const d = new Date(t.created_at);
           const dayName = days[d.getDay()];
@@ -506,9 +536,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             else weeklyTrendMap[dayName].requests++;
           }
         });
-
-        // Convert map to array ensuring correct order (simplified: just standard week order or current logic)
-        // Better logic: loop 7 days again to build array
         const weeklyTrend = [];
         for (let i = 6; i >= 0; i--) {
           const d = new Date();
@@ -521,22 +548,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           });
         }
 
-        // REAL DATA: TEAM PULSE (RPC version to fix RLS 0 counts)
+        // 10. TEAM PULSE
         let teamPulse = [];
         try {
           const { data: rpcData, error: rpcError } = await supabase.rpc('get_team_pulse');
-
           if (rpcError) throw rpcError;
-
           if (rpcData) {
             teamPulse = rpcData.map((agent: any) => {
               const active = Number(agent.active_count);
               const resolved = Number(agent.resolved_today_count);
               const isSPV = agent.role_id === 2;
-
               let score = 100 - (active * 5) + (resolved * 2);
               score = Math.min(100, Math.max(0, score));
-
               return {
                 name: agent.full_name || agent.email || 'Unknown Agent',
                 active: active,
@@ -548,32 +571,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               };
             });
           }
-        } catch (err: any) {
-          console.error("Team Pulse RPC failed. Error details:", err);
-          // Log exact Postgres error if available
-          if (err?.message) console.error("Postgres Message:", err.message);
-          if (err?.code) console.error("Postgres Code:", err.code);
-        }
+        } catch (err) { console.error("Team Pulse RPC failed", err); }
 
-        // Fallback jika kosong
         if (teamPulse.length === 0) {
           teamPulse = [{ name: 'Data Belum Tersedia', active: 0, resolved: 0, status: 'Free', score: 100, isSPV: false }];
         }
 
         setDashboardData({
           newTickets: newTickets || [],
-          overdueTickets: overdueTickets || [],
+          overdueTickets: overdueTicketsFullList?.slice(0, 4) || [],
+          openTicketsList: openTicketsFullList || [],
+          unassignedTicketsList: unassignedTicketsFullList || [],
+          resolvedTicketsList: resolvedTicketsFullList || [],
+          satisfactionDetails: satisfactionReviewsList || [],
           topIncidents,
           topServiceRequests: topSR,
           stats: {
-            current: currentCount || 0,
-            closed: closedCount || 0,
-            overdue: overdueTickets?.length || 0,
-            unassigned: unassignedCount || 0,
+            current: openTicketsFullList?.length || 0,
+            closed: resolvedTicketsFullList?.length || 0,
+            overdue: overdueTicketsFullList?.length || 0,
+            unassigned: unassignedTicketsFullList?.length || 0,
             satisfaction: avgSatisfaction
           },
-          weeklyTrend: weeklyTrend,
-          teamPulse: teamPulse
+          weeklyTrend,
+          teamPulse
         });
 
       } catch (error) {
@@ -799,6 +820,116 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     setCurrentView('incidents');
   };
 
+  // Detail Modal Component
+  const renderDetailModal = () => {
+    if (!detailModal.isOpen) return null;
+
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-300 shadow-indigo-100/50">
+          {/* Header */}
+          <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-white sticky top-0 z-10">
+            <div className="flex items-center gap-3">
+              <div className={`p-3 rounded-2xl ${detailModal.type === 'overdue' ? 'bg-red-50 text-red-600' :
+                detailModal.type === 'unassigned' ? 'bg-amber-50 text-amber-600' :
+                  detailModal.type === 'satisfaction' ? 'bg-purple-50 text-purple-600' :
+                    'bg-indigo-50 text-indigo-600'
+                }`}>
+                {detailModal.type === 'overdue' ? <AlertCircle size={24} /> :
+                  detailModal.type === 'unassigned' ? <Users size={24} /> :
+                    detailModal.type === 'satisfaction' ? <Star size={24} /> :
+                      <Ticket size={24} />}
+              </div>
+              <div>
+                <h2 className="text-xl font-black text-gray-800 uppercase tracking-tight">{detailModal.title}</h2>
+                <p className="text-sm text-gray-500 font-medium tracking-tight">System analysis for {detailModal.title.toLowerCase()}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setDetailModal(prev => ({ ...prev, isOpen: false }))}
+              className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 hover:text-gray-600 transition-all"
+            >
+              <X size={24} />
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-auto custom-scrollbar p-0">
+            {detailModal.type === 'satisfaction' ? (
+              <div className="p-0">
+                <table className="w-full text-left text-sm whitespace-nowrap">
+                  <thead className="text-gray-400 font-medium border-b border-gray-50 bg-gray-50/30">
+                    <tr>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Reviewer</th>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Rating</th>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Ticket</th>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider">Feedback</th>
+                      <th className="px-6 py-4 font-normal text-xs uppercase tracking-wider text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {detailModal.data.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-8 text-center text-gray-400 text-sm italic">No reviews found</td>
+                      </tr>
+                    ) : detailModal.data.map((ticket, i) => (
+                      <tr key={ticket.id} className="hover:bg-gray-50 transition-colors group">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-[10px] font-bold text-indigo-600 border border-indigo-100">
+                              {ticket.requester?.full_name?.charAt(0).toUpperCase()}
+                            </div>
+                            <span className="font-bold text-gray-700">{ticket.requester?.full_name}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex gap-0.5">
+                            {[1, 2, 3, 4, 5].map(s => <Star key={s} size={12} className={s <= (ticket.satisfaction_rating || 0) ? "fill-yellow-400 text-yellow-400" : "text-gray-200"} />)}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-xs font-black text-indigo-600 tracking-wider">#{ticket.ticket_number}</td>
+                        <td className="px-6 py-4 min-w-[250px]">
+                          <p className="text-xs text-gray-600 italic whitespace-normal line-clamp-2 leading-relaxed">
+                            {ticket.user_feedback ? `"${ticket.user_feedback}"` : '- No feedback provided -'}
+                          </p>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            onClick={() => { handleViewTicket(ticket.id); setDetailModal(p => ({ ...p, isOpen: false })); }}
+                            className="px-3 py-1.5 bg-indigo-50 text-indigo-700 text-[10px] font-black rounded-lg hover:bg-indigo-600 hover:text-white transition-all uppercase tracking-widest"
+                          >
+                            Open Profile
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="p-0">
+                {renderCommonTable(detailModal.data)}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-between items-center sticky bottom-0">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+              Showing {detailModal.data.length} Results
+            </span>
+            <button
+              onClick={() => setDetailModal(prev => ({ ...prev, isOpen: false }))}
+              className="px-8 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-black text-gray-700 hover:bg-gray-100 transition-all shadow-sm uppercase tracking-wider"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Helper render common table to avoid duplication
   const renderCommonTable = (tickets: any[]) => (
     <table className="w-full text-left text-sm whitespace-nowrap">
@@ -865,7 +996,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             </td>
             <td className="px-6 py-4">
               <button
-                onClick={() => handleViewTicket(ticket.id)}
+                onClick={() => { handleViewTicket(ticket.id); setDetailModal(prev => ({ ...prev, isOpen: false })); }}
                 className="group flex items-center gap-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
               >
                 OPEN <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
@@ -886,6 +1017,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           onViewTicket={(id) => handleViewTicket(id, 'user-dashboard')}
         />
       );
+    }
+
+    if (currentView === 'create-incident') {
+      return <RequesterTicketManager userProfile={userProfile} initialView="create" />;
     }
 
     if (currentView === 'incidents') {
@@ -1108,6 +1243,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         </div>
       );
     }
+    const getGreeting = () => {
+      const hour = new Date().getHours();
+      if (hour < 12) return 'Good Morning';
+      if (hour < 15) return 'Good Afternoon';
+      if (hour < 18) return 'Good Afternoon';
+      return 'Good Evening';
+    };
 
     const isAgent = userProfile?.role_id === 3 || userProfile?.role_id === '3';
     const isSPV = userProfile?.role_id === 2 || userProfile?.role_id === '2' || userProfile?.role_id === 1 || userProfile?.role_id === '1'; // SPV & Admin
@@ -1117,14 +1259,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       return (
         <div className="p-8">
           <div className="mb-6">
-            <h1 className="text-2xl font-bold text-gray-800">Good Morning, {userProfile?.full_name?.split(' ')[0] || 'Agent'}! 👋</h1>
+            <h1 className="text-2xl font-bold text-gray-800">{getGreeting()}, {userProfile?.full_name?.split(' ')[0] || 'Agent'}! 👋</h1>
             <p className="text-gray-500">Here's what's on your plate today.</p>
           </div>
 
           <div className="grid grid-cols-12 gap-6">
             {/* Agent Stats - Personal Focus */}
             <div className="col-span-12 grid grid-cols-3 gap-6 mb-2">
-              <div className="bg-white p-5 rounded-2xl border border-indigo-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all">
+              <div
+                onClick={() => setDetailModal({ isOpen: true, title: 'My Open Tickets', type: 'open', data: dashboardData.openTicketsList })}
+                className="bg-white p-5 rounded-2xl border border-indigo-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all cursor-pointer"
+              >
                 <div>
                   <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">My Open Tickets</p>
                   <h3 className="text-3xl font-black text-gray-800 mt-1">{dashboardData.stats.current}</h3>
@@ -1133,7 +1278,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   <Briefcase size={24} />
                 </div>
               </div>
-              <div className="bg-white p-5 rounded-2xl border border-emerald-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all">
+              <div
+                onClick={() => setDetailModal({ isOpen: true, title: 'Resolved Today', type: 'resolved', data: dashboardData.resolvedTicketsList })}
+                className="bg-white p-5 rounded-2xl border border-emerald-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all cursor-pointer"
+              >
                 <div>
                   <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Resolved Today</p>
                   <h3 className="text-3xl font-black text-gray-800 mt-1">{dashboardData.stats.closed}</h3>
@@ -1142,7 +1290,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   <CheckCircle size={24} />
                 </div>
               </div>
-              <div className="bg-white p-5 rounded-2xl border border-red-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all">
+              <div
+                onClick={() => setDetailModal({ isOpen: true, title: 'My Overdue Tickets', type: 'overdue', data: dashboardData.overdueTickets })}
+                className="bg-white p-5 rounded-2xl border border-red-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all cursor-pointer"
+              >
                 <div>
                   <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Overdue</p>
                   <h3 className="text-3xl font-black text-red-600 mt-1">{dashboardData.stats.overdue}</h3>
@@ -1228,9 +1379,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           {/* 1. KEY METRICS GRID (4 Cards) */}
           <div className="col-span-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Total Open */}
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-indigo-100 flex flex-col justify-between group hover:shadow-md transition-all relative overflow-hidden">
+            <div
+              onClick={() => setDetailModal({ isOpen: true, title: isSPV ? 'Team Open Tickets' : 'My Open Tickets', type: 'open', data: dashboardData.openTicketsList })}
+              className="bg-white p-5 rounded-2xl shadow-sm border border-indigo-100 flex flex-col justify-between group hover:shadow-md transition-all relative overflow-hidden cursor-pointer"
+            >
               <div className="relative z-10">
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Total Open Tickets</p>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                  {isSPV ? 'Team Open Tickets' : 'My Open Tickets'}
+                </p>
                 <div className="flex items-end gap-2">
                   <h3 className="text-4xl font-black text-gray-800 tracking-tight">{dashboardData.stats.current}</h3>
                   <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded mb-1 flex items-center gap-0.5">
@@ -1243,7 +1399,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             </div>
 
             {/* Unassigned (Critical) */}
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-amber-100 flex flex-col justify-between group hover:shadow-md transition-all relative overflow-hidden">
+            <div
+              onClick={() => setDetailModal({ isOpen: true, title: 'Unassigned Queue', type: 'unassigned', data: dashboardData.unassignedTicketsList })}
+              className="bg-white p-5 rounded-2xl shadow-sm border border-amber-100 flex flex-col justify-between group hover:shadow-md transition-all relative overflow-hidden cursor-pointer"
+            >
               <div className="relative z-10">
                 <p className="text-xs font-bold text-amber-500 uppercase tracking-wider mb-2">Unassigned Queue</p>
                 <div className="flex items-end gap-2">
@@ -1256,7 +1415,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             </div>
 
             {/* Overdue (Danger) */}
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-red-100 flex flex-col justify-between group hover:shadow-md transition-all relative overflow-hidden">
+            <div
+              onClick={() => setDetailModal({ isOpen: true, title: 'Overdue Tickets', type: 'overdue', data: dashboardData.overdueTickets })}
+              className="bg-white p-5 rounded-2xl shadow-sm border border-red-100 flex flex-col justify-between group hover:shadow-md transition-all relative overflow-hidden cursor-pointer"
+            >
               <div className="relative z-10">
                 <p className="text-xs font-bold text-red-500 uppercase tracking-wider mb-2">Overdue</p>
                 <div className="flex items-end gap-2">
@@ -1269,7 +1431,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             </div>
 
             {/* CSAT / Satisfaction */}
-            <div className="bg-gradient-to-br from-indigo-600 to-purple-700 p-5 rounded-2xl shadow-lg shadow-indigo-200 flex flex-col justify-between text-white relative overflow-hidden">
+            <div
+              onClick={() => setDetailModal({ isOpen: true, title: 'Satisfaction Reviews', type: 'satisfaction', data: dashboardData.satisfactionDetails })}
+              className="bg-gradient-to-br from-indigo-600 to-purple-700 p-5 rounded-2xl shadow-lg shadow-indigo-200 flex flex-col justify-between text-white relative overflow-hidden cursor-pointer"
+            >
               <div className="relative z-10">
                 <p className="text-xs font-bold text-indigo-200 uppercase tracking-wider mb-2">Avg. Satisfaction</p>
                 <div className="flex items-end gap-2">
@@ -1909,6 +2074,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         {/* Scrollable Content */}
         <main className="flex-1 overflow-auto">
           {renderContent()}
+          {renderDetailModal()}
         </main>
       </div>
     </div>

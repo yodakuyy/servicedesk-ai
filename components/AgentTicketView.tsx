@@ -4,10 +4,11 @@ import {
     MessageSquare, FileText, GitBranch, Shield, Send, Sparkles,
     ChevronRight, ChevronLeft, ChevronDown, Paperclip, Mic, User, Copy, ExternalLink,
     ThumbsUp, RefreshCw, AlertTriangle, Loader2, Zap, X, Info, BookOpen,
-    ArrowUpRight, ArrowRight, BarChart3, Lock, List, Users, Building2, Upload
+    ArrowUpRight, ArrowRight, BarChart3, Lock, List, Users, Building2, Upload, Ticket, Plus
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
+import RequesterCreateIncident from './RequesterCreateIncident';
 
 interface AgentTicketViewProps {
     userProfile?: any;
@@ -47,6 +48,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     const [isUploading, setIsUploading] = useState(false);
     const [isEditingCategory, setIsEditingCategory] = useState(false);
     const [catSearch, setCatSearch] = useState('');
+    const [isEditingPriority, setIsEditingPriority] = useState(false);
 
     // AI Copilot States
     const [aiSummary, setAiSummary] = useState<string[]>([]);
@@ -66,6 +68,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     const [aiConfidence, setAiConfidence] = useState<'high' | 'medium' | 'low'>('low');
     const [isApplyingSummary, setIsApplyingSummary] = useState(false);
     const [isInternalNote, setIsInternalNote] = useState(false);
+    const [isCreating, setIsCreating] = useState(false);
 
     // Queue Filter State - for switching between different ticket views
     const [queueFilter, setQueueFilter] = useState<'assigned' | 'submitted' | 'all'>(initialQueueFilter);
@@ -467,7 +470,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     }, [queueFilter, agentGroups, userProfile?.id]);
 
     useEffect(() => {
-        if (!selectedTicketId) return;
+        if (!selectedTicketId) {
+            setSelectedTicket(null);
+            setMessages([]);
+            setAiInsight(null);
+            setActivityLogs([]);
+            return;
+        }
 
         const fetchDetails = async () => {
             const { data: ticket } = await supabase
@@ -482,7 +491,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
                     group:groups!assignment_group_id (
                         id, name, company_id, 
-                        company:company_id(company_name),
+                        company:company_id(company_name, sla_escalation_mode),
                         group_sla_policies(sla_policy_id),
                         business_hours(weekly_schedule)
                     ),
@@ -527,7 +536,15 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
     useEffect(() => {
         const fetchAISuggestions = async () => {
-            if (!selectedTicket?.subject && !selectedTicket?.description) return;
+            if (!selectedTicket?.subject && !selectedTicket?.description) {
+                setSuggestedKB([]);
+                setSimilarTickets([]);
+                setAiSummary([]);
+                setAiClassification(null);
+                setAiSuggestedReply('');
+                setAiConfidence('low');
+                return;
+            }
             setIsAiLoading(true);
 
             try {
@@ -807,7 +824,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
     // --- LIVE SLA RISK UPDATE ---
     useEffect(() => {
-        if (!selectedTicket || !selectedTicket.created_at) return;
+        if (!selectedTicket || !selectedTicket.created_at) {
+            setSlaRisk({ percentage: 0, timeElapsed: '0h 0m', timeRemaining: '0h 0m', hasResponse: false });
+            return;
+        }
 
         const schedule = selectedTicket.group?.business_hours?.weekly_schedule || [];
         const firstResponseTime = messages.find(m => !m.is_internal && m.sender_id !== selectedTicket.requester_id)?.created_at;
@@ -1724,8 +1744,6 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 .order('created_at', { ascending: false });
             if (logs) setActivityLogs(logs);
 
-            // @ts-ignore
-            const Swal = (await import('sweetalert2')).default;
             Swal.fire({
                 icon: 'success',
                 title: 'Category Verified',
@@ -1739,19 +1757,116 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         }
     };
 
+    const handlePriorityUpdate = async (newPriority: string) => {
+        if (!selectedTicketId || !selectedTicket) return;
+
+        const oldPriority = selectedTicket.priority;
+        if (oldPriority?.toLowerCase() === newPriority.toLowerCase()) {
+            setIsEditingPriority(false);
+            return;
+        }
+
+        // @ts-ignore
+        const Swal = (await import('sweetalert2')).default;
+        const result = await Swal.fire({
+            title: 'Ubah Prioritas',
+            text: `Ubah prioritas dari "${oldPriority}" menjadi "${newPriority}"?`,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#4f46e5',
+            cancelButtonColor: '#94a3b8',
+            confirmButtonText: 'Ya, Ubah',
+            cancelButtonText: 'Batal'
+        });
+
+        if (!result.isConfirmed) return;
+
+        try {
+            const priorityLower = newPriority.toLowerCase();
+            const now = new Date().toISOString();
+
+            const { error } = await supabase
+                .from('tickets')
+                .update({
+                    priority: priorityLower,
+                    priority_changed_at: now,
+                    previous_priority: oldPriority
+                })
+                .eq('id', selectedTicketId);
+
+            if (error) throw error;
+
+            setSelectedTicket(prev => prev ? {
+                ...prev,
+                priority: priorityLower,
+                priority_changed_at: now,
+                previous_priority: oldPriority
+            } : null);
+            setTickets(prev => prev.map(t => t.id === selectedTicketId ? {
+                ...t,
+                priority: priorityLower,
+                priority_changed_at: now,
+                previous_priority: oldPriority
+            } : t));
+
+            await supabase.from('ticket_activity_log').insert({
+                ticket_id: selectedTicketId,
+                actor_id: userProfile?.id,
+                action: `Priority changed from ${oldPriority} to ${newPriority}`
+            });
+
+            const { data: logs } = await supabase
+                .from('ticket_activity_log')
+                .select('*')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: false });
+            if (logs) setActivityLogs(logs);
+
+            setIsEditingPriority(false);
+
+            Swal.fire({
+                icon: 'success',
+                title: 'Prioritas Diubah',
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 1500
+            });
+        } catch (err: any) {
+            console.error('Update Priority Error:', err);
+            Swal.fire({
+                icon: 'error',
+                title: 'Gagal Mengubah Prioritas',
+                text: err?.message || 'Terjadi kesalahan saat mengubah prioritas. Silakan coba lagi.',
+            });
+        }
+    };
+
     return (
         <div className="flex h-full bg-[#f8f9fa] font-sans overflow-hidden text-[#333]">
 
             {/* 1. LEFT PANEL - Ticket List */}
             <div className="w-[320px] flex flex-col border-r border-gray-200 bg-white">
                 {/* Search & Filter Bar */}
-                <div className="p-3 border-b border-gray-100 flex flex-col gap-2 bg-white">
+                <div className="p-3 border-b border-gray-100 flex flex-col gap-2 bg-white sticky top-0 z-10">
+                    <div className="flex items-center justify-between mb-1">
+                        <h2 className="text-sm font-black uppercase tracking-widest text-gray-700">Incidents</h2>
+                        <button
+                            onClick={() => {
+                                setIsCreating(true);
+                                setSelectedTicketId(null);
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-indigo-700 shadow-md shadow-indigo-100 transition-all active:scale-95"
+                        >
+                            <Plus size={14} /> New Incident
+                        </button>
+                    </div>
                     <div className="flex items-center gap-2">
                         <div className="relative flex-1">
                             <Search className="absolute left-2.5 top-2.5 text-gray-400" size={14} />
                             <input
                                 type="text"
-                                placeholder="Search Incidents..."
+                                placeholder="Search..."
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 className="w-full bg-gray-50 border border-gray-100 rounded-md py-1.5 pl-8 pr-3 text-xs focus:ring-1 focus:ring-indigo-500/20 outline-none"
@@ -1982,7 +2097,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             return (
                                 <div
                                     key={ticket.id}
-                                    onClick={() => setSelectedTicketId(ticket.id)}
+                                    onClick={() => {
+                                        setSelectedTicketId(ticket.id);
+                                        setIsCreating(false);
+                                    }}
                                     className={`px-4 py-3 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedTicketId === ticket.id ? 'bg-blue-50/50' : ''}`}
                                 >
                                     <div className="flex justify-between items-start mb-1">
@@ -2033,8 +2151,24 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 </div>
             </div>
 
-            {/* 2. CENTER PANEL - Incident Detail */}
-            {selectedTicket ? (
+            {/* 2. CENTER PANEL - Workspace */}
+            {isCreating ? (
+                <div className="flex-1 bg-white overflow-y-auto custom-scrollbar">
+                    <div className="max-w-4xl mx-auto py-8">
+                        <RequesterCreateIncident
+                            userProfile={userProfile}
+                            onBack={() => setIsCreating(false)}
+                            onSubmit={(data) => {
+                                setIsCreating(false);
+                                // Refresh ticket list (handled by supabase real-time usually, but good to trigger logic)
+                                setQueueFilter('all');
+                                // Optionally select the new ticket
+                                if (data.ticketId) setSelectedTicketId(data.ticketId);
+                            }}
+                        />
+                    </div>
+                </div>
+            ) : selectedTicket ? (
                 <div className="flex-1 flex flex-col min-w-0 bg-white">
                     {/* Header Section */}
                     <div className="p-6 border-b border-gray-100">
@@ -2396,15 +2530,69 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     <div className="space-y-5">
                                         <DetailRow label="Ticket ID" value={selectedTicket.ticket_number} />
                                         <DetailRow label="Current Status" value={selectedTicket.ticket_statuses?.status_name} />
-                                        <DetailRow label="Priority Level" value={
-                                            (() => {
-                                                const p = selectedTicket.priority?.toLowerCase() || 'low';
-                                                if (p === 'critical') return 'P1 - Critical';
-                                                if (p === 'high') return 'P2 - High';
-                                                if (p === 'medium') return 'P3 - Medium';
-                                                return 'P4 - Low';
-                                            })()
-                                        } />
+
+                                        {/* Priority Level - Editable */}
+                                        <div className="flex flex-col gap-1 py-1.5 border-b border-gray-50 last:border-0">
+                                            <div className="flex items-center justify-between mb-1">
+                                                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Priority Level</span>
+                                            </div>
+                                            <div className="bg-slate-50/80 p-2.5 rounded-lg border border-slate-100 flex flex-col gap-2">
+                                                {!isEditingPriority ? (
+                                                    <>
+                                                        <span className={`text-[13px] font-bold leading-snug ${selectedTicket.priority?.toLowerCase() === 'critical' ? 'text-rose-600' :
+                                                            selectedTicket.priority?.toLowerCase() === 'high' ? 'text-orange-600' :
+                                                                selectedTicket.priority?.toLowerCase() === 'medium' ? 'text-amber-600' : 'text-green-600'
+                                                            }`}>
+                                                            {(() => {
+                                                                const p = selectedTicket.priority?.toLowerCase() || 'low';
+                                                                if (p === 'critical') return 'P1 - Critical';
+                                                                if (p === 'high') return 'P2 - High';
+                                                                if (p === 'medium') return 'P3 - Medium';
+                                                                return 'P4 - Low';
+                                                            })()}
+                                                        </span>
+                                                        <div className="flex items-center gap-2 mt-1">
+                                                            <button
+                                                                onClick={() => setIsEditingPriority(true)}
+                                                                className="text-[9px] font-black text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all"
+                                                            >
+                                                                Change Priority
+                                                            </button>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold text-gray-500">Select new priority:</span>
+                                                            <button
+                                                                onClick={() => setIsEditingPriority(false)}
+                                                                className="p-1 text-gray-400 hover:text-gray-600"
+                                                            >
+                                                                <X size={14} />
+                                                            </button>
+                                                        </div>
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            {['Critical', 'High', 'Medium', 'Low'].map(p => (
+                                                                <button
+                                                                    key={p}
+                                                                    onClick={() => handlePriorityUpdate(p)}
+                                                                    className={`px-3 py-2 text-[11px] font-black rounded-lg border transition-all ${selectedTicket.priority?.toLowerCase() === p.toLowerCase()
+                                                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                                                        : p === 'Critical' ? 'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100'
+                                                                            : p === 'High' ? 'bg-orange-50 text-orange-600 border-orange-200 hover:bg-orange-100'
+                                                                                : p === 'Medium' ? 'bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100'
+                                                                                    : 'bg-green-50 text-green-600 border-green-200 hover:bg-green-100'
+                                                                        }`}
+                                                                >
+                                                                    {p === 'Critical' ? 'P1 - Critical' : p === 'High' ? 'P2 - High' : p === 'Medium' ? 'P3 - Medium' : 'P4 - Low'}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
                                         <div className="flex flex-col gap-1 py-1.5 border-b border-gray-50 last:border-0">
                                             <div className="flex items-center justify-between mb-1">
                                                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Category</span>
@@ -2604,20 +2792,85 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                             const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
                             const stopTime = activityLogs.find(l => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('canceled'))?.created_at;
-                            const resolutionElapsed = stopTime ?
-                                calculateBusinessElapsed(new Date(selectedTicket.created_at), new Date(stopTime), schedule) :
-                                calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+
+                            // Get SLA escalation mode from department
+                            const escalationMode = selectedTicket.group?.company?.sla_escalation_mode || 'immediate';
+                            const priorityChangedAt = selectedTicket.priority_changed_at;
+                            const previousPriority = selectedTicket.previous_priority;
+
+                            // Calculate resolution based on escalation mode
+                            let resolutionElapsed: number;
+                            let resolutionDeadline: Date | null = null;
+                            let effectiveTargetMinutes = resolutionTarget?.target_minutes || 0;
+
+                            if (priorityChangedAt && previousPriority && resolutionTarget?.target_minutes) {
+                                const priorityChangeDate = new Date(priorityChangedAt);
+                                const createdDate = new Date(selectedTicket.created_at);
+
+                                // Get previous priority's target for proportional calculation
+                                const previousTarget = slaTargets.find(t =>
+                                    t.sla_policy_id === matchingPolicy?.id &&
+                                    t.sla_type === 'resolution' &&
+                                    t.priority?.toLowerCase() === previousPriority.toLowerCase()
+                                );
+                                const previousTargetMinutes = previousTarget?.target_minutes || effectiveTargetMinutes;
+
+                                switch (escalationMode) {
+                                    case 'fresh_start':
+                                        // Timer resets from priority change time
+                                        resolutionElapsed = stopTime ?
+                                            calculateBusinessElapsed(priorityChangeDate, new Date(stopTime), schedule) :
+                                            calculateBusinessElapsed(priorityChangeDate, now, schedule);
+                                        resolutionDeadline = calculateBusinessDeadline(priorityChangeDate, effectiveTargetMinutes, schedule);
+                                        break;
+
+                                    case 'proportional':
+                                        // Calculate remaining time proportionally
+                                        const elapsedBeforeChange = calculateBusinessElapsed(createdDate, priorityChangeDate, schedule);
+                                        const percentUsed = Math.min(1, elapsedBeforeChange / previousTargetMinutes);
+                                        const remainingPercent = Math.max(0, 1 - percentUsed);
+                                        const adjustedTarget = Math.round(effectiveTargetMinutes * remainingPercent);
+
+                                        const elapsedAfterChange = stopTime ?
+                                            calculateBusinessElapsed(priorityChangeDate, new Date(stopTime), schedule) :
+                                            calculateBusinessElapsed(priorityChangeDate, now, schedule);
+
+                                        resolutionElapsed = elapsedAfterChange;
+                                        effectiveTargetMinutes = adjustedTarget;
+                                        resolutionDeadline = adjustedTarget > 0 ?
+                                            calculateBusinessDeadline(priorityChangeDate, adjustedTarget, schedule) :
+                                            priorityChangeDate; // Already breached
+                                        break;
+
+                                    case 'immediate':
+                                    default:
+                                        // Standard calculation from creation time
+                                        resolutionElapsed = stopTime ?
+                                            calculateBusinessElapsed(createdDate, new Date(stopTime), schedule) :
+                                            calculateBusinessElapsed(createdDate, now, schedule);
+                                        resolutionDeadline = calculateBusinessDeadline(createdDate, effectiveTargetMinutes, schedule);
+                                        break;
+                                }
+                            } else {
+                                // No priority change, use standard calculation
+                                resolutionElapsed = stopTime ?
+                                    calculateBusinessElapsed(new Date(selectedTicket.created_at), new Date(stopTime), schedule) :
+                                    calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+                                resolutionDeadline = resolutionTarget?.target_minutes ?
+                                    calculateBusinessDeadline(new Date(selectedTicket.created_at), resolutionTarget.target_minutes, schedule) : null;
+                            }
 
                             const responseDeadline = responseTarget?.target_minutes ?
                                 calculateBusinessDeadline(new Date(selectedTicket.created_at), responseTarget.target_minutes, schedule) : null;
 
-                            const resolutionDeadline = resolutionTarget?.target_minutes ?
-                                calculateBusinessDeadline(new Date(selectedTicket.created_at), resolutionTarget.target_minutes, schedule) : null;
 
                             const getStatusSla = (elapsed: number, target: number, isMet: boolean) => {
-                                if (isMet) return 'met';
-                                if (!target) return 'running';
+                                if (!target) return isMet ? 'met' : 'running';
+                                // If elapsed exceeded target, it's breached regardless of whether it was eventually met
                                 if (elapsed > target) return 'breached';
+                                // If met within time, it's truly met
+                                if (isMet) return 'met';
+                                // Still running - check if at risk
                                 if (elapsed > target * 0.75) return 'at_risk';
                                 return 'running';
                             };
@@ -2626,6 +2879,32 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                 if (isMet) return 100;
                                 if (!target) return 0;
                                 return Math.min(100, (elapsed / target) * 100);
+                            };
+
+                            const responseStatus = getStatusSla(responseElapsed, responseTarget?.target_minutes, !!firstResponseTime);
+                            const resolutionStatus = getStatusSla(resolutionElapsed, effectiveTargetMinutes, isTerminal);
+
+                            const getStatusBadge = (status: string, label: string) => {
+                                if (status === 'met') return (
+                                    <span className="px-2 py-0.5 bg-green-50 text-green-600 rounded-full text-[9px] font-black border border-green-100 flex items-center gap-1">
+                                        <CheckCircle2 size={10} /> {label}
+                                    </span>
+                                );
+                                if (status === 'breached') return (
+                                    <span className="px-2 py-0.5 bg-red-50 text-red-600 rounded-full text-[9px] font-black border border-red-100 flex items-center gap-1">
+                                        <AlertCircle size={10} /> {label}
+                                    </span>
+                                );
+                                if (status === 'at_risk') return (
+                                    <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[9px] font-black border border-amber-100 flex items-center gap-1">
+                                        <Clock size={10} /> {label}
+                                    </span>
+                                );
+                                return (
+                                    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full text-[9px] font-black border border-emerald-100 flex items-center gap-1">
+                                        <CheckCircle2 size={10} /> {label}
+                                    </span>
+                                );
                             };
 
                             return (
@@ -2639,14 +2918,11 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                             </div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Status</div>
-                                            {responseElapsed > (responseTarget?.target_minutes || 240) ? (
-                                                <span className="px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-black border border-red-100">OVERDUE</span>
-                                            ) : responseElapsed > (responseTarget?.target_minutes || 240) * 0.8 ? (
-                                                <span className="px-3 py-1 bg-amber-50 text-amber-600 rounded-full text-[10px] font-black border border-amber-100">AT RISK</span>
-                                            ) : (
-                                                <span className="px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full text-[10px] font-black border border-emerald-100">HEALTHY</span>
-                                            )}
+                                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">SLA Status</div>
+                                            <div className="flex flex-col gap-1.5 items-end">
+                                                {getStatusBadge(responseStatus, `Response: ${responseStatus === 'met' ? 'MET' : responseStatus === 'breached' ? 'BREACHED' : responseStatus === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`)}
+                                                {getStatusBadge(resolutionStatus, `Resolution: ${resolutionStatus === 'met' ? 'MET' : resolutionStatus === 'breached' ? 'BREACHED' : resolutionStatus === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`)}
+                                            </div>
                                         </div>
                                     </div>
 
@@ -2665,14 +2941,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                         />
                                         <SLACard
                                             label="Resolution"
-                                            target={formatTarget(resolutionTarget?.target_minutes)}
+                                            target={formatTarget(effectiveTargetMinutes || resolutionTarget?.target_minutes)}
                                             actual={stopTime ? `${Math.floor(resolutionElapsed / 60)}h ${resolutionElapsed % 60}m` : `${Math.floor(resolutionElapsed / 60)}h ${resolutionElapsed % 60}m (Elapsed)`}
-                                            remaining={!isTerminal && resolutionTarget?.target_minutes ? (() => {
-                                                const rem = Math.max(0, resolutionTarget.target_minutes - resolutionElapsed);
+                                            remaining={!isTerminal && effectiveTargetMinutes ? (() => {
+                                                const rem = Math.max(0, effectiveTargetMinutes - resolutionElapsed);
                                                 return `${Math.floor(rem / 60)}h ${rem % 60}m (Remaining)`;
                                             })() : undefined}
-                                            status={getStatusSla(resolutionElapsed, resolutionTarget?.target_minutes, isTerminal)}
-                                            percentage={getSlaPercentage(resolutionElapsed, resolutionTarget?.target_minutes, isTerminal)}
+                                            status={getStatusSla(resolutionElapsed, effectiveTargetMinutes, isTerminal)}
+                                            percentage={getSlaPercentage(resolutionElapsed, effectiveTargetMinutes, isTerminal)}
                                             deadline={resolutionDeadline ? resolutionDeadline.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
                                         />
                                     </div>
@@ -2852,7 +3128,26 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     )}
                 </div>
             ) : (
-                <div className="flex-1 flex items-center justify-center bg-gray-50 text-gray-400 font-bold italic">Loading incident workspace...</div>
+                <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 text-gray-400">
+                    {isLoading ? (
+                        <div className="flex flex-col items-center gap-3">
+                            <Loader2 size={32} className="animate-spin text-indigo-300" />
+                            <span className="font-bold italic">Loading incident workspace...</span>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col items-center gap-3">
+                            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-2">
+                                <Ticket size={32} className="text-gray-300" />
+                            </div>
+                            <h3 className="text-lg font-bold text-gray-800">No Ticket Selected</h3>
+                            <p className="text-sm text-gray-500 max-w-xs text-center">
+                                {tickets.length === 0
+                                    ? "There are no tickets in this queue."
+                                    : "Select a ticket from the list to view its details."}
+                            </p>
+                        </div>
+                    )}
+                </div>
             )}
 
             {/* 3. RIGHT PANEL - AI COPILOT */}
@@ -2872,236 +3167,250 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                 {isRightPanelOpen && (
                     <div className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar">
-                        <div className="flex justify-between items-center text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">
-                            <span>Diagnostic Engine</span>
-                            {isAiLoading ? (
-                                <span className="text-amber-500 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Analyzing...</span>
-                            ) : (
-                                <span className={`${aiConfidence === 'high' ? 'text-green-500' :
-                                    aiConfidence === 'medium' ? 'text-blue-500' :
-                                        'text-gray-400'
-                                    }`}>
-                                    Confidence: {aiConfidence.charAt(0).toUpperCase() + aiConfidence.slice(1)}
-                                </span>
-                            )}
-                        </div>
-
-                        {/* Summary Card */}
-                        <AICard title="Ticket Summary" icon={FileText}>
-                            <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-                                {aiSummary.length > 0 ? (
-                                    <ul className="text-xs text-slate-600 space-y-2 list-disc pl-4 font-medium leading-relaxed">
-                                        {aiSummary.map((point, idx) => (
-                                            <li key={idx}>{point}</li>
-                                        ))}
-                                    </ul>
-                                ) : (
-                                    <p className="text-xs text-gray-400 italic">Analyzing ticket content...</p>
-                                )}
-                                <button
-                                    onClick={handleApplySummary}
-                                    disabled={isApplyingSummary || aiSummary.length === 0}
-                                    className="mt-4 w-full text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                                >
-                                    {isApplyingSummary ? (
-                                        <><Loader2 size={12} className="animate-spin" /> Applying...</>
+                        {!selectedTicket ? (
+                            <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-40 py-20">
+                                <Sparkles size={48} className="text-gray-300" />
+                                <div className="space-y-1">
+                                    <p className="text-xs font-black uppercase tracking-widest text-gray-400">AI Copilot Standby</p>
+                                    <p className="text-[10px] font-bold text-gray-400 px-6">Select a ticket to activate diagnostic engine</p>
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="flex justify-between items-center text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">
+                                    <span>Diagnostic Engine</span>
+                                    {isAiLoading ? (
+                                        <span className="text-amber-500 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Analyzing...</span>
                                     ) : (
-                                        <>Add as Internal Note</>
+                                        <span className={`${aiConfidence === 'high' ? 'text-green-500' :
+                                            aiConfidence === 'medium' ? 'text-blue-500' :
+                                                'text-gray-400'
+                                            }`}>
+                                            Confidence: {aiConfidence.charAt(0).toUpperCase() + aiConfidence.slice(1)}
+                                        </span>
                                     )}
-                                </button>
-                            </div>
-                        </AICard>
-
-
-
-                        {/* Suggested Reply Card */}
-                        <AICard title="Suggested Reply" icon={Zap}>
-                            <div className="bg-green-50/30 p-4 rounded-xl border border-green-100 space-y-3">
-                                <p className="text-[12px] text-gray-700 italic font-medium leading-relaxed">
-                                    "{aiSuggestedReply || 'Generating suggested reply...'}"
-                                </p>
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={() => {
-                                            setNewMessage(aiSuggestedReply);
-                                            setIsInternalNote(false);
-                                        }}
-                                        className="flex-1 py-2 bg-white text-green-700 text-[10px] font-black uppercase tracking-widest rounded-lg border border-green-200 flex items-center justify-center gap-2 shadow-sm hover:bg-green-50 transition-colors"
-                                    >
-                                        <Copy size={12} /> Insert
-                                    </button>
-                                    <button
-                                        onClick={() => setAiReplyIndex(prev => prev + 1)}
-                                        className="flex-1 py-2 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
-                                    >
-                                        <RefreshCw size={12} /> Rewrite
-                                    </button>
                                 </div>
-                            </div>
-                        </AICard>
 
-                        {/* Knowledge Card */}
-                        <AICard title="Knowledge Base" icon={BookOpen}>
-                            <div className="space-y-3">
-                                {suggestedKB.length > 0 ? (
-                                    suggestedKB.map(kb => (
-                                        <button key={kb.id} onClick={() => alert(`View Article: ${kb.title}`)} className="w-full text-left p-3 rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/20 text-indigo-600 transition-all flex items-center justify-between group">
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-xs font-black truncate block">{kb.title}</span>
-                                                    {kb.visibility === 'internal' && (
-                                                        <span className="text-[8px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-bold uppercase">Internal</span>
-                                                    )}
-                                                </div>
-                                                <span className="text-[10px] text-gray-400 font-medium line-clamp-1">{kb.summary}</span>
-                                            </div>
-                                            <ArrowUpRight size={14} className="opacity-0 group-hover:opacity-100 flex-shrink-0" />
+                                {/* Summary Card */}
+                                <AICard title="Ticket Summary" icon={FileText}>
+                                    <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                                        {aiSummary.length > 0 ? (
+                                            <ul className="text-xs text-slate-600 space-y-2 list-disc pl-4 font-medium leading-relaxed">
+                                                {aiSummary.map((point, idx) => (
+                                                    <li key={idx}>{point}</li>
+                                                ))}
+                                            </ul>
+                                        ) : (
+                                            <p className="text-xs text-gray-400 italic">Analyzing ticket content...</p>
+                                        )}
+                                        <button
+                                            onClick={handleApplySummary}
+                                            disabled={isApplyingSummary || aiSummary.length === 0}
+                                            className="mt-4 w-full text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                        >
+                                            {isApplyingSummary ? (
+                                                <><Loader2 size={12} className="animate-spin" /> Applying...</>
+                                            ) : (
+                                                <>Add as Internal Note</>
+                                            )}
                                         </button>
-                                    ))
-                                ) : (
-                                    <div className="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded text-center">
-                                        No relevant articles found.
                                     </div>
-                                )}
-                            </div>
-                        </AICard>
+                                </AICard>
 
-                        {/* Similar Tickets Card */}
-                        <AICard title="Similar Tickets" icon={CheckCircle2}>
-                            <div className="space-y-3">
-                                {similarTickets.length > 0 ? (
-                                    similarTickets.map(t => {
-                                        const statusLower = t.status?.toLowerCase() || '';
-                                        const isResolved = statusLower === 'resolved' || statusLower === 'closed';
-                                        return (
-                                            <div key={t.id} className={`w-full text-left p-3 rounded-lg border bg-white/50 transition-all flex items-center justify-between group cursor-pointer ${isResolved ? 'border-green-100 hover:border-green-200 hover:bg-green-50/20' : 'border-gray-100 hover:border-blue-200 hover:bg-blue-50/20'
-                                                }`} onClick={() => setSelectedTicketId(t.id)}>
-                                                <div className="flex-1 min-w-0">
-                                                    <span className="text-xs font-bold text-gray-700 truncate block">{t.title}</span>
-                                                    <span className="text-[10px] text-gray-400 flex items-center gap-1 mt-1">
-                                                        <span className={`px-1.5 py-0.5 rounded-sm text-[9px] font-bold uppercase tracking-wider ${isResolved ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
-                                                            }`}>{t.status}</span>
-                                                        • {new Date(t.created_at).toLocaleDateString()}
-                                                    </span>
-                                                </div>
-                                                <ArrowUpRight size={14} className={`opacity-0 group-hover:opacity-100 flex-shrink-0 ${isResolved ? 'text-green-600' : 'text-blue-600'}`} />
-                                            </div>
-                                        );
-                                    })
-                                ) : (
-                                    <div className="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded text-center">
-                                        No similar cases found.
-                                    </div>
-                                )}
-                            </div>
-                        </AICard>
 
-                        {/* SLA Risk Card */}
-                        <AICard title="SLA Risk Analysis" icon={BarChart3}>
-                            <div className={`p-4 rounded-xl border space-y-4 transition-all duration-500 ${slaRisk.percentage >= 90 ? 'bg-red-100/50 border-red-300 shadow-lg shadow-red-100' :
-                                slaRisk.percentage >= 75 ? 'bg-red-50/30 border-red-100' :
-                                    slaRisk.percentage >= 50 ? 'bg-amber-50/30 border-amber-100' :
-                                        'bg-green-50/30 border-green-100'
-                                }`}>
-                                <div className="flex justify-between items-center font-black">
-                                    <span className="text-[10px] text-gray-400 uppercase tracking-widest">{slaRisk.hasResponse ? 'Resolution' : 'Response'} SLA Used</span>
-                                    <span className={`text-xs tracking-tighter ${slaRisk.percentage >= 75 ? 'text-red-500' :
-                                        slaRisk.percentage >= 50 ? 'text-amber-500' :
-                                            'text-green-500'
-                                        }`}>
-                                        {slaRisk.percentage}% {slaRisk.percentage >= 100 ? '- OVERDUE' : slaRisk.percentage >= 90 ? '- CRITICAL' : slaRisk.percentage >= 75 ? '- NEAR OVERDUE' : slaRisk.percentage >= 50 ? '- WARNING' : '- OK'}
-                                    </span>
-                                </div>
 
-                                {/* Visual Stress Meter (Gradient) */}
-                                <div className="h-2.5 w-full bg-slate-200/50 rounded-full overflow-hidden shadow-inner p-0.5">
-                                    <div
-                                        className={`h-full rounded-full transition-all duration-1000 ease-out ${slaRisk.percentage >= 90 ? 'bg-gradient-to-r from-orange-500 via-red-500 to-rose-700 animate-pulse' :
-                                            slaRisk.percentage >= 75 ? 'bg-gradient-to-r from-amber-400 to-red-500' :
-                                                slaRisk.percentage >= 50 ? 'bg-gradient-to-r from-green-400 to-amber-500' :
-                                                    'bg-gradient-to-r from-emerald-400 to-green-500'
-                                            }`}
-                                        style={{ width: `${Math.min(100, slaRisk.percentage)}%` }}
-                                    />
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3 mt-2">
-                                    <div className="bg-white/60 p-2 rounded-lg border border-white/50">
-                                        <span className="text-[8px] text-gray-400 uppercase font-black block mb-0.5">Predicted Overdue</span>
-                                        <span className="text-xs font-black text-gray-800">{slaRisk.breachTime || '-'}</span>
-                                    </div>
-                                    <div className="bg-white/60 p-2 rounded-lg border border-white/50">
-                                        <span className="text-[8px] text-gray-400 uppercase font-black block mb-0.5">Timer Pause</span>
-                                        <span className="text-xs font-black text-indigo-600">{slaRisk.pauseAt ? `${slaRisk.pauseAt} WIB` : 'Active 24/7'}</span>
-                                    </div>
-                                </div>
-
-                                <div className="p-3 bg-white/40 rounded-lg border border-white/60">
-                                    <div className="flex items-center gap-1.5 mb-1.5 text-[9px] font-black uppercase tracking-widest text-gray-400">
-                                        <Info size={10} /> Smart Recommendation
-                                    </div>
-                                    <p className={`text-[11px] font-bold leading-relaxed ${slaRisk.percentage >= 75 ? 'text-red-700' : 'text-slate-700'
-                                        }`}>
-                                        {slaRisk.recommendation}
-                                    </p>
-                                </div>
-
-                                <ul className="text-[9px] text-gray-400 font-bold space-y-1 pt-2 border-t border-gray-100/50">
-                                    <li className="flex justify-between"><span>Time elapsed</span> <span className="text-gray-600">{slaRisk.timeElapsed}</span></li>
-                                    <li className="flex justify-between"><span>Time remaining</span> <span className="text-indigo-600 font-black">{slaRisk.timeRemaining}</span></li>
-                                </ul>
-                            </div>
-                        </AICard>
-
-                        {/* Classification Card (Moved to bottom) */}
-                        <AICard title={selectedTicket.is_category_verified ? "Incident Classification" : "Suggested Classification"} icon={Shield}>
-                            <div className={`p-4 rounded-xl border space-y-3 transition-all ${selectedTicket.is_category_verified ? 'bg-green-50/50 border-green-100' : 'bg-slate-50/50 border-slate-100'}`}>
-                                <div className="flex justify-between text-xs">
-                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">{selectedTicket.is_category_verified ? 'Current Category' : 'Category'}</span>
-                                    <span className="text-gray-800 font-black text-right pl-4">
-                                        {selectedTicket.is_category_verified
-                                            ? (selectedTicket.ticket_categories?.name || 'Uncategorized')
-                                            : (aiClassification?.category || 'Analyzing...')}
-                                    </span>
-                                </div>
-                                <div className="flex justify-between text-xs">
-                                    <span className="text-gray-400 font-bold uppercase tracking-tighter">{selectedTicket.is_category_verified ? 'Current Priority' : 'Priority'}</span>
-                                    <span className={`font-black ${(selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'urgent' ? 'text-red-500' :
-                                            (selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'high' ? 'text-orange-500' :
-                                                (selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'medium' ? 'text-amber-500' : 'text-green-500'
-                                        }`}>
-                                        {(selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toUpperCase() || 'N/A'}
-                                    </span>
-                                </div>
-
-                                {selectedTicket.is_category_verified ? (
-                                    <div className="pt-2 border-t border-green-100 mt-2">
-                                        <div className="flex items-center gap-2 text-[10px] text-green-600 font-black uppercase tracking-widest">
-                                            <CheckCircle2 size={12} /> Verifikasi Selesai
+                                {/* Suggested Reply Card */}
+                                <AICard title="Suggested Reply" icon={Zap}>
+                                    <div className="bg-green-50/30 p-4 rounded-xl border border-green-100 space-y-3">
+                                        <p className="text-[12px] text-gray-700 italic font-medium leading-relaxed">
+                                            "{aiSuggestedReply || 'Generating suggested reply...'}"
+                                        </p>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => {
+                                                    setNewMessage(aiSuggestedReply);
+                                                    setIsInternalNote(false);
+                                                }}
+                                                className="flex-1 py-2 bg-white text-green-700 text-[10px] font-black uppercase tracking-widest rounded-lg border border-green-200 flex items-center justify-center gap-2 shadow-sm hover:bg-green-50 transition-colors"
+                                            >
+                                                <Copy size={12} /> Insert
+                                            </button>
+                                            <button
+                                                onClick={() => setAiReplyIndex(prev => prev + 1)}
+                                                className="flex-1 py-2 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
+                                            >
+                                                <RefreshCw size={12} /> Rewrite
+                                            </button>
                                         </div>
                                     </div>
-                                ) : (
-                                    <div className="grid grid-cols-2 gap-2 mt-2">
-                                        <button
-                                            onClick={handleApplyClassification}
-                                            disabled={!aiClassification}
-                                            className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            Apply & Verify
-                                        </button>
-                                        <button
-                                            onClick={() => {
-                                                setActiveTab('details');
-                                                setIsEditingCategory(true);
-                                            }}
-                                            className="py-2.5 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors"
-                                        >
-                                            Edit Manual
-                                        </button>
+                                </AICard>
+
+                                {/* Knowledge Card */}
+                                <AICard title="Knowledge Base" icon={BookOpen}>
+                                    <div className="space-y-3">
+                                        {suggestedKB.length > 0 ? (
+                                            suggestedKB.map(kb => (
+                                                <button key={kb.id} onClick={() => alert(`View Article: ${kb.title}`)} className="w-full text-left p-3 rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/20 text-indigo-600 transition-all flex items-center justify-between group">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-xs font-black truncate block">{kb.title}</span>
+                                                            {kb.visibility === 'internal' && (
+                                                                <span className="text-[8px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-bold uppercase">Internal</span>
+                                                            )}
+                                                        </div>
+                                                        <span className="text-[10px] text-gray-400 font-medium line-clamp-1">{kb.summary}</span>
+                                                    </div>
+                                                    <ArrowUpRight size={14} className="opacity-0 group-hover:opacity-100 flex-shrink-0" />
+                                                </button>
+                                            ))
+                                        ) : (
+                                            <div className="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded text-center">
+                                                No relevant articles found.
+                                            </div>
+                                        )}
                                     </div>
+                                </AICard>
+
+                                {/* Similar Tickets Card */}
+                                <AICard title="Similar Tickets" icon={CheckCircle2}>
+                                    <div className="space-y-3">
+                                        {similarTickets.length > 0 ? (
+                                            similarTickets.map(t => {
+                                                const statusLower = t.status?.toLowerCase() || '';
+                                                const isResolved = statusLower === 'resolved' || statusLower === 'closed';
+                                                return (
+                                                    <div key={t.id} className={`w-full text-left p-3 rounded-lg border bg-white/50 transition-all flex items-center justify-between group cursor-pointer ${isResolved ? 'border-green-100 hover:border-green-200 hover:bg-green-50/20' : 'border-gray-100 hover:border-blue-200 hover:bg-blue-50/20'
+                                                        }`} onClick={() => setSelectedTicketId(t.id)}>
+                                                        <div className="flex-1 min-w-0">
+                                                            <span className="text-xs font-bold text-gray-700 truncate block">{t.title}</span>
+                                                            <span className="text-[10px] text-gray-400 flex items-center gap-1 mt-1">
+                                                                <span className={`px-1.5 py-0.5 rounded-sm text-[9px] font-bold uppercase tracking-wider ${isResolved ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                                                                    }`}>{t.status}</span>
+                                                                • {new Date(t.created_at).toLocaleDateString()}
+                                                            </span>
+                                                        </div>
+                                                        <ArrowUpRight size={14} className={`opacity-0 group-hover:opacity-100 flex-shrink-0 ${isResolved ? 'text-green-600' : 'text-blue-600'}`} />
+                                                    </div>
+                                                );
+                                            })
+                                        ) : (
+                                            <div className="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded text-center">
+                                                No similar cases found.
+                                            </div>
+                                        )}
+                                    </div>
+                                </AICard>
+
+                                {/* SLA Risk Card */}
+                                <AICard title="SLA Risk Analysis" icon={BarChart3}>
+                                    <div className={`p-4 rounded-xl border space-y-4 transition-all duration-500 ${slaRisk.percentage >= 90 ? 'bg-red-100/50 border-red-300 shadow-lg shadow-red-100' :
+                                        slaRisk.percentage >= 75 ? 'bg-red-50/30 border-red-100' :
+                                            slaRisk.percentage >= 50 ? 'bg-amber-50/30 border-amber-100' :
+                                                'bg-green-50/30 border-green-100'
+                                        }`}>
+                                        <div className="flex justify-between items-center font-black">
+                                            <span className="text-[10px] text-gray-400 uppercase tracking-widest">{slaRisk.hasResponse ? 'Resolution' : 'Response'} SLA Used</span>
+                                            <span className={`text-xs tracking-tighter ${slaRisk.percentage >= 75 ? 'text-red-500' :
+                                                slaRisk.percentage >= 50 ? 'text-amber-500' :
+                                                    'text-green-500'
+                                                }`}>
+                                                {slaRisk.percentage}% {slaRisk.percentage >= 100 ? '- OVERDUE' : slaRisk.percentage >= 90 ? '- CRITICAL' : slaRisk.percentage >= 75 ? '- NEAR OVERDUE' : slaRisk.percentage >= 50 ? '- WARNING' : '- OK'}
+                                            </span>
+                                        </div>
+
+                                        {/* Visual Stress Meter (Gradient) */}
+                                        <div className="h-2.5 w-full bg-slate-200/50 rounded-full overflow-hidden shadow-inner p-0.5">
+                                            <div
+                                                className={`h-full rounded-full transition-all duration-1000 ease-out ${slaRisk.percentage >= 90 ? 'bg-gradient-to-r from-orange-500 via-red-500 to-rose-700 animate-pulse' :
+                                                    slaRisk.percentage >= 75 ? 'bg-gradient-to-r from-amber-400 to-red-500' :
+                                                        slaRisk.percentage >= 50 ? 'bg-gradient-to-r from-green-400 to-amber-500' :
+                                                            'bg-gradient-to-r from-emerald-400 to-green-500'
+                                                    }`}
+                                                style={{ width: `${Math.min(100, slaRisk.percentage)}%` }}
+                                            />
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-3 mt-2">
+                                            <div className="bg-white/60 p-2 rounded-lg border border-white/50">
+                                                <span className="text-[8px] text-gray-400 uppercase font-black block mb-0.5">Predicted Overdue</span>
+                                                <span className="text-xs font-black text-gray-800">{slaRisk.breachTime || '-'}</span>
+                                            </div>
+                                            <div className="bg-white/60 p-2 rounded-lg border border-white/50">
+                                                <span className="text-[8px] text-gray-400 uppercase font-black block mb-0.5">Timer Pause</span>
+                                                <span className="text-xs font-black text-indigo-600">{slaRisk.pauseAt ? `${slaRisk.pauseAt} WIB` : 'Active 24/7'}</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="p-3 bg-white/40 rounded-lg border border-white/60">
+                                            <div className="flex items-center gap-1.5 mb-1.5 text-[9px] font-black uppercase tracking-widest text-gray-400">
+                                                <Info size={10} /> Smart Recommendation
+                                            </div>
+                                            <p className={`text-[11px] font-bold leading-relaxed ${slaRisk.percentage >= 75 ? 'text-red-700' : 'text-slate-700'
+                                                }`}>
+                                                {slaRisk.recommendation}
+                                            </p>
+                                        </div>
+
+                                        <ul className="text-[9px] text-gray-400 font-bold space-y-1 pt-2 border-t border-gray-100/50">
+                                            <li className="flex justify-between"><span>Time elapsed</span> <span className="text-gray-600">{slaRisk.timeElapsed}</span></li>
+                                            <li className="flex justify-between"><span>Time remaining</span> <span className="text-indigo-600 font-black">{slaRisk.timeRemaining}</span></li>
+                                        </ul>
+                                    </div>
+                                </AICard>
+
+                                {/* Classification Card (Moved to bottom) */}
+                                {selectedTicket && (
+                                    <AICard title={selectedTicket.is_category_verified ? "Incident Classification" : "Suggested Classification"} icon={Shield}>
+                                        <div className={`p-4 rounded-xl border space-y-3 transition-all ${selectedTicket.is_category_verified ? 'bg-green-50/50 border-green-100' : 'bg-slate-50/50 border-slate-100'}`}>
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-gray-400 font-bold uppercase tracking-tighter">{selectedTicket.is_category_verified ? 'Current Category' : 'Category'}</span>
+                                                <span className="text-gray-800 font-black text-right pl-4">
+                                                    {selectedTicket.is_category_verified
+                                                        ? (selectedTicket.ticket_categories?.name || 'Uncategorized')
+                                                        : (aiClassification?.category || 'Analyzing...')}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-gray-400 font-bold uppercase tracking-tighter">{selectedTicket.is_category_verified ? 'Current Priority' : 'Priority'}</span>
+                                                <span className={`font-black ${(selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'urgent' ? 'text-red-500' :
+                                                    (selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'high' ? 'text-orange-500' :
+                                                        (selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'medium' ? 'text-amber-500' : 'text-green-500'
+                                                    }`}>
+                                                    {(selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toUpperCase() || 'N/A'}
+                                                </span>
+                                            </div>
+
+                                            {selectedTicket.is_category_verified ? (
+                                                <div className="pt-2 border-t border-green-100 mt-2">
+                                                    <div className="flex items-center gap-2 text-[10px] text-green-600 font-black uppercase tracking-widest">
+                                                        <CheckCircle2 size={12} /> Verifikasi Selesai
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="grid grid-cols-2 gap-2 mt-2">
+                                                    <button
+                                                        onClick={handleApplyClassification}
+                                                        disabled={!aiClassification}
+                                                        className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        Apply & Verify
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            setActiveTab('details');
+                                                            setIsEditingCategory(true);
+                                                        }}
+                                                        className="py-2.5 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors"
+                                                    >
+                                                        Edit Manual
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </AICard>
                                 )}
-                            </div>
-                        </AICard>
+                            </>
+                        )}
                     </div>
                 )}
             </div>
