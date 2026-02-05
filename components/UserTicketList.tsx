@@ -85,12 +85,12 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
 
                     // Calculate Stats
                     const newStats = {
-                        open: formattedTickets.filter(t => t.status === 'Open' || t.status === 'New').length,
-                        pending: formattedTickets.filter(t => t.status === 'Pending').length,
-                        resolved: formattedTickets.filter(t => t.status === 'Resolved').length,
-                        closed: formattedTickets.filter(t => t.status === 'Closed').length,
-                        inProgress: formattedTickets.filter(t => t.status === 'In Progress' || t.status === 'WIP' || t.status === 'Assigned').length,
-                        canceled: formattedTickets.filter(t => t.status === 'Canceled').length
+                        open: formattedTickets.filter(t => t.status.toLowerCase() === 'open' || t.status.toLowerCase() === 'new').length,
+                        pending: formattedTickets.filter(t => t.status.toLowerCase().includes('pending')).length,
+                        resolved: formattedTickets.filter(t => t.status.toLowerCase() === 'resolved').length,
+                        closed: formattedTickets.filter(t => t.status.toLowerCase() === 'closed').length,
+                        inProgress: formattedTickets.filter(t => t.status.toLowerCase() === 'in progress' || t.status.toLowerCase() === 'wip' || t.status.toLowerCase() === 'assigned').length,
+                        canceled: formattedTickets.filter(t => t.status.toLowerCase() === 'canceled').length
                     };
                     setStats(newStats);
                 }
@@ -262,11 +262,11 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                                                 className={`px-3 py-1 rounded-md text-xs font-black uppercase tracking-wider inline-flex items-center gap-1.5 
                                                     ${ticket.status === 'Open' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
                                                         ticket.status === 'In Progress' ? 'bg-purple-50 text-purple-600 border border-purple-100' :
-                                                            ticket.status === 'Pending' ? 'bg-orange-50 text-orange-600 border border-orange-100' :
+                                                            ticket.status.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-600 border border-orange-100' :
                                                                 ticket.status === 'Resolved' ? 'bg-green-50 text-green-600 border border-green-100' :
                                                                     ticket.status === 'Canceled' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
                                                                         'bg-slate-50 text-slate-600 border border-slate-100'
-                                                    }`}
+                                                    } transition-all duration-200`}
                                             >
                                                 {ticket.status}
                                             </span>

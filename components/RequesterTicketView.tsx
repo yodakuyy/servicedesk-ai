@@ -99,7 +99,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
             const updates: any = { updated_at: new Date().toISOString() };
             let shouldLogActivity = false;
 
-            if (['Resolved', 'Pending'].includes(currentStatus)) {
+            if (currentStatus === 'Resolved' || currentStatus.toLowerCase().includes('pending')) {
                 // Fetch In Progress ID
                 const { data: statusData } = await supabase
                     .from('ticket_statuses')
@@ -161,7 +161,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
             <div className="flex flex-col items-center justify-center h-screen bg-slate-50">
                 <p className="text-red-500 font-medium mb-4">Ticket not found.</p>
                 <button onClick={onBack} className="text-indigo-600 font-bold hover:underline flex items-center gap-2">
-                    <ChevronLeft size={20} /> Back to My Tickets
+                    <ChevronLeft size={20} /> Back to Incident Lists
                 </button>
             </div>
         );
@@ -169,11 +169,20 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
 
     // Map DB status to visual progress
     const statusName = ticket.ticket_statuses?.status_name || 'Open';
+    const isPending = statusName.toLowerCase().includes('pending');
+    const isResolved = ['Resolved', 'Closed'].includes(statusName);
+
     const progressSteps = [
         { label: 'Ticket Submitted', status: 'completed' },
         { label: 'Being Reviewed', status: statusName !== 'Open' ? 'completed' : 'current' },
-        { label: 'In Progress', status: ['In Progress', 'WIP', 'Assigned'].includes(statusName) ? 'current' : (['Pending', 'Resolved', 'Closed'].includes(statusName) ? 'completed' : 'pending') },
-        { label: 'Pending', status: statusName === 'Pending' ? 'current' : (['Resolved', 'Closed'].includes(statusName) ? 'completed' : 'pending') },
+        {
+            label: 'In Progress',
+            status: statusName === 'In Progress' ? 'current' : (isPending || isResolved ? 'completed' : 'pending')
+        },
+        {
+            label: 'Pending',
+            status: isPending ? 'current' : (isResolved ? 'completed' : 'pending')
+        },
         { label: 'Resolved', status: statusName === 'Resolved' ? 'current' : (statusName === 'Closed' ? 'completed' : 'pending') }
     ];
 
@@ -183,7 +192,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
             <header className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center sticky top-0 z-20">
                 <button onClick={onBack} className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 font-medium transition-colors">
                     <ChevronLeft size={20} />
-                    Back to My Tickets
+                    Back to Incident Lists
                 </button>
                 <div className="flex items-center gap-4">
                     {['Open', 'In Progress'].includes(ticket.ticket_statuses?.status_name) && (
@@ -376,7 +385,8 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                             <div className="flex gap-3 shrink-0 flex-wrap">
                                 <span className={`px-3 py-1 rounded-lg text-sm font-semibold border flex items-center gap-2 ${statusName === 'Open' ? 'bg-blue-50 text-blue-700 border-blue-100' :
                                     statusName === 'Resolved' ? 'bg-green-50 text-green-700 border-green-100' :
-                                        'bg-orange-50 text-orange-700 border-orange-100'
+                                        statusName.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-700 border-orange-100' :
+                                            'bg-slate-50 text-slate-700 border-slate-100'
                                     }`}>
                                     <div className={`w-2 h-2 rounded-full ${statusName === 'Resolved' ? 'bg-green-500' : 'bg-blue-500 animate-pulse'}`}></div>
                                     Status: {statusName}

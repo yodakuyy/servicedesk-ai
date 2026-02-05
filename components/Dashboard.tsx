@@ -13,6 +13,7 @@ import {
   LogOut,
   User,
   ArrowLeftRight,
+  GitBranch,
   FileText,
   CalendarOff,
   ChevronRight,
@@ -20,6 +21,7 @@ import {
   ChevronLeft,
   BookOpen,
   TrendingUp,
+  TrendingDown,
   Bell,
   Building2,
   Users,
@@ -32,6 +34,7 @@ import {
   Clock,
   Briefcase,
   CheckCircle,
+  RefreshCw,
   X
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
@@ -176,7 +179,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   const [detailModal, setDetailModal] = useState<{
     isOpen: boolean;
     title: string;
-    type: 'open' | 'unassigned' | 'overdue' | 'satisfaction' | 'resolved';
+    type: 'open' | 'unassigned' | 'overdue' | 'satisfaction' | 'resolved' | 'pending';
     data: any[];
   }>({
     isOpen: false,
@@ -192,10 +195,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     openTicketsList: any[];
     unassignedTicketsList: any[];
     resolvedTicketsList: any[];
+    pendingTicketsList: any[];
     satisfactionDetails: any[];
     topIncidents: { name: string; count: number; fill: string }[];
     topServiceRequests: { name: string; count: number; fill: string }[];
-    stats: { current: number; closed: number; overdue: number; unassigned: number; satisfaction: string };
+    stats: { current: number; closed: number; overdue: number; unassigned: number; pending: number; satisfaction: string; trend: string; };
     weeklyTrend: { name: string; incidents: number; requests: number }[];
     teamPulse: { name: string; active: number; resolved: number; status: string; score: number }[];
   }>({
@@ -204,10 +208,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     openTicketsList: [],
     unassignedTicketsList: [],
     resolvedTicketsList: [],
+    pendingTicketsList: [],
     satisfactionDetails: [],
     topIncidents: [],
     topServiceRequests: [],
-    stats: { current: 0, closed: 0, overdue: 0, unassigned: 0, satisfaction: "0.0" },
+    stats: { current: 0, closed: 0, overdue: 0, unassigned: 0, pending: 0, satisfaction: "0.0", trend: "0%" },
     weeklyTrend: [],
     teamPulse: []
   });
@@ -371,6 +376,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .in('status_name', ['Open', 'In Progress']);
         const openStatusIds = openStatusesResult?.map(s => s.status_id) || [];
 
+        // 1.5 Get Pending Status IDs
+        const { data: pendingStatusesResult } = await supabase
+          .from('ticket_statuses')
+          .select('status_id')
+          .ilike('status_name', '%pending%');
+        const pendingStatusIds = pendingStatusesResult?.map(s => s.status_id) || [];
+
         // 2. Get All Active Status IDs (Excluding Resolved, Closed, Canceled)
         const { data: activeStatusesResult } = await supabase
           .from('ticket_statuses')
@@ -443,6 +455,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
         // Even for agents, unassigned is usually global within group or system
         const { data: unassignedTicketsFullList } = await unassignedQuery;
+
+        // 5.5 PENDING TICKETS (Full List for Modal)
+        let pendingQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, subject, priority, created_at,
+            requester:profiles!fk_tickets_requester(full_name),
+            assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
+          `)
+          .in('status_id', pendingStatusIds);
+        if (isAgent) pendingQuery = pendingQuery.eq('assigned_to', userProfile.id);
+        const { data: pendingTicketsFullList } = await pendingQuery;
+        const pendingCount = pendingTicketsFullList?.length || 0;
 
         // 6. RESOLVED TODAY (Full List)
         const midNight = new Date(); midNight.setHours(0, 0, 0, 0);
@@ -583,6 +608,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           openTicketsList: openTicketsFullList || [],
           unassignedTicketsList: unassignedTicketsFullList || [],
           resolvedTicketsList: resolvedTicketsFullList || [],
+          pendingTicketsList: pendingTicketsFullList || [],
           satisfactionDetails: satisfactionReviewsList || [],
           topIncidents,
           topServiceRequests: topSR,
@@ -591,7 +617,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             closed: resolvedTicketsFullList?.length || 0,
             overdue: overdueTicketsFullList?.length || 0,
             unassigned: unassignedTicketsFullList?.length || 0,
-            satisfaction: avgSatisfaction
+            pending: pendingCount || 0,
+            satisfaction: avgSatisfaction,
+            trend: await (async () => {
+              const now = new Date();
+              const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+              const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+              const { count: countA } = await supabase
+                .from('tickets')
+                .select('*', { count: 'exact', head: true })
+                .gte('created_at', twentyFourHoursAgo.toISOString());
+
+              const { count: countB } = await supabase
+                .from('tickets')
+                .select('*', { count: 'exact', head: true })
+                .gte('created_at', fortyEightHoursAgo.toISOString())
+                .lt('created_at', twentyFourHoursAgo.toISOString());
+
+              const valA = countA || 0;
+              const valB = countB || 0;
+              if (valB === 0) return valA > 0 ? `+${valA * 100}%` : "0%";
+              const diff = ((valA - valB) / valB) * 100;
+              return `${diff >= 0 ? '+' : ''}${diff.toFixed(0)}%`;
+            })()
           },
           weeklyTrend,
           teamPulse
@@ -671,6 +720,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             'allservicerequests': 'service-requests', // "All" view
 
             'escalatedtickets': 'escalated-tickets',
+            'changerequest': 'escalated-tickets',
             'settings': 'settings'
           };
 
@@ -1091,15 +1141,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       );
     }
 
-    // NEW: Empty Placeholder for Escalated Tickets
+    // Placeholder for future Change Request Module
     if (currentView === 'escalated-tickets') {
       return (
         <div className="p-8 flex flex-col items-center justify-center h-full text-center">
-          <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
-            <TrendingUp size={32} className="text-indigo-400" />
+          <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mb-4 text-blue-500">
+            <RefreshCw size={32} />
           </div>
-          <h3 className="text-lg font-bold text-gray-800 mb-2">Escalated Tickets</h3>
-          <p className="text-gray-500 max-w-md">This module is currently under development. It will display tickets that have been escalated for higher-level support.</p>
+          <h3 className="text-lg font-bold text-gray-800 mb-2">Change Request Management</h3>
+          <p className="text-gray-500 max-w-md">This area is being prepared for the Change Request module. Use the Incidents menu to manage all support tickets including escalated ones.</p>
         </div>
       );
     }
@@ -1265,7 +1315,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
           <div className="grid grid-cols-12 gap-6">
             {/* Agent Stats - Personal Focus */}
-            <div className="col-span-12 grid grid-cols-3 gap-6 mb-2">
+            <div className="col-span-12 grid grid-cols-4 gap-6 mb-2">
               <div
                 onClick={() => setDetailModal({ isOpen: true, title: 'My Open Tickets', type: 'open', data: dashboardData.openTicketsList })}
                 className="bg-white p-5 rounded-2xl border border-indigo-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all cursor-pointer"
@@ -1278,6 +1328,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   <Briefcase size={24} />
                 </div>
               </div>
+
+              {/* Added Pending Card for Agent */}
+              <div
+                onClick={() => setDetailModal({ isOpen: true, title: 'My Pending Tickets', type: 'pending', data: dashboardData.pendingTicketsList })}
+                className="bg-white p-5 rounded-2xl border border-orange-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all cursor-pointer"
+              >
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Waiting</p>
+                  <h3 className="text-3xl font-black text-orange-600 mt-1">{dashboardData.stats.pending}</h3>
+                </div>
+                <div className="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center text-orange-600 group-hover:scale-110 transition-transform">
+                  <Clock size={24} />
+                </div>
+              </div>
+
               <div
                 onClick={() => setDetailModal({ isOpen: true, title: 'Resolved Today', type: 'resolved', data: dashboardData.resolvedTicketsList })}
                 className="bg-white p-5 rounded-2xl border border-emerald-50 shadow-sm flex items-center justify-between group hover:shadow-md transition-all cursor-pointer"
@@ -1377,7 +1442,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         <div className="grid grid-cols-12 gap-6">
 
           {/* 1. KEY METRICS GRID (4 Cards) */}
-          <div className="col-span-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="col-span-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             {/* Total Open */}
             <div
               onClick={() => setDetailModal({ isOpen: true, title: isSPV ? 'Team Open Tickets' : 'My Open Tickets', type: 'open', data: dashboardData.openTicketsList })}
@@ -1389,13 +1454,34 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 </p>
                 <div className="flex items-end gap-2">
                   <h3 className="text-4xl font-black text-gray-800 tracking-tight">{dashboardData.stats.current}</h3>
-                  <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded mb-1 flex items-center gap-0.5">
-                    <TrendingUp size={10} /> +8%
+                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded mb-1 flex items-center gap-0.5 ${dashboardData.stats.trend.startsWith('+') ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50'}`}>
+                    {dashboardData.stats.trend.startsWith('+') ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                    {dashboardData.stats.trend}
                   </span>
                 </div>
               </div>
               <div className="absolute right-0 top-0 w-24 h-24 bg-gradient-to-br from-indigo-500/10 to-blue-500/0 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
               <Ticket className="absolute right-4 bottom-4 text-gray-100 mb-1 ml-1" size={48} />
+            </div>
+
+            {/* Total Pending Card */}
+            <div
+              onClick={() => setDetailModal({ isOpen: true, title: 'Team Pending Tickets', type: 'pending', data: dashboardData.pendingTicketsList })}
+              className="bg-white p-5 rounded-2xl shadow-sm border border-orange-100 flex flex-col justify-between group hover:shadow-md transition-all relative overflow-hidden cursor-pointer"
+            >
+              <div className="relative z-10">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                  Waiting
+                </p>
+                <div className="flex items-end gap-2">
+                  <h3 className="text-4xl font-black text-gray-800 tracking-tight">{dashboardData.stats.pending}</h3>
+                  <span className="text-xs font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded mb-1 flex items-center gap-0.5">
+                    <Clock size={10} /> Pending
+                  </span>
+                </div>
+              </div>
+              <div className="absolute right-0 top-0 w-24 h-24 bg-gradient-to-br from-orange-500/10 to-amber-500/0 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+              <Clock className="absolute right-4 bottom-4 text-gray-100 mb-1 ml-1" size={48} />
             </div>
 
             {/* Unassigned (Critical) */}
@@ -1669,6 +1755,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 'knowledgebase': 'knowledge',
                 'helpcenter': 'help-center',
                 'escalatedtickets': 'escalated-tickets',
+                'changerequest': 'escalated-tickets',
                 'settings': 'settings', // Settings handled separately but include for completeness
               };
 
@@ -1703,7 +1790,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               if (normalizedName === 'knowledgebase') displayLabel = 'Knowledge Base';
               if (normalizedName === 'helpcenter') displayLabel = 'Help Center';
               if (normalizedName === 'outofoffice') displayLabel = 'Out of Office';
-              if (normalizedName === 'escalatedtickets') displayLabel = 'Escalated Tickets';
+              if (normalizedName === 'escalatedtickets' || normalizedName === 'changerequest') displayLabel = 'Change Request';
               if (normalizedName === 'allservicerequests' || normalizedName === 'servicerequests') displayLabel = 'Service Requests';
 
               // Determine icon based on menu type
@@ -1715,8 +1802,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 if (normalizedName.includes('office')) return CalendarOff;
                 if (normalizedName.includes('knowledge')) return Book;
                 if (normalizedName.includes('help')) return BookOpen;
-                if (normalizedName.includes('request')) return Package;
-                if (normalizedName.includes('escalated')) return TrendingUp;
+                if (normalizedName.includes('request') && !normalizedName.includes('change')) return Package;
+                if (normalizedName.includes('escalated') || normalizedName.includes('changerequest')) return GitBranch;
                 return undefined;
               };
 

@@ -4,7 +4,7 @@ import {
     MessageSquare, FileText, GitBranch, Shield, Send, Sparkles,
     ChevronRight, ChevronLeft, ChevronDown, Paperclip, Mic, User, Copy, ExternalLink,
     ThumbsUp, RefreshCw, AlertTriangle, Loader2, Zap, X, Info, BookOpen,
-    ArrowUpRight, ArrowRight, BarChart3, Lock, List, Users, Building2, Upload, Ticket, Plus
+    ArrowUpRight, ArrowRight, BarChart3, Lock, List, Users, Building2, Upload, Ticket, Plus, TrendingUp
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
@@ -12,14 +12,17 @@ import RequesterCreateIncident from './RequesterCreateIncident';
 
 interface AgentTicketViewProps {
     userProfile?: any;
-    initialQueueFilter?: 'assigned' | 'submitted' | 'all';
+    initialQueueFilter?: 'assigned' | 'submitted' | 'all' | 'escalated';
     initialTicketId?: string | null;
 }
 
 const workflowMap: Record<string, string[]> = {
-    'Open': ['In Progress', 'Canceled'],
-    'In Progress': ['Pending', 'Resolved', 'Canceled'],
-    'Pending': ['In Progress', 'Resolved', 'Canceled'],
+    'Open': ['Pending - Waiting For Requester', 'Pending - Waiting for Vendor', 'Pending - Waiting for Sparepart', 'Pending - Internal Team', 'Canceled'],
+    'In Progress': ['Resolved', 'Pending - Waiting For Requester', 'Pending - Waiting for Vendor', 'Pending - Waiting for Sparepart', 'Pending - Internal Team', 'Canceled'],
+    'Pending - Waiting For Requester': ['Resolved', 'In Progress', 'Canceled'],
+    'Pending - Waiting for Vendor': ['Resolved', 'In Progress', 'Canceled'],
+    'Pending - Waiting for Sparepart': ['Resolved', 'In Progress', 'Canceled'],
+    'Pending - Internal Team': ['Resolved', 'In Progress', 'Canceled'],
     'Resolved': ['Closed', 'In Progress'],
     'Closed': ['In Progress'],
     'Canceled': ['Open']
@@ -69,9 +72,29 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     const [isApplyingSummary, setIsApplyingSummary] = useState(false);
     const [isInternalNote, setIsInternalNote] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
+    const [currentUserRoleName, setCurrentUserRoleName] = useState<string>('');
+
+    useEffect(() => {
+        const fetchCurrentRole = async () => {
+            if (!userProfile?.id) return;
+            try {
+                const { data } = await supabase
+                    .from('profiles')
+                    .select('roles:role_id(role_name)')
+                    .eq('id', userProfile.id)
+                    .single();
+                if (data?.roles) {
+                    setCurrentUserRoleName((data.roles as any).role_name || '');
+                }
+            } catch (err) {
+                console.error('Error fetching current user role:', err);
+            }
+        };
+        fetchCurrentRole();
+    }, [userProfile?.id]);
 
     // Queue Filter State - for switching between different ticket views
-    const [queueFilter, setQueueFilter] = useState<'assigned' | 'submitted' | 'all'>(initialQueueFilter);
+    const [queueFilter, setQueueFilter] = useState<'assigned' | 'submitted' | 'all' | 'escalated'>(initialQueueFilter);
 
     // Search and Filter States
     const [searchTerm, setSearchTerm] = useState('');
@@ -234,7 +257,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
             ticket.subject?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             ticket.requester?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
 
-        const matchesStatus = statusFilter === 'all' || ticket.ticket_statuses?.status_name === statusFilter;
+        const matchesStatus = statusFilter === 'all' ||
+            (statusFilter === 'Pending'
+                ? ticket.ticket_statuses?.status_name.toLowerCase().includes('pending')
+                : ticket.ticket_statuses?.status_name === statusFilter);
         const matchesPriority = priorityFilter === 'all' || ticket.priority?.toLowerCase() === priorityFilter.toLowerCase();
         const matchesAgent =
             agentFilter === 'all' ||
@@ -414,9 +440,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 .select(`
                     id, ticket_number, subject, priority, created_at, updated_at, ticket_type,
                     assignment_group_id, status_id, assigned_to, requester_id, is_category_verified,
+                    total_paused_minutes, paused_at,
                     ticket_statuses!fk_tickets_status (status_name),
                     requester:profiles!fk_tickets_requester (full_name),
-                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id, roles:role_id(role_name)),
                     group:groups!assignment_group_id (
                         id, name, company_id,
                         business_hours (weekly_schedule),
@@ -432,7 +459,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
             } else if (queueFilter === 'submitted') {
                 // Tickets I submitted (as requester)
                 query = query.eq('requester_id', userProfile.id);
-            } else if (queueFilter === 'all') {
+            } else if (queueFilter === 'all' || queueFilter === 'escalated') {
                 // All tickets in my groups (for supervisors/admins)
                 if (agentGroups.length > 0) {
                     query = query.in('assignment_group_id', agentGroups);
@@ -448,7 +475,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
             }
 
             if (data) {
-                setTickets(data);
+                let finalData = data;
+                if (queueFilter === 'escalated') {
+                    // Client-side filter for L2 agents since deep join filtering is complex in simple queries
+                    finalData = data.filter((t: any) => t.assigned_agent?.roles?.role_name?.includes('L2'));
+                }
+                setTickets(finalData);
                 // Auto-select first ticket if none selected
                 if (data.length > 0 && !selectedTicketId) {
                     setSelectedTicketId(data[0].id);
@@ -488,7 +520,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
-                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id, roles:role_id(role_name)),
                     group:groups!assignment_group_id (
                         id, name, company_id, 
                         company:company_id(company_name, sla_escalation_mode),
@@ -1029,11 +1061,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
             // Always update ticket updated_at to bump it to top of list
             await supabase.from('tickets').update({ updated_at: new Date().toISOString() }).eq('id', selectedTicketId);
 
-            // Auto-update status to In Progress if currently Open
-            if (selectedTicket.ticket_statuses?.status_name === 'Open') {
-                const inProgressStatus = availableStatuses.find(s => s.status_name === 'In Progress');
-                if (inProgressStatus) {
-                    await handleStatusUpdate(inProgressStatus.status_id);
+            // Auto-update status to Pending (Zero Touch Workflow)
+            // If agent replies and status is either Open or In Progress, move to Pending
+            if (['Open', 'In Progress'].includes(selectedTicket.ticket_statuses?.status_name)) {
+                const pendingStatus = availableStatuses.find(s => s.status_name === 'Pending - Waiting For Requester');
+                if (pendingStatus) {
+                    await handleStatusUpdate(pendingStatus.status_id, true);
                 }
             }
 
@@ -1108,7 +1141,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         }
     };
 
-    const handleStatusUpdate = async (newStatusId: string) => {
+    const handleStatusUpdate = async (newStatusId: string, skipRemark = false) => {
         if (!selectedTicketId || isUpdatingStatus) return;
 
         // Find status name
@@ -1117,7 +1150,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         let remark = '';
 
         // specialized handling for Pending / Resolved / Canceled
-        if (['Pending', 'Resolved', 'Canceled'].includes(newStatusName)) {
+        if (!skipRemark && (newStatusName.toLowerCase().includes('pending') || newStatusName === 'Resolved' || newStatusName === 'Canceled')) {
             // @ts-ignore
             const Swal = (await import('sweetalert2')).default;
             const { value: text } = await Swal.fire({
@@ -1888,37 +1921,33 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                         <div className="bg-gray-50 p-3 rounded-lg border border-gray-100 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
                             <div>
                                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Status</label>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {['all', 'Open', 'In Progress', 'Resolved'].map((s) => (
-                                        <button
-                                            key={s}
-                                            onClick={() => setStatusFilter(s)}
-                                            className={`px-2 py-1 rounded text-[10px] font-bold border transition-all ${statusFilter === s
-                                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
-                                                : 'bg-white border-gray-200 text-gray-500 hover:border-indigo-300'
-                                                }`}
-                                        >
-                                            {s.charAt(0).toUpperCase() + s.slice(1)}
-                                        </button>
-                                    ))}
-                                </div>
+                                <select
+                                    value={statusFilter}
+                                    onChange={(e) => setStatusFilter(e.target.value)}
+                                    className="w-full bg-white border border-gray-200 rounded px-2 py-1.5 text-[10px] font-bold text-gray-600 focus:ring-1 focus:ring-indigo-500/20 outline-none cursor-pointer"
+                                >
+                                    <option value="all">All Statuses</option>
+                                    <option value="Open">Open</option>
+                                    <option value="In Progress">In Progress</option>
+                                    <option value="Pending">Pending</option>
+                                    <option value="Resolved">Resolved</option>
+                                    <option value="Closed">Closed</option>
+                                    <option value="Canceled">Canceled</option>
+                                </select>
                             </div>
                             <div>
                                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Priority</label>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {['all', 'low', 'medium', 'high', 'urgent'].map((p) => (
-                                        <button
-                                            key={p}
-                                            onClick={() => setPriorityFilter(p)}
-                                            className={`px-2 py-1 rounded text-[10px] font-bold border transition-all ${priorityFilter === p
-                                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
-                                                : 'bg-white border-gray-200 text-gray-500 hover:border-indigo-300'
-                                                }`}
-                                        >
-                                            {p.charAt(0).toUpperCase() + p.slice(1)}
-                                        </button>
-                                    ))}
-                                </div>
+                                <select
+                                    value={priorityFilter}
+                                    onChange={(e) => setPriorityFilter(e.target.value)}
+                                    className="w-full bg-white border border-gray-200 rounded px-2 py-1.5 text-[10px] font-bold text-gray-600 focus:ring-1 focus:ring-indigo-500/20 outline-none cursor-pointer"
+                                >
+                                    <option value="all">All Priorities</option>
+                                    <option value="low">Low</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="high">High</option>
+                                    <option value="urgent">Urgent</option>
+                                </select>
                             </div>
                             <div>
                                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Agent (PIC)</label>
@@ -1959,13 +1988,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 {/* Queue Filter Tabs */}
                 <div className="flex border-b border-gray-100 bg-gray-50/50">
                     <button
-                        onClick={() => setQueueFilter('assigned')}
-                        className={`flex-1 py-2.5 text-xs font-semibold transition-colors relative ${queueFilter === 'assigned'
+                        onClick={() => { setQueueFilter('assigned'); setSelectedTicketId(null); }}
+                        className={`flex-1 py-2.5 text-[10px] font-bold uppercase tracking-wider transition-colors relative ${queueFilter === 'assigned'
                             ? 'text-blue-600 bg-white'
                             : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
                             }`}
                     >
-                        <span className="flex items-center justify-center gap-1.5">
+                        <span className="flex flex-col items-center justify-center gap-0.5">
                             <User size={12} />
                             Assigned
                         </span>
@@ -1974,13 +2003,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                         )}
                     </button>
                     <button
-                        onClick={() => setQueueFilter('submitted')}
-                        className={`flex-1 py-2.5 text-xs font-semibold transition-colors relative ${queueFilter === 'submitted'
+                        onClick={() => { setQueueFilter('submitted'); setSelectedTicketId(null); }}
+                        className={`flex-1 py-2.5 text-[10px] font-bold uppercase tracking-wider transition-colors relative ${queueFilter === 'submitted'
                             ? 'text-blue-600 bg-white'
                             : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
                             }`}
                     >
-                        <span className="flex items-center justify-center gap-1.5">
+                        <span className="flex flex-col items-center justify-center gap-0.5">
                             <FileText size={12} />
                             My Tickets
                         </span>
@@ -1988,21 +2017,23 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
                         )}
                     </button>
-                    <button
-                        onClick={() => setQueueFilter('all')}
-                        className={`flex-1 py-2.5 text-xs font-semibold transition-colors relative ${queueFilter === 'all'
-                            ? 'text-blue-600 bg-white'
-                            : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
-                            }`}
-                    >
-                        <span className="flex items-center justify-center gap-1.5">
-                            <List size={12} />
-                            All
-                        </span>
-                        {queueFilter === 'all' && (
-                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
-                        )}
-                    </button>
+                    {!(currentUserRoleName.includes('L2')) && (
+                        <button
+                            onClick={() => { setQueueFilter('all'); setSelectedTicketId(null); }}
+                            className={`flex-1 py-2.5 text-[10px] font-bold uppercase tracking-wider transition-colors relative ${queueFilter === 'all'
+                                ? 'text-blue-600 bg-white'
+                                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
+                                }`}
+                        >
+                            <span className="flex flex-col items-center justify-center gap-0.5">
+                                <List size={12} />
+                                Team
+                            </span>
+                            {queueFilter === 'all' && (
+                                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
+                            )}
+                        </button>
+                    )}
                 </div>
 
                 {/* Ticket Count Badge */}
@@ -2054,9 +2085,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             const ticketUpdatedAt = new Date(ticket.updated_at);
                             const diffMs = now.getTime() - ticketUpdatedAt.getTime();
                             const diffMins = Math.floor(diffMs / 60000);
-                            const timeAgo = diffMins < 60 ? `${diffMins}m ago` :
-                                diffMins < 1440 ? `${Math.floor(diffMins / 60)}h ago` :
-                                    `${Math.floor(diffMins / 1440)}d ago`;
+                            const timeAgo = diffMins < 1 ? 'Just now' :
+                                diffMins < 60 ? `${diffMins}m ago` :
+                                    diffMins < 1440 ? `${Math.floor(diffMins / 60)}h ago` :
+                                        `${Math.floor(diffMins / 1440)}d ago`;
 
                             // SLA Calculation (Dynamic)
                             const schedule = ticket.group?.business_hours?.weekly_schedule || [];
@@ -2087,7 +2119,18 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                 t.priority?.toLowerCase() === (ticket.priority || 'Medium').toLowerCase()
                             );
 
-                            const elapsed = calculateBusinessElapsed(ticketCreatedAt, now, schedule);
+                            const totalPaused = ticket.total_paused_minutes || 0;
+                            const pausedAt = ticket.paused_at;
+                            const isPaused = ticket.ticket_statuses?.status_name.toLowerCase().includes('pending');
+
+                            let elapsed = calculateBusinessElapsed(ticketCreatedAt, now, schedule);
+                            elapsed = Math.max(0, elapsed - totalPaused);
+
+                            if (isPaused && pausedAt) {
+                                const currentPauseElapsed = calculateBusinessElapsed(new Date(pausedAt), now, schedule);
+                                elapsed = Math.max(0, elapsed - currentPauseElapsed);
+                            }
+
                             const targetMins = target?.target_minutes || (activeSlaType === 'response' ? 240 : 480);
                             const remaining = Math.max(0, targetMins - elapsed);
                             const remH = Math.floor(remaining / 60);
@@ -2101,46 +2144,75 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                         setSelectedTicketId(ticket.id);
                                         setIsCreating(false);
                                     }}
-                                    className={`px-4 py-3 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedTicketId === ticket.id ? 'bg-blue-50/50' : ''}`}
+                                    className={`px-5 py-4 border-b border-gray-100/80 cursor-pointer transition-all duration-200 ${selectedTicketId === ticket.id
+                                            ? 'bg-blue-50/60 shadow-[inset_4px_0_0_0_#2563eb]'
+                                            : 'hover:bg-gray-50/80'
+                                        }`}
                                 >
-                                    <div className="flex justify-between items-start mb-1">
+                                    {/* Line 1: ID, Priority, Time */}
+                                    <div className="flex justify-between items-center mb-2">
                                         <div className="flex items-center gap-2">
-                                            <div className="flex items-center gap-1.5">
-                                                <div className={`w-2 h-2 rounded-full ${ticket.priority === 'High' ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]'}`} />
-                                                {ticket.is_category_verified ? (
-                                                    <CheckCircle2 size={10} className="text-green-500" />
-                                                ) : (
-                                                    <Sparkles size={10} className="text-amber-500" />
-                                                )}
-                                            </div>
-                                            <span className="font-bold text-xs text-blue-600">{ticket.ticket_number}</span>
+                                            <div className={`w-2 h-2 rounded-full shrink-0 ${ticket.priority === 'High' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.3)]' :
+                                                    'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.3)]'
+                                                }`} />
+                                            <span className="font-black text-[11px] text-blue-600 tracking-tight uppercase">
+                                                {ticket.ticket_number}
+                                            </span>
+                                            {ticket.is_category_verified ? (
+                                                <CheckCircle2 size={10} className="text-green-500" />
+                                            ) : (
+                                                <Sparkles size={10} className="text-amber-500" />
+                                            )}
                                         </div>
-                                        <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">{timeAgo}</span>
+                                        <span className="text-[10px] text-gray-400 font-bold">{timeAgo}</span>
                                     </div>
-                                    <h4 className="text-[13px] font-semibold text-gray-700 line-clamp-1 mb-1 leading-snug">
+
+                                    {/* Line 2: Subject */}
+                                    <h4 className={`text-[13px] font-bold mb-2 line-clamp-2 leading-snug transition-colors ${selectedTicketId === ticket.id ? 'text-blue-900' : 'text-gray-800'
+                                        }`}>
                                         {ticket.subject}
                                     </h4>
-                                    <div className="flex justify-between items-center text-[11px] font-medium">
-                                        <span className="text-gray-400 truncate max-w-[120px]">{ticket.requester?.full_name || 'Anonymous'}</span>
-                                        <div className="flex items-center gap-2">
-                                            {!isTerminal && (
-                                                <span className={`${isBreached ? 'text-rose-600' : 'text-red-500'} font-bold tracking-tighter text-[10px]`}>
-                                                    {isBreached ? 'OVERDUE' : `${String(remH).padStart(2, '0')}:${String(remM).padStart(2, '0')}:00`}
+
+                                    {/* Line 3: Requester & SLA */}
+                                    <div className="flex justify-between items-center mb-3">
+                                        <div className="flex items-center gap-1.5 text-[11px] text-gray-500 min-w-0">
+                                            <div className="w-4 h-4 rounded-full bg-gray-100 flex items-center justify-center text-[8px] font-bold shrink-0">
+                                                {ticket.requester?.full_name?.charAt(0) || '?'}
+                                            </div>
+                                            <span className="truncate">{ticket.requester?.full_name || 'Anonymous'}</span>
+                                        </div>
+                                        {!isTerminal && (
+                                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black tracking-tight ${isBreached ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'
+                                                }`}>
+                                                <Clock size={10} />
+                                                {isBreached ? 'OVERDUE' : `${String(remH).padStart(2, '0')}:${String(remM).padStart(2, '0')}:00`}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Line 4: Footer (Agent & Status) */}
+                                    <div className="flex justify-between items-center pt-2.5 border-t border-gray-100/50 gap-2">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-gray-50 rounded border border-gray-100/50">
+                                                <User size={10} className="text-gray-400" />
+                                                <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest truncate max-w-[70px]">
+                                                    {ticket.assigned_agent?.full_name?.split(' ')[0] || 'UNASSIGNED'}
+                                                </span>
+                                            </div>
+                                            {ticket.assigned_agent?.roles?.role_name?.includes('L2') && (
+                                                <span className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-600 text-[8px] font-black rounded uppercase tracking-widest border border-amber-100/50">
+                                                    <TrendingUp size={9} /> L2
                                                 </span>
                                             )}
                                         </div>
-                                    </div>
-                                    <div className="flex justify-between items-center mt-1.5">
-                                        <div className="px-1.5 py-0.5 bg-slate-50 border border-slate-100 rounded text-[9px] font-black text-slate-500 uppercase tracking-widest">
-                                            PIC: {ticket.assigned_agent?.full_name || 'UNASSIGNED'}
-                                        </div>
-                                        <div className={`text-[10px] font-black uppercase tracking-tight ${ticket.ticket_statuses?.status_name === 'Open' ? 'text-blue-600' :
-                                            ticket.ticket_statuses?.status_name === 'In Progress' ? 'text-indigo-600' :
-                                                ticket.ticket_statuses?.status_name === 'Resolved' ? 'text-emerald-600' :
-                                                    ticket.ticket_statuses?.status_name === 'Canceled' ? 'text-rose-600' :
-                                                        ticket.ticket_statuses?.status_name === 'Closed' ? 'text-slate-400' :
-                                                            'text-gray-400'
-                                            }`}>
+
+                                        <div className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-tight border truncate max-w-[120px] ${ticket.ticket_statuses?.status_name === 'Open' ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                                                ticket.ticket_statuses?.status_name === 'In Progress' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' :
+                                                    ticket.ticket_statuses?.status_name.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-600 border-orange-100' :
+                                                        ticket.ticket_statuses?.status_name === 'Resolved' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                                            ticket.ticket_statuses?.status_name === 'Canceled' ? 'bg-rose-50 text-rose-600 border-rose-100' :
+                                                                'bg-slate-50 text-slate-400 border-slate-100'
+                                            }`} title={ticket.ticket_statuses?.status_name}>
                                             {ticket.ticket_statuses?.status_name}
                                         </div>
                                     </div>
@@ -2180,7 +2252,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                 </h1>
                                 <div className="flex items-center gap-3">
                                     {/* Dynamic Priority Badge */}
-                                    <span className={`px-2.5 py-1 rounded text-[10px] font-black tracking-widest uppercase border ${selectedTicket.priority?.toLowerCase() === 'high' || selectedTicket.priority?.toLowerCase() === 'urgent'
+                                    <span className={`px-3 py-1.5 rounded text-[10px] font-black tracking-widest uppercase border whitespace-nowrap flex-shrink-0 ${selectedTicket.priority?.toLowerCase() === 'high' || selectedTicket.priority?.toLowerCase() === 'urgent'
                                         ? 'bg-red-50 text-red-600 border-red-100' :
                                         selectedTicket.priority?.toLowerCase() === 'medium'
                                             ? 'bg-amber-50 text-amber-600 border-amber-100' :
@@ -2208,17 +2280,30 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                                 className={`appearance-none pl-3 pr-8 py-1 rounded text-[10px] font-black tracking-widest uppercase border cursor-pointer outline-none transition-all
                                                     ${selectedTicket.ticket_statuses?.status_name === 'Open' ? 'bg-blue-50 text-blue-600 border-blue-200' :
                                                         selectedTicket.ticket_statuses?.status_name === 'In Progress' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' :
-                                                            selectedTicket.ticket_statuses?.status_name === 'Resolved' ? 'bg-green-50 text-green-600 border-green-200' :
-                                                                selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'bg-rose-50 text-rose-600 border-rose-200' :
-                                                                    'bg-slate-50 text-slate-600 border-slate-200'}`}
+                                                            selectedTicket.ticket_statuses?.status_name && selectedTicket.ticket_statuses.status_name.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-600 border-orange-200' :
+                                                                selectedTicket.ticket_statuses?.status_name === 'Resolved' ? 'bg-green-50 text-green-600 border-green-200' :
+                                                                    selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'bg-rose-50 text-rose-600 border-rose-200' :
+                                                                        'bg-slate-50 text-slate-600 border-slate-200'}`}
                                             >
                                                 {availableStatuses
                                                     .filter(s => {
-                                                        const currentName = selectedTicket.ticket_statuses?.status_name;
+                                                        const currentName = selectedTicket.ticket_statuses?.status_name || 'Open';
                                                         const allowed = workflowMap[currentName] || [];
-                                                        // Always show current status, plus allowed next steps
-                                                        // BUT ban 'Closed' from manual selection (automation only)
-                                                        return (s.status_id === selectedTicket.status_id || allowed.includes(s.status_name)) && s.status_name !== 'Closed';
+
+                                                        // Always show current status
+                                                        if (s.status_id === selectedTicket.status_id) return true;
+
+                                                        const isAllowed = allowed.includes(s.status_name);
+                                                        const isL2Status = s.status_name === 'Pending - Internal Team';
+                                                        const isL2Agent = selectedTicket.assigned_agent?.roles?.role_name?.includes('L2');
+
+                                                        // Ban 'Closed' from manual selection
+                                                        if (s.status_name === 'Closed') return false;
+
+                                                        // Only show Internal Team status for L2 agents
+                                                        if (isL2Status && !isL2Agent) return false;
+
+                                                        return isAllowed;
                                                     })
                                                     .sort((a, b) => {
                                                         // Put current status first in the dropdown for clarity
@@ -2237,6 +2322,15 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                             </div>
                                         </div>
                                     </div>
+                                    {/* Escalated Badge in Header */}
+                                    {selectedTicket.assigned_agent?.roles?.role_name?.includes('L2') && (
+                                        <span
+                                            title="This ticket has been escalated to L2 Support for specialized handling."
+                                            className="px-2 py-1 bg-amber-500 text-white text-[9px] font-black rounded-md uppercase tracking-[0.1em] shadow-sm shadow-amber-200 cursor-help"
+                                        >
+                                            Escalated
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                             <div className="flex gap-2">
@@ -2394,27 +2488,58 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
                             const stopTime = activityLogs.find(l => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('canceled'))?.created_at;
 
-                            const activeElapsed = firstResponseTime ?
-                                calculateBusinessElapsed(new Date(selectedTicket.created_at), stopTime ? new Date(stopTime) : now, schedule) :
-                                calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+                            // 4. Calculate Elapsed Time (Aware of Pauses)
+                            const isPaused = selectedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending');
+                            const totalPausedMinutes = selectedTicket.total_paused_minutes || 0;
+                            const pausedAt = selectedTicket.paused_at;
+
+                            let activeElapsed = 0;
+                            if (firstResponseTime) {
+                                // Resolution SLA
+                                const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), stopTime ? new Date(stopTime) : now, schedule);
+                                activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
+                            } else {
+                                // Response SLA
+                                const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+                                activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
+                            }
+
+                            // If currently paused, stop the ticker by using paused_at instead of 'now'
+                            if (isPaused && pausedAt) {
+                                const currentPauseElapsed = calculateBusinessElapsed(new Date(pausedAt), now, schedule);
+                                activeElapsed = Math.max(0, activeElapsed - currentPauseElapsed);
+                            }
 
                             const targetMins = activeTarget?.target_minutes || 60;
                             const percentage = Math.min(100, (activeElapsed / targetMins) * 100);
 
                             const h = Math.floor(activeElapsed / 60);
-                            const m = activeElapsed % 60;
+                            const m = Math.floor(activeElapsed % 60);
                             const remMins = Math.max(0, targetMins - activeElapsed);
                             const rh = Math.floor(remMins / 60);
-                            const rm = remMins % 60;
+                            const rm = Math.floor(remMins % 60);
 
                             return (
                                 <div className="mt-6 flex flex-col gap-1.5">
                                     <div className="flex justify-between text-[11px] font-bold">
                                         <span className="text-gray-400 font-black uppercase tracking-widest">{activeSlaType} SLA</span>
                                         <div className="flex items-center gap-3">
-                                            <span className={`${percentage >= 75 ? 'text-red-500' : 'text-amber-500'} font-black`}>{Math.floor(percentage)}% Used</span>
-                                            <span className="text-indigo-600 font-black flex items-center gap-1">Remaining: {rh}h {rm}m</span>
-                                            <span className="text-gray-900 bg-gray-100 px-2 py-0.5 rounded flex items-center gap-1 font-black">
+                                            <span
+                                                title="SLA Usage: Percentage of target time consumed (Active work time only)"
+                                                className={`${percentage >= 75 ? 'text-red-500' : 'text-amber-500'} font-black cursor-help`}
+                                            >
+                                                {Math.floor(percentage)}% Used
+                                            </span>
+                                            <span
+                                                title={`Time until breach: The maximum time remaining before SLA is violated. Adjusted for business hours ${isPaused ? 'and currently paused.' : ''}`}
+                                                className="text-indigo-600 font-black flex items-center gap-1 cursor-help"
+                                            >
+                                                Remaining: {rh}h {rm}m
+                                            </span>
+                                            <span
+                                                title="Total active work time: The amount of time spent working on this ticket (excluding time in Pending/Paused status)."
+                                                className="text-gray-900 bg-gray-100 px-2 py-0.5 rounded flex items-center gap-1 font-black cursor-help"
+                                            >
                                                 <Clock size={10} /> {h}h {m}m
                                             </span>
                                         </div>
@@ -2696,8 +2821,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                         { step: 'Classification', date: selectedTicket.created_at, status: 'completed', desc: 'Priority set and Categorized' },
                                         {
                                             step: 'Investigation',
-                                            date: activityLogs.find(l => l.action.includes('In Progress'))?.created_at,
-                                            status: ['In Progress', 'Pending'].includes(selectedTicket.ticket_statuses?.status_name) ? 'current' :
+                                            date: activityLogs.find(l => l.action.includes('In Progress') || l.action.toLowerCase().includes('pending'))?.created_at || selectedTicket.updated_at,
+                                            status: (selectedTicket.ticket_statuses?.status_name === 'In Progress' || selectedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending')) ? 'current' :
                                                 (['Resolved', 'Closed'].includes(selectedTicket.ticket_statuses?.status_name) ? 'completed' : 'pending'),
                                             desc: 'Currently being handled by ' + (selectedTicket?.assigned_agent?.full_name || 'Service Desk')
                                         },
@@ -2785,10 +2910,23 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                             const firstResponseTime = messages.find(m => !m.is_internal && m.sender_id !== selectedTicket.requester_id)?.created_at;
                             const schedule = selectedTicket.group?.business_hours?.weekly_schedule || [];
+                            const isPaused = selectedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending');
+                            const totalPausedMinutes = selectedTicket.total_paused_minutes || 0;
+                            const pausedAt = selectedTicket.paused_at;
+
+                            const getActiveBusinessElapsed = (start: Date, end: Date) => {
+                                let elapsed = calculateBusinessElapsed(start, end, schedule);
+                                elapsed = Math.max(0, elapsed - totalPausedMinutes);
+                                if (isPaused && pausedAt && end > new Date(pausedAt)) {
+                                    const currentPauseElapsed = calculateBusinessElapsed(new Date(pausedAt), end, schedule);
+                                    elapsed = Math.max(0, elapsed - currentPauseElapsed);
+                                }
+                                return elapsed;
+                            };
 
                             const responseElapsed = firstResponseTime ?
                                 calculateBusinessElapsed(new Date(selectedTicket.created_at), new Date(firstResponseTime), schedule) :
-                                calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+                                getActiveBusinessElapsed(new Date(selectedTicket.created_at), now);
 
                             const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
                             const stopTime = activityLogs.find(l => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('canceled'))?.created_at;
@@ -2802,6 +2940,16 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             let resolutionElapsed: number;
                             let resolutionDeadline: Date | null = null;
                             let effectiveTargetMinutes = resolutionTarget?.target_minutes || 0;
+
+                            // Calculate adjusted deadlines that account for pauses
+                            const totalCurrentPause = (() => {
+                                let p = totalPausedMinutes;
+                                if (isPaused && pausedAt) {
+                                    const currentPause = calculateBusinessElapsed(new Date(pausedAt), now, schedule);
+                                    p += currentPause;
+                                }
+                                return p;
+                            })();
 
                             if (priorityChangedAt && previousPriority && resolutionTarget?.target_minutes) {
                                 const priorityChangeDate = new Date(priorityChangedAt);
@@ -2817,51 +2965,38 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                                 switch (escalationMode) {
                                     case 'fresh_start':
-                                        // Timer resets from priority change time
-                                        resolutionElapsed = stopTime ?
-                                            calculateBusinessElapsed(priorityChangeDate, new Date(stopTime), schedule) :
-                                            calculateBusinessElapsed(priorityChangeDate, now, schedule);
-                                        resolutionDeadline = calculateBusinessDeadline(priorityChangeDate, effectiveTargetMinutes, schedule);
+                                        resolutionElapsed = getActiveBusinessElapsed(priorityChangeDate, stopTime ? new Date(stopTime) : now);
+                                        resolutionDeadline = calculateBusinessDeadline(priorityChangeDate, effectiveTargetMinutes + totalCurrentPause, schedule);
                                         break;
 
                                     case 'proportional':
-                                        // Calculate remaining time proportionally
                                         const elapsedBeforeChange = calculateBusinessElapsed(createdDate, priorityChangeDate, schedule);
                                         const percentUsed = Math.min(1, elapsedBeforeChange / previousTargetMinutes);
                                         const remainingPercent = Math.max(0, 1 - percentUsed);
                                         const adjustedTarget = Math.round(effectiveTargetMinutes * remainingPercent);
 
-                                        const elapsedAfterChange = stopTime ?
-                                            calculateBusinessElapsed(priorityChangeDate, new Date(stopTime), schedule) :
-                                            calculateBusinessElapsed(priorityChangeDate, now, schedule);
-
-                                        resolutionElapsed = elapsedAfterChange;
+                                        resolutionElapsed = getActiveBusinessElapsed(priorityChangeDate, stopTime ? new Date(stopTime) : now);
                                         effectiveTargetMinutes = adjustedTarget;
                                         resolutionDeadline = adjustedTarget > 0 ?
-                                            calculateBusinessDeadline(priorityChangeDate, adjustedTarget, schedule) :
-                                            priorityChangeDate; // Already breached
+                                            calculateBusinessDeadline(priorityChangeDate, adjustedTarget + totalCurrentPause, schedule) :
+                                            priorityChangeDate;
                                         break;
 
                                     case 'immediate':
                                     default:
-                                        // Standard calculation from creation time
-                                        resolutionElapsed = stopTime ?
-                                            calculateBusinessElapsed(createdDate, new Date(stopTime), schedule) :
-                                            calculateBusinessElapsed(createdDate, now, schedule);
-                                        resolutionDeadline = calculateBusinessDeadline(createdDate, effectiveTargetMinutes, schedule);
+                                        resolutionElapsed = getActiveBusinessElapsed(createdDate, stopTime ? new Date(stopTime) : now);
+                                        resolutionDeadline = calculateBusinessDeadline(createdDate, effectiveTargetMinutes + totalCurrentPause, schedule);
                                         break;
                                 }
                             } else {
                                 // No priority change, use standard calculation
-                                resolutionElapsed = stopTime ?
-                                    calculateBusinessElapsed(new Date(selectedTicket.created_at), new Date(stopTime), schedule) :
-                                    calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+                                resolutionElapsed = getActiveBusinessElapsed(new Date(selectedTicket.created_at), stopTime ? new Date(stopTime) : now);
                                 resolutionDeadline = resolutionTarget?.target_minutes ?
-                                    calculateBusinessDeadline(new Date(selectedTicket.created_at), resolutionTarget.target_minutes, schedule) : null;
+                                    calculateBusinessDeadline(new Date(selectedTicket.created_at), resolutionTarget.target_minutes + totalCurrentPause, schedule) : null;
                             }
 
                             const responseDeadline = responseTarget?.target_minutes ?
-                                calculateBusinessDeadline(new Date(selectedTicket.created_at), responseTarget.target_minutes, schedule) : null;
+                                calculateBusinessDeadline(new Date(selectedTicket.created_at), responseTarget.target_minutes + totalCurrentPause, schedule) : null;
 
 
                             const getStatusSla = (elapsed: number, target: number, isMet: boolean) => {
@@ -3077,55 +3212,92 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     </div>
 
                     {/* Bottom Composer */}
-                    {activeTab === 'conversation' && (
-                        <div className="p-6 border-t border-gray-100 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.02)]">
-                            <div className="flex gap-5 mb-4 border-b border-gray-50">
-                                <button
-                                    onClick={() => setIsInternalNote(false)}
-                                    className={`text-xs font-black uppercase tracking-widest pb-3 transition-all ${!isInternalNote ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-400 hover:text-gray-500'}`}
-                                >
-                                    Reply
-                                </button>
-                                <button
-                                    onClick={() => setIsInternalNote(true)}
-                                    className={`text-xs font-black uppercase tracking-widest pb-3 transition-all ${isInternalNote ? 'text-amber-600 border-b-2 border-amber-600' : 'text-gray-400 hover:text-gray-500'}`}
-                                >
-                                    Internal Note
-                                </button>
+                    {activeTab === 'conversation' && (() => {
+                        const isL2Agent = currentUserRoleName.includes('L2');
+                        const isAssignedToMe = selectedTicket.assigned_to === userProfile?.id;
+                        const isMySubmittedTicket = selectedTicket.requester_id === userProfile?.id;
+                        const isEscalated = selectedTicket.assigned_agent?.roles?.role_name?.includes('L2');
+
+                        // L2 can only reply to their assigned tickets or their own submitted tickets
+                        // They cannot interfere with L1 or SPV tickets if not assigned to them
+                        const canPublicReply = isMySubmittedTicket || isAssignedToMe || (!isL2Agent && !isEscalated);
+
+                        return (
+                            <div className="p-6 border-t border-gray-100 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.02)]">
+                                <div className="flex gap-5 mb-4 border-b border-gray-50">
+                                    <button
+                                        onClick={() => setIsInternalNote(false)}
+                                        className={`text-xs font-black uppercase tracking-widest pb-3 transition-all ${!isInternalNote ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-400 hover:text-gray-500'}`}
+                                    >
+                                        Reply
+                                    </button>
+                                    <button
+                                        onClick={() => setIsInternalNote(true)}
+                                        className={`text-xs font-black uppercase tracking-widest pb-3 transition-all ${isInternalNote ? 'text-amber-600 border-b-2 border-amber-600' : 'text-gray-400 hover:text-gray-500'}`}
+                                    >
+                                        Internal Note
+                                    </button>
+                                </div>
+
+                                {!isInternalNote && !canPublicReply ? (
+                                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 flex flex-col items-center text-center gap-3 animate-in fade-in zoom-in duration-300">
+                                        <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center text-amber-600">
+                                            <AlertTriangle size={24} />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-black text-amber-900 uppercase tracking-tight">Interaction Restricted</h4>
+                                            <p className="text-xs text-amber-700 mt-1 font-medium max-w-sm">
+                                                {isL2Agent
+                                                    ? "As an L2 Support agent, you can only send public replies on tickets that are explicitly assigned to you or were submitted by you."
+                                                    : "This ticket has been escalated. Only the assigned L2 agent can reply to the requester to maintain one voice."
+                                                }
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => setIsInternalNote(true)}
+                                            className="px-4 py-2 bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-amber-700 transition-all shadow-sm"
+                                        >
+                                            Switch to Internal Note
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <RichTextEditor
+                                            content={newMessage}
+                                            onChange={setNewMessage}
+                                            placeholder={isInternalNote ? "Type an internal note (visible only to agents)..." : "Type your response to the requester..."}
+                                            minHeight="80px"
+                                        />
+                                        <div className="flex justify-between items-center mt-4">
+                                            <button
+                                                onClick={() => aiSuggestedReply && setNewMessage(aiSuggestedReply)}
+                                                disabled={!aiSuggestedReply}
+                                                className="flex items-center gap-2 text-indigo-600 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                <Sparkles size={14} fill="currentColor" /> Insert AI Suggestion
+                                            </button>
+                                            <button
+                                                onClick={handleSendMessage}
+                                                disabled={isSending || (!isInternalNote && !canPublicReply)}
+                                                className={`flex items-center gap-3 px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isInternalNote ? 'bg-amber-600 shadow-amber-100 hover:bg-amber-700 text-white' : 'bg-indigo-600 shadow-indigo-100 hover:bg-indigo-700 text-white'}`}
+                                            >
+                                                {isSending ? (
+                                                    <>
+                                                        <Loader2 size={14} className="animate-spin" /> Sending...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        {isInternalNote ? <Lock size={14} /> : <Send size={14} />}
+                                                        {isInternalNote ? 'Add Private Note' : 'Send Reply'}
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
                             </div>
-                            <RichTextEditor
-                                content={newMessage}
-                                onChange={setNewMessage}
-                                placeholder="Type your response..."
-                                minHeight="80px"
-                            />
-                            <div className="flex justify-between items-center mt-4">
-                                <button
-                                    onClick={() => aiSuggestedReply && setNewMessage(aiSuggestedReply)}
-                                    disabled={!aiSuggestedReply}
-                                    className="flex items-center gap-2 text-indigo-600 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    <Sparkles size={14} fill="currentColor" /> Insert AI Suggestion
-                                </button>
-                                <button
-                                    onClick={handleSendMessage}
-                                    disabled={isSending}
-                                    className={`flex items-center gap-3 px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isInternalNote ? 'bg-amber-600 shadow-amber-100 hover:bg-amber-700 text-white' : 'bg-indigo-600 shadow-indigo-100 hover:bg-indigo-700 text-white'}`}
-                                >
-                                    {isSending ? (
-                                        <>
-                                            <Loader2 size={14} className="animate-spin" /> Sending...
-                                        </>
-                                    ) : (
-                                        <>
-                                            {isInternalNote ? <Lock size={14} /> : <Send size={14} />}
-                                            {isInternalNote ? 'Add Private Note' : 'Send Reply'}
-                                        </>
-                                    )}
-                                </button>
-                            </div>
-                        </div>
-                    )}
+                        );
+                    })()}
                 </div>
             ) : (
                 <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 text-gray-400">

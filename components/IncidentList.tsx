@@ -135,13 +135,12 @@ const getUrgencyBadgeStyles = (urgency: string) => {
 }
 
 const getStatusBadgeStyles = (status: string) => {
-  switch (status.toLowerCase()) {
-    case 'open': return 'bg-blue-100 text-blue-700';
-    case 'pending': return 'bg-yellow-100 text-yellow-800';
-    case 'resolved': return 'bg-green-100 text-green-700';
-    case 'closed': return 'bg-gray-100 text-gray-600';
-    default: return 'bg-gray-100 text-gray-500';
-  }
+  const s = (status || '').toLowerCase();
+  if (s === 'open') return 'bg-blue-100 text-blue-700';
+  if (s.includes('pending')) return 'bg-yellow-100 text-yellow-800';
+  if (s === 'resolved') return 'bg-green-100 text-green-700';
+  if (s === 'closed') return 'bg-gray-100 text-gray-600';
+  return 'bg-gray-100 text-gray-500';
 }
 
 type SortKey = 'slaStatus' | 'urgency' | 'eta';

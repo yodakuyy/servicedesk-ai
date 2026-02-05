@@ -47,6 +47,21 @@ const NotificationSettings: React.FC = () => {
     const [saving, setSaving] = useState(false);
     const [hasChanges, setHasChanges] = useState(false);
     const [activeTab, setActiveTab] = useState<'agent' | 'customer' | 'supervisor'>('agent');
+    const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({
+        show: false,
+        message: '',
+        type: 'success'
+    });
+
+    // Handle auto-hide toast
+    useEffect(() => {
+        if (toast.show) {
+            const timer = setTimeout(() => {
+                setToast(prev => ({ ...prev, show: false }));
+            }, 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [toast.show]);
 
     // Notification settings state
     const [agentSettings, setAgentSettings] = useState<NotificationSetting[]>([
@@ -233,6 +248,72 @@ const NotificationSettings: React.FC = () => {
         }
     ]);
 
+    useEffect(() => {
+        fetchSettings();
+    }, []);
+
+    const fetchSettings = async () => {
+        setLoading(true);
+        try {
+            const { data, error } = await supabase
+                .from('notification_settings')
+                .select('*');
+
+            if (error) throw error;
+
+            if (data && data.length > 0) {
+                const agent: NotificationSetting[] = [];
+                const customer: NotificationSetting[] = [];
+                const supervisor: NotificationSetting[] = [];
+
+                data.forEach(item => {
+                    const setting: NotificationSetting = {
+                        id: item.setting_key,
+                        label: item.setting_label,
+                        description: item.setting_description,
+                        enabled: item.is_enabled,
+                        channels: {
+                            email: item.email_enabled,
+                            push: item.push_enabled,
+                            inApp: item.in_app_enabled
+                        }
+                    };
+
+                    if (item.role_type === 'agent') agent.push(setting);
+                    else if (item.role_type === 'customer') customer.push(setting);
+                    else if (item.role_type === 'supervisor') supervisor.push(setting);
+                });
+
+                // Update settings if found in DB, otherwise keep defaults
+                if (agent.length > 0) setAgentSettings(prev => {
+                    return prev.map(p => {
+                        const db = agent.find(a => a.id === p.id);
+                        return db ? db : p;
+                    });
+                });
+
+                if (customer.length > 0) setCustomerSettings(prev => {
+                    return prev.map(p => {
+                        const db = customer.find(a => a.id === p.id);
+                        return db ? db : p;
+                    });
+                });
+
+                if (supervisor.length > 0) setSupervisorSettings(prev => {
+                    return prev.map(p => {
+                        const db = supervisor.find(a => a.id === p.id);
+                        return db ? db : p;
+                    });
+                });
+            }
+        } catch (error) {
+            console.error('Error fetching notification settings:', error);
+            setToast({ show: true, message: 'Failed to load settings', type: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleToggleSetting = (
         settingsType: 'agent' | 'customer' | 'supervisor',
         settingId: string
@@ -282,29 +363,61 @@ const NotificationSettings: React.FC = () => {
     const handleSave = async () => {
         setSaving(true);
         try {
-            // In a real app, save to database
-            const settings = {
-                agent: agentSettings,
-                customer: customerSettings,
-                supervisor: supervisorSettings
-            };
+            const allSettings: any[] = [];
+
+            agentSettings.forEach(s => {
+                allSettings.push({
+                    role_type: 'agent',
+                    setting_key: s.id,
+                    setting_label: s.label,
+                    setting_description: s.description,
+                    is_enabled: s.enabled,
+                    email_enabled: s.channels.email,
+                    push_enabled: s.channels.push,
+                    in_app_enabled: s.channels.inApp,
+                    updated_at: new Date().toISOString()
+                });
+            });
+
+            customerSettings.forEach(s => {
+                allSettings.push({
+                    role_type: 'customer',
+                    setting_key: s.id,
+                    setting_label: s.label,
+                    setting_description: s.description,
+                    is_enabled: s.enabled,
+                    email_enabled: s.channels.email,
+                    push_enabled: s.channels.push,
+                    in_app_enabled: s.channels.inApp,
+                    updated_at: new Date().toISOString()
+                });
+            });
+
+            supervisorSettings.forEach(s => {
+                allSettings.push({
+                    role_type: 'supervisor',
+                    setting_key: s.id,
+                    setting_label: s.label,
+                    setting_description: s.description,
+                    is_enabled: s.enabled,
+                    email_enabled: s.channels.email,
+                    push_enabled: s.channels.push,
+                    in_app_enabled: s.channels.inApp,
+                    updated_at: new Date().toISOString()
+                });
+            });
 
             const { error } = await supabase
                 .from('notification_settings')
-                .upsert({
-                    id: 'global',
-                    settings: settings,
-                    updated_at: new Date().toISOString()
-                });
+                .upsert(allSettings, { onConflict: 'role_type,setting_key' });
 
             if (error) throw error;
 
             setHasChanges(false);
-            // Show success toast
+            setToast({ show: true, message: 'Settings saved successfully!', type: 'success' });
         } catch (error) {
             console.error('Error saving settings:', error);
-            // For demo, just mark as saved
-            setHasChanges(false);
+            setToast({ show: true, message: 'Failed to save: ' + (error as any).message, type: 'error' });
         } finally {
             setSaving(false);
         }
@@ -414,6 +527,17 @@ const NotificationSettings: React.FC = () => {
 
     return (
         <div className="p-8 max-w-5xl mx-auto">
+            {/* Premium Toast Notification */}
+            {toast.show && (
+                <div className={`fixed top-8 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-6 py-3 rounded-2xl shadow-2xl transition-all duration-300 transform scale-100 ${toast.type === 'success'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-red-600 text-white'
+                    }`}>
+                    {toast.type === 'success' ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
+                    <span className="font-bold text-sm tracking-wide">{toast.message}</span>
+                </div>
+            )}
+
             {/* Header */}
             <div className="mb-8 flex items-center justify-between">
                 <div>

@@ -108,9 +108,12 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
 
                 console.log('UserDashboard: Status Breakdown:', statsMap);
 
-                const getCount = (names: string[]) => {
+                const getCount = (names: string[], partial: boolean = false) => {
                     return allUserTickets.filter((t: any) => {
                         const name = (t.ticket_statuses?.status_name || '').trim().toLowerCase();
+                        if (partial) {
+                            return names.some(n => name.includes(n.toLowerCase()));
+                        }
                         return names.map(n => n.toLowerCase()).includes(name);
                     }).length;
                 };
@@ -120,7 +123,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                 const resolved = getCount(['Resolved']);
                 const closed = getCount(['Closed']);
                 const canceled = getCount(['Canceled', 'Cancelled']);
-                const pending = getCount(['Pending', 'Waiting']);
+                const pending = getCount(['Pending', 'Waiting'], true); // Use partial match for Pending states
 
                 setStats({
                     open: openOnly + inProgress,
@@ -584,7 +587,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                                         <span
                                             className={`px-3 py-1.5 rounded-full text-xs font-bold inline-flex items-center gap-1.5 ${ticket.status === 'Open'
                                                 ? 'bg-blue-50 text-blue-600 border border-blue-100'
-                                                : ticket.status === 'Pending'
+                                                : ticket.status.toLowerCase().includes('pending')
                                                     ? 'bg-yellow-50 text-yellow-600 border border-yellow-100'
                                                     : ticket.status === 'Resolved'
                                                         ? 'bg-green-50 text-green-600 border border-green-100'
