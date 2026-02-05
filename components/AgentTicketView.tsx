@@ -17,15 +17,16 @@ interface AgentTicketViewProps {
 }
 
 const workflowMap: Record<string, string[]> = {
-    'Open': ['Pending - Waiting For Requester', 'Pending - Waiting for Vendor', 'Pending - Waiting for Sparepart', 'Pending - Internal Team', 'Canceled'],
-    'In Progress': ['Resolved', 'Pending - Waiting For Requester', 'Pending - Waiting for Vendor', 'Pending - Waiting for Sparepart', 'Pending - Internal Team', 'Canceled'],
-    'Pending - Waiting For Requester': ['Resolved', 'In Progress', 'Canceled'],
+    'Open': ['Pending - Waiting For Requester', 'Pending - Waiting for Vendor', 'Pending - Waiting for Sparepart', 'Pending - Internal Team', 'Pending - Development', 'Canceled'],
+    'In Progress': ['Resolved', 'Pending - Waiting For Requester', 'Pending - Waiting for Vendor', 'Pending - Waiting for Sparepart', 'Pending - Internal Team', 'Pending - Development', 'Canceled'],
+    'Pending - Waiting For Requester': ['Resolved', 'In Progress', 'Pending - Development', 'Canceled'],
     'Pending - Waiting for Vendor': ['Resolved', 'In Progress', 'Canceled'],
     'Pending - Waiting for Sparepart': ['Resolved', 'In Progress', 'Canceled'],
     'Pending - Internal Team': ['Resolved', 'In Progress', 'Canceled'],
-    'Resolved': ['Closed', 'In Progress'],
-    'Closed': ['In Progress'],
-    'Canceled': ['Open']
+    'Pending - Development': ['Resolved', 'In Progress', 'Canceled'],
+    'Resolved': [], // Terminal
+    'Closed': [],   // Terminal
+    'Canceled': []  // Terminal
 };
 
 const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQueueFilter = 'assigned', initialTicketId = null }) => {
@@ -269,18 +270,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
         return matchesSearch && matchesStatus && matchesPriority && matchesAgent;
     }).sort((a, b) => {
-        // Status Priority: Active (Open, In Progress, Pending) first
-        const terminalStatuses = ['Resolved', 'Closed', 'Canceled'];
-        const isTerminalA = terminalStatuses.includes(a.ticket_statuses?.status_name);
-        const isTerminalB = terminalStatuses.includes(b.ticket_statuses?.status_name);
-
-        if (isTerminalA && !isTerminalB) return 1;
-        if (!isTerminalA && isTerminalB) return -1;
-
-        // Within same group, sort by updated_at DESC (newest activity first)
-        const timeA = new Date(a.updated_at).getTime();
-        const timeB = new Date(b.updated_at).getTime();
-
+        // Purely sort by updated_at DESC (newest activity first) as requested
+        const timeA = new Date(a.updated_at || a.created_at).getTime();
+        const timeB = new Date(b.updated_at || b.created_at).getTime();
         return timeB - timeA;
     });
 
@@ -898,11 +890,31 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
         const stopTime = activityLogs.find(l => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('canceled'))?.created_at;
 
-        const businessElapsed = calculateBusinessElapsed(createdAt, (firstResponseTime && activeSlaType === 'response') ? new Date(firstResponseTime) : (isTerminal && stopTime ? new Date(stopTime) : now), schedule);
-        const targetMins = activeTarget?.target_minutes || (activeSlaType === 'response' ? 240 : 480);
+        // 4. Calculate Elapsed Time (Aware of Pauses)
+        const isPaused = selectedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending');
+        const totalPausedMinutes = selectedTicket.total_paused_minutes || 0;
+        const pausedAt = selectedTicket.paused_at;
 
-        const usedPercentage = Math.floor((businessElapsed / targetMins) * 100);
-        const remMins = Math.max(0, targetMins - businessElapsed);
+        let activeElapsed = 0;
+        if (firstResponseTime) {
+            // Resolution SLA
+            const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), (isTerminal && stopTime) ? new Date(stopTime) : now, schedule);
+            activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
+        } else {
+            // Response SLA
+            const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+            activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
+        }
+
+        // If currently paused, stop the ticker by using paused_at instead of 'now'
+        if (isPaused && pausedAt) {
+            const currentPauseElapsed = calculateBusinessElapsed(new Date(pausedAt), now, schedule);
+            activeElapsed = Math.max(0, activeElapsed - currentPauseElapsed);
+        }
+
+        const targetMins = activeTarget?.target_minutes || (activeSlaType === 'response' ? 240 : 480);
+        const usedPercentage = Math.floor((activeElapsed / targetMins) * 100);
+        const remMins = Math.max(0, targetMins - activeElapsed);
 
         // --- NEW ANALYSIS LOGIC ---
         const breachDate = calculateBusinessDeadline(createdAt, targetMins, schedule);
@@ -927,7 +939,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
         setSlaRisk({
             percentage: usedPercentage,
-            timeElapsed: `${Math.floor(businessElapsed / 60)}h ${businessElapsed % 60}m`,
+            timeElapsed: `${Math.floor(activeElapsed / 60)}h ${activeElapsed % 60}m`,
             timeRemaining: `${Math.floor(remMins / 60)}h ${remMins % 60}m`,
             hasResponse: !!firstResponseTime,
             breachTime: breachDate.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' WIB',
@@ -1213,7 +1225,53 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     actorId = user?.id;
                 }
 
-                const logAction = `Status changed from ${selectedTicket.ticket_statuses?.status_name} to ${updatedTicket.ticket_statuses?.status_name}${remark ? `. Remark: ${remark}` : ''}`;
+                // If transition involves Pending, update SLA pause counters
+                const oldStatus = selectedTicket.ticket_statuses?.status_name;
+                const isNowPending = updatedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending');
+                const wasPending = oldStatus && oldStatus.toLowerCase().includes('pending');
+
+                if (isNowPending && !wasPending) {
+                    // Just entered Pending - Record paused_at
+                    await supabase.from('tickets').update({ paused_at: new Date().toISOString() }).eq('id', selectedTicketId);
+                } else if (!isNowPending && wasPending && selectedTicket.paused_at) {
+                    // Leaving Pending - Calculate and add to total_paused_minutes
+                    const pauseStarted = new Date(selectedTicket.paused_at);
+                    const schedule = selectedTicket.group?.business_hours?.weekly_schedule || [];
+                    const addedPausedMins = calculateBusinessElapsed(pauseStarted, new Date(), schedule);
+                    const currentTotal = selectedTicket.total_paused_minutes || 0;
+
+                    await supabase.from('tickets').update({
+                        total_paused_minutes: currentTotal + addedPausedMins,
+                        paused_at: null
+                    }).eq('id', selectedTicketId);
+                }
+
+                // Add Remark as a message if present
+                if (remark) {
+                    await supabase.from('ticket_messages').insert({
+                        ticket_id: selectedTicketId,
+                        sender_id: actorId,
+                        sender_role: 'agent',
+                        content: `<div class="status-update-remark" data-status="${updatedTicket.ticket_statuses?.status_name}">${remark}</div>`,
+                        is_internal: false // Make it visible to user
+                    });
+
+                    // Refresh messages
+                    const { data: msgs } = await supabase
+                        .from('ticket_messages')
+                        .select('*, sender:profiles!sender_id(full_name)')
+                        .eq('ticket_id', selectedTicketId)
+                        .order('created_at', { ascending: true });
+
+                    if (msgs) {
+                        setMessages(msgs.map(m => ({
+                            ...m,
+                            sender_name: m.sender?.full_name || (m.sender_role === 'requester' ? 'User' : 'Agent')
+                        })));
+                    }
+                }
+
+                const logAction = `Status changed from ${selectedTicket.ticket_statuses?.status_name} to ${updatedTicket.ticket_statuses?.status_name}`;
 
                 await supabase.from('ticket_activity_log').insert({
                     ticket_id: selectedTicketId,
@@ -1253,6 +1311,25 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         } finally {
             setIsUpdatingStatus(false);
         }
+    };
+
+    const handleImagePreview = async (src: string) => {
+        if (!src) return;
+        // @ts-ignore
+        const Swal = (await import('sweetalert2')).default;
+        Swal.fire({
+            imageUrl: src,
+            imageAlt: 'Image preview',
+            width: 'auto',
+            padding: '10px',
+            background: '#ffffff',
+            showConfirmButton: false,
+            showCloseButton: true,
+            closeButtonHtml: '&times;',
+            customClass: {
+                image: 'max-h-[85vh] max-w-[90vw] object-contain rounded-lg shadow-2xl'
+            }
+        });
     };
 
     const handleAssignToMe = async () => {
@@ -1877,6 +1954,30 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
     return (
         <div className="flex h-full bg-[#f8f9fa] font-sans overflow-hidden text-[#333]">
+            <style>{`
+                .conversation-content img {
+                    cursor: zoom-in;
+                    transition: all 0.2s ease;
+                    border-radius: 12px;
+                    max-width: 100%;
+                    height: auto;
+                    display: block;
+                    margin: 10px 0;
+                    border: 1px solid #f1f5f9;
+                }
+                .conversation-content img:hover {
+                    opacity: 0.95;
+                    transform: translateY(-1px);
+                    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+                }
+                .swal2-image {
+                    margin: 0 !important;
+                }
+                .swal2-close {
+                    font-size: 30px !important;
+                    color: #64748b !important;
+                }
+            `}</style>
 
             {/* 1. LEFT PANEL - Ticket List */}
             <div className="w-[320px] flex flex-col border-r border-gray-200 bg-white">
@@ -2144,75 +2245,62 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                         setSelectedTicketId(ticket.id);
                                         setIsCreating(false);
                                     }}
-                                    className={`px-5 py-4 border-b border-gray-100/80 cursor-pointer transition-all duration-200 ${selectedTicketId === ticket.id
-                                            ? 'bg-blue-50/60 shadow-[inset_4px_0_0_0_#2563eb]'
-                                            : 'hover:bg-gray-50/80'
-                                        }`}
+                                    className={`px-4 py-3 border-b border-gray-100 cursor-pointer transition-colors ${selectedTicketId === ticket.id ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}
                                 >
-                                    {/* Line 1: ID, Priority, Time */}
-                                    <div className="flex justify-between items-center mb-2">
+                                    {/* Line 1: ID & Time */}
+                                    <div className="flex justify-between items-start mb-1">
                                         <div className="flex items-center gap-2">
-                                            <div className={`w-2 h-2 rounded-full shrink-0 ${ticket.priority === 'High' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.3)]' :
-                                                    'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.3)]'
-                                                }`} />
-                                            <span className="font-black text-[11px] text-blue-600 tracking-tight uppercase">
-                                                {ticket.ticket_number}
-                                            </span>
+                                            <div className="flex items-center gap-1.5">
+                                                <div className={`w-2 h-2 rounded-full ${ticket.priority === 'High' ? 'bg-red-500' : 'bg-green-500'}`} />
+                                                <span className="font-bold text-xs text-blue-600">{ticket.ticket_number}</span>
+                                            </div>
                                             {ticket.is_category_verified ? (
                                                 <CheckCircle2 size={10} className="text-green-500" />
                                             ) : (
                                                 <Sparkles size={10} className="text-amber-500" />
                                             )}
                                         </div>
-                                        <span className="text-[10px] text-gray-400 font-bold">{timeAgo}</span>
+                                        <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">{timeAgo}</span>
                                     </div>
 
                                     {/* Line 2: Subject */}
-                                    <h4 className={`text-[13px] font-bold mb-2 line-clamp-2 leading-snug transition-colors ${selectedTicketId === ticket.id ? 'text-blue-900' : 'text-gray-800'
-                                        }`}>
+                                    <h4 className="text-[13px] font-semibold text-gray-700 line-clamp-1 mb-1 leading-snug">
                                         {ticket.subject}
                                     </h4>
 
-                                    {/* Line 3: Requester & SLA */}
-                                    <div className="flex justify-between items-center mb-3">
-                                        <div className="flex items-center gap-1.5 text-[11px] text-gray-500 min-w-0">
-                                            <div className="w-4 h-4 rounded-full bg-gray-100 flex items-center justify-center text-[8px] font-bold shrink-0">
-                                                {ticket.requester?.full_name?.charAt(0) || '?'}
-                                            </div>
-                                            <span className="truncate">{ticket.requester?.full_name || 'Anonymous'}</span>
-                                        </div>
+                                    {/* Line 3: User & SLA */}
+                                    <div className="flex justify-between items-center text-[11px] font-medium mb-2">
+                                        <span className="text-gray-400 truncate max-w-[150px]">{ticket.requester?.full_name || 'Anonymous'}</span>
                                         {!isTerminal && (
-                                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black tracking-tight ${isBreached ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'
-                                                }`}>
-                                                <Clock size={10} />
+                                            <span className={`${isBreached ? 'text-rose-600' : 'text-red-500'} font-bold text-[10px]`}>
                                                 {isBreached ? 'OVERDUE' : `${String(remH).padStart(2, '0')}:${String(remM).padStart(2, '0')}:00`}
-                                            </div>
+                                            </span>
                                         )}
                                     </div>
 
-                                    {/* Line 4: Footer (Agent & Status) */}
-                                    <div className="flex justify-between items-center pt-2.5 border-t border-gray-100/50 gap-2">
-                                        <div className="flex items-center gap-2 min-w-0">
-                                            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-gray-50 rounded border border-gray-100/50">
-                                                <User size={10} className="text-gray-400" />
-                                                <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest truncate max-w-[70px]">
-                                                    {ticket.assigned_agent?.full_name?.split(' ')[0] || 'UNASSIGNED'}
-                                                </span>
-                                            </div>
-                                            {ticket.assigned_agent?.roles?.role_name?.includes('L2') && (
-                                                <span className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-600 text-[8px] font-black rounded uppercase tracking-widest border border-amber-100/50">
-                                                    <TrendingUp size={9} /> L2
-                                                </span>
-                                            )}
+                                    {/* Line 4: Tags (PIC & Escalated) */}
+                                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                                        <div className="flex items-center gap-1 px-1.5 py-0.5 bg-slate-50 border border-slate-100 rounded text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                                            <User size={10} />
+                                            {ticket.assigned_agent?.full_name || 'UNASSIGNED'}
                                         </div>
+                                        {ticket.assigned_agent?.roles?.role_name?.includes('L2') && (
+                                            <span className="px-1.5 py-0.5 bg-amber-50 text-amber-600 text-[8px] font-black rounded uppercase tracking-widest border border-amber-200 flex items-center gap-1">
+                                                <TrendingUp size={8} /> Escalated
+                                            </span>
+                                        )}
+                                    </div>
 
-                                        <div className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-tight border truncate max-w-[120px] ${ticket.ticket_statuses?.status_name === 'Open' ? 'bg-blue-50 text-blue-600 border-blue-100' :
-                                                ticket.ticket_statuses?.status_name === 'In Progress' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' :
-                                                    ticket.ticket_statuses?.status_name.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-600 border-orange-100' :
-                                                        ticket.ticket_statuses?.status_name === 'Resolved' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                                                            ticket.ticket_statuses?.status_name === 'Canceled' ? 'bg-rose-50 text-rose-600 border-rose-100' :
-                                                                'bg-slate-50 text-slate-400 border-slate-100'
-                                            }`} title={ticket.ticket_statuses?.status_name}>
+                                    {/* Line 5: Status (Bottom Right) */}
+                                    <div className="flex justify-end mt-1">
+                                        <div className={`text-[10px] font-black uppercase tracking-tight text-right leading-tight ${ticket.ticket_statuses?.status_name === 'Open' ? 'text-blue-600' :
+                                            ticket.ticket_statuses?.status_name === 'In Progress' ? 'text-indigo-600' :
+                                                ticket.ticket_statuses?.status_name.toLowerCase().includes('pending') ? 'text-orange-600' :
+                                                    ticket.ticket_statuses?.status_name === 'Resolved' ? 'text-emerald-600' :
+                                                        ticket.ticket_statuses?.status_name === 'Canceled' ? 'text-rose-600' :
+                                                            ticket.ticket_statuses?.status_name === 'Closed' ? 'text-slate-400' :
+                                                                'text-gray-400'
+                                            }`}>
                                             {ticket.ticket_statuses?.status_name}
                                         </div>
                                     </div>
@@ -2271,11 +2359,11 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                                     {/* Improved Status Selector */}
                                     <div className="relative group/status flex items-center">
-                                        <span className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-tighter">Status &nbsp;</span>
+                                        <span className="text-[9px] font-black text-slate-400 mr-2 uppercase tracking-widest leading-none">Status</span>
                                         <div className="relative">
                                             <select
                                                 value={selectedTicket.status_id}
-                                                disabled={isUpdatingStatus}
+                                                disabled={isUpdatingStatus || ['Closed', 'Canceled', 'Resolved'].includes(selectedTicket.ticket_statuses?.status_name)}
                                                 onChange={(e) => handleStatusUpdate(e.target.value)}
                                                 className={`appearance-none pl-3 pr-8 py-1 rounded text-[10px] font-black tracking-widest uppercase border cursor-pointer outline-none transition-all
                                                     ${selectedTicket.ticket_statuses?.status_name === 'Open' ? 'bg-blue-50 text-blue-600 border-blue-200' :
@@ -2302,6 +2390,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                                                         // Only show Internal Team status for L2 agents
                                                         if (isL2Status && !isL2Agent) return false;
+
+                                                        // Hide 'In Progress' from manual selection if ticket is currently Pending
+                                                        if (s.status_name === 'In Progress' && currentName.toLowerCase().includes('pending')) return false;
 
                                                         return isAllowed;
                                                     })
@@ -2588,8 +2679,17 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                                     <FileText size={10} /> Initial Issue
                                                 </span>
                                             </div>
-                                            <div className="bg-white p-5 rounded-2xl border-2 border-indigo-50 shadow-sm text-[14px] text-gray-700 leading-relaxed font-medium transition-all hover:border-indigo-100">
-                                                <div className="prose prose-indigo prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: selectedTicket.description }} />
+                                            <div className="bg-white p-5 rounded-2xl border-2 border-indigo-50 shadow-sm text-[14px] text-gray-700 leading-relaxed font-medium transition-all hover:border-indigo-100 conversation-content">
+                                                <div
+                                                    className="prose prose-indigo prose-sm max-w-none"
+                                                    dangerouslySetInnerHTML={{ __html: selectedTicket.description }}
+                                                    onClick={(e) => {
+                                                        const target = e.target as HTMLElement;
+                                                        if (target.tagName === 'IMG') {
+                                                            handleImagePreview(target.getAttribute('src') || '');
+                                                        }
+                                                    }}
+                                                />
                                             </div>
                                         </div>
                                     </div>
@@ -2602,7 +2702,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     return (
                                         <div key={msg.id} className={`flex gap-4 group animate-in fade-in slide-in-from-bottom-2 duration-300 ${isAgent ? 'flex-row-reverse' : ''}`}>
                                             <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 shadow-sm transition-transform group-hover:scale-105
-                                                ${isAgent ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                                                 ${isAgent ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
                                                 {msg.sender_name?.charAt(0) || 'U'}
                                             </div>
                                             <div className={`flex-1 flex flex-col ${isAgent ? 'items-end' : 'items-start'}`}>
@@ -2625,14 +2725,30 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                                             <Lock size={10} /> Private Note
                                                         </span>
                                                     )}
+                                                    {msg.content?.includes('status-update-remark') && (
+                                                        <span className="bg-emerald-50 text-emerald-600 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-emerald-100 flex items-center gap-1">
+                                                            <RefreshCw size={10} /> Status Update
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                <div className={`p-4 rounded-2xl text-[14px] leading-relaxed font-medium shadow-sm transition-all
-                                                    ${isInternal
-                                                        ? 'bg-amber-50/40 border-2 border-amber-100/50 text-amber-900'
-                                                        : isAgent
-                                                            ? 'bg-white border-2 border-indigo-50 text-slate-700 hover:border-indigo-100 hover:shadow-indigo-50/50'
-                                                            : 'bg-slate-50 border border-slate-100 text-slate-700'}`}>
-                                                    <div className="prose prose-slate prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: msg.content || '' }} />
+                                                <div className={`p-4 rounded-2xl text-[14px] leading-relaxed font-medium shadow-sm transition-all conversation-content
+                                                     ${msg.content?.includes('status-update-remark')
+                                                        ? 'bg-emerald-50/10 border-2 border-emerald-100/50 text-slate-700'
+                                                        : isInternal
+                                                            ? 'bg-amber-50/40 border-2 border-amber-100/50 text-amber-900'
+                                                            : isAgent
+                                                                ? 'bg-white border-2 border-indigo-50 text-slate-700 hover:border-indigo-100 hover:shadow-indigo-50/50'
+                                                                : 'bg-slate-50 border border-slate-100 text-slate-700'}`}>
+                                                    <div
+                                                        className="prose prose-slate prose-sm max-w-none"
+                                                        dangerouslySetInnerHTML={{ __html: msg.content || '' }}
+                                                        onClick={(e) => {
+                                                            const target = e.target as HTMLElement;
+                                                            if (target.tagName === 'IMG') {
+                                                                handleImagePreview(target.getAttribute('src') || '');
+                                                            }
+                                                        }}
+                                                    />
                                                 </div>
                                             </div>
                                         </div>
@@ -2804,6 +2920,38 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300 mb-6 border-b border-gray-100 pb-2">People & Assignment</h4>
                                     <div className="space-y-5">
                                         <DetailRow label="Assignment Group" value={selectedTicket.group?.name || '-'} />
+                                        {(() => {
+                                            const l1Roles = [2, 3];
+                                            const l2Roles = [5];
+                                            const escalationLog = activityLogs.find(l => l.action.toLowerCase().includes('escalated to l2'));
+
+                                            // L1 Calculation
+                                            const l1Log = activityLogs.find(l => l1Roles.includes(l.actor?.role_id)) || escalationLog;
+                                            const l1Name = l1Log
+                                                ? (l1Log.actor?.full_name || 'L1 Agent')
+                                                : (l1Roles.includes(selectedTicket.assigned_agent?.role_id) ? selectedTicket.assigned_agent.full_name : 'L1 System');
+
+                                            // L2 Calculation
+                                            const l2FirstAction = activityLogs.find(l =>
+                                                l2Roles.includes(l.actor?.role_id) && !l.action.toLowerCase().includes('created')
+                                            );
+                                            let l2Name = '-';
+                                            if (l2FirstAction) {
+                                                l2Name = l2FirstAction.actor?.full_name;
+                                            } else if (escalationLog) {
+                                                const parts = escalationLog.action.split(':');
+                                                l2Name = parts.length > 1 ? parts[1].trim() : 'L2 Agent';
+                                            } else if (l2Roles.includes(selectedTicket.assigned_agent?.role_id)) {
+                                                l2Name = selectedTicket.assigned_agent.full_name;
+                                            }
+
+                                            return (
+                                                <>
+                                                    <DetailRow label="L1 Agent" value={l1Name} />
+                                                    <DetailRow label="L2 Agent" value={l2Name} />
+                                                </>
+                                            );
+                                        })()}
                                         <DetailRow label="Assigned Agent" value={selectedTicket.assigned_agent?.full_name || 'Unassigned'} />
                                         <DetailRow label="Requester Name" value={selectedTicket.requester?.full_name} />
                                         <DetailRow label="Requester Email" value={selectedTicket.requester?.email} />
@@ -3169,11 +3317,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             <div className="max-w-4xl mx-auto p-4 space-y-4">
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">Attached Files</h3>
-                                    <label className={`flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors cursor-pointer ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                                        <input type="file" className="hidden" onChange={handleFileUpload} disabled={isUploading} />
-                                        {isUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                                        {isUploading ? 'Uploading...' : 'Upload File'}
-                                    </label>
+                                    {!['Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name) && (
+                                        <label className={`flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors cursor-pointer ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                                            <input type="file" className="hidden" onChange={handleFileUpload} disabled={isUploading} />
+                                            {isUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                                            {isUploading ? 'Uploading...' : 'Upload File'}
+                                        </label>
+                                    )}
                                 </div>
                                 {(!selectedTicket.ticket_attachments || selectedTicket.ticket_attachments.length === 0) ? (
                                     <div className="text-sm text-gray-500 italic bg-gray-50 p-8 rounded-xl border border-gray-100 flex flex-col items-center justify-center gap-2 text-center">
@@ -3213,10 +3363,28 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                     {/* Bottom Composer */}
                     {activeTab === 'conversation' && (() => {
+                        const isTerminal = ['Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
                         const isL2Agent = currentUserRoleName.includes('L2');
                         const isAssignedToMe = selectedTicket.assigned_to === userProfile?.id;
                         const isMySubmittedTicket = selectedTicket.requester_id === userProfile?.id;
                         const isEscalated = selectedTicket.assigned_agent?.roles?.role_name?.includes('L2');
+
+                        if (isTerminal) {
+                            return (
+                                <div className="p-8 border-t border-gray-100 bg-gray-50/50 flex flex-col items-center text-center gap-3">
+                                    <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 border-2 border-dashed border-gray-200">
+                                        <Lock size={20} />
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest">Conversation Locked</h4>
+                                        <p className="text-xs text-gray-400 mt-1 font-medium max-w-sm">
+                                            This ticket is {selectedTicket.ticket_statuses?.status_name}.
+                                            Replies are no longer possible to maintain the integrity of the resolution.
+                                        </p>
+                                    </div>
+                                </div>
+                            );
+                        }
 
                         // L2 can only reply to their assigned tickets or their own submitted tickets
                         // They cannot interfere with L1 or SPV tickets if not assigned to them

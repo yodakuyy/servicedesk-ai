@@ -35,7 +35,8 @@ import {
   Briefcase,
   CheckCircle,
   RefreshCw,
-  X
+  X,
+  BarChart3
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import IncidentList from './IncidentList';
@@ -65,6 +66,7 @@ import NotificationPanel from './NotificationPanel';
 import AutoAssignment from './AutoAssignment';
 import AutoCloseRules from './AutoCloseRules';
 import NotificationSettings from './NotificationSettings';
+import ReportsView from './ReportsView';
 import { useNotifications } from '../hooks/useNotifications';
 import { useRealtimeToast } from '../hooks/useRealtimeToast';
 
@@ -157,7 +159,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     portal: false
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'access-policy' | 'create-incident'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'access-policy' | 'create-incident' | 'reports'>('dashboard');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile' | 'user-dashboard'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
@@ -721,6 +723,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
             'escalatedtickets': 'escalated-tickets',
             'changerequest': 'escalated-tickets',
+            'reports': 'reports',
+            'reportsanalytics': 'reports',
             'settings': 'settings'
           };
 
@@ -1246,6 +1250,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       );
     }
 
+    if (currentView === 'reports') {
+      return <ReportsView />;
+    }
+
     if (currentView === 'profile') {
       if (loadingProfile) {
         return (
@@ -1756,6 +1764,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 'helpcenter': 'help-center',
                 'escalatedtickets': 'escalated-tickets',
                 'changerequest': 'escalated-tickets',
+                'reports': 'reports',
+                'reportsanalytics': 'reports',
                 'settings': 'settings', // Settings handled separately but include for completeness
               };
 
@@ -1804,6 +1814,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 if (normalizedName.includes('help')) return BookOpen;
                 if (normalizedName.includes('request') && !normalizedName.includes('change')) return Package;
                 if (normalizedName.includes('escalated') || normalizedName.includes('changerequest')) return GitBranch;
+                if (normalizedName.includes('reports')) return BarChart3;
                 return undefined;
               };
 
