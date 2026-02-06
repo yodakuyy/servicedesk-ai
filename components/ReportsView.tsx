@@ -41,6 +41,7 @@ const ReportsView: React.FC = () => {
     const [breachedTickets, setBreachedTickets] = useState<any[]>([]);
     const [isBreachModalOpen, setIsBreachModalOpen] = useState(false);
     const [exportSearch, setExportSearch] = useState('');
+    const [exportStatus, setExportStatus] = useState('All');
     const [slaPolicies, setSlaPolicies] = useState<any[]>([]);
     const [slaTargets, setSlaTargets] = useState<any[]>([]);
     const [allCategories, setAllCategories] = useState<any[]>([]);
@@ -316,11 +317,17 @@ const ReportsView: React.FC = () => {
         return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     };
 
-    const filteredExportTickets = recentTickets.filter(t =>
-        t.ticket_number?.toLowerCase().includes(exportSearch.toLowerCase()) ||
-        t.subject?.toLowerCase().includes(exportSearch.toLowerCase()) ||
-        t.assigned_agent?.full_name?.toLowerCase().includes(exportSearch.toLowerCase())
-    );
+    const filteredExportTickets = recentTickets.filter(t => {
+        const sName = ((t as any).ticket_statuses?.status_name || (t as any).ticket_statuses?.[0]?.status_name) || 'Open';
+
+        const matchesSearch = t.ticket_number?.toLowerCase().includes(exportSearch.toLowerCase()) ||
+            t.subject?.toLowerCase().includes(exportSearch.toLowerCase()) ||
+            t.assigned_agent?.full_name?.toLowerCase().includes(exportSearch.toLowerCase());
+
+        const matchesStatus = exportStatus === 'All' || sName.toLowerCase() === exportStatus.toLowerCase();
+
+        return matchesSearch && matchesStatus;
+    });
 
     const handleExportExcel = async () => {
         setIsExporting(true);
@@ -353,8 +360,33 @@ const ReportsView: React.FC = () => {
                 return;
             }
 
+            // Apply UI Filters to the export data
+            const filteredTickets = (tickets || []).filter(t => {
+                const sName = ((t as any).ticket_statuses?.status_name || (t as any).ticket_statuses?.[0]?.status_name) || 'Open';
+                const agentName = (Array.isArray(t.assigned_agent) ? t.assigned_agent[0] : t.assigned_agent)?.full_name || '';
+
+                const matchesSearch = t.ticket_number?.toLowerCase().includes(exportSearch.toLowerCase()) ||
+                    t.subject?.toLowerCase().includes(exportSearch.toLowerCase()) ||
+                    agentName.toLowerCase().includes(exportSearch.toLowerCase());
+
+                const matchesStatus = exportStatus === 'All' || sName.toLowerCase() === exportStatus.toLowerCase();
+
+                return matchesSearch && matchesStatus;
+            });
+
+            if (filteredTickets.length === 0) {
+                const Swal = (await import('sweetalert2')).default;
+                Swal.fire({
+                    icon: 'info',
+                    title: 'No Results',
+                    text: 'No tickets match your current search and status filters.',
+                    confirmButtonColor: '#4f46e5'
+                });
+                return;
+            }
+
             // Fetch activity logs for L1/L2 logic and precise timing
-            const tIds = tickets.map((t: any) => t.id);
+            const tIds = filteredTickets.map((t: any) => t.id);
             const { data: logData, error: logError } = await supabase
                 .from('ticket_activity_log')
                 .select('id, ticket_id, actor_id, action, created_at')
@@ -363,7 +395,7 @@ const ReportsView: React.FC = () => {
 
             // Fetch actor profiles separately for L1/L2 agent names
             const logActorIds = (logData || []).map((l: any) => l.actor_id);
-            const assignedIds = (tickets || []).map((t: any) => (Array.isArray(t.assigned_agent) ? t.assigned_agent[0] : t.assigned_agent)?.id).filter(Boolean);
+            const assignedIds = (filteredTickets || []).map((t: any) => (Array.isArray(t.assigned_agent) ? t.assigned_agent[0] : t.assigned_agent)?.id).filter(Boolean);
             const uniqueActorIds = [...new Set([...logActorIds, ...assignedIds].filter(Boolean))];
             const { data: actorProfiles } = await supabase
                 .from('profiles')
@@ -391,7 +423,7 @@ const ReportsView: React.FC = () => {
                 'Total Paused (Mins)', 'Resolution SLA', 'Tags', 'Description'
             ];
 
-            const excelRows = tickets.map(t => {
+            const excelRows = filteredTickets.map(t => {
                 const ticket = t as any;
                 const sName = (ticket.ticket_statuses?.status_name || ticket.ticket_statuses?.[0]?.status_name) || 'Open';
                 const isResolved = ['Resolved', 'Closed'].includes(sName);
@@ -455,7 +487,7 @@ const ReportsView: React.FC = () => {
                 let l1Name = '-';
                 const escalatorProfile = escalationLog ? actorMap.get(escalationLog.actor_id) : null;
 
-                const l1LogFound = logs.find((l: any) => {
+                const l1LogFound = [...logs].reverse().find((l: any) => {
                     const actor = actorMap.get(l.actor_id);
                     return l1Roles.includes(actor?.role_id) && isRealHuman(actor);
                 });
@@ -470,8 +502,8 @@ const ReportsView: React.FC = () => {
                     }
                 }
 
-                // L2 Calculation: find first log by L2 roles (excluding creation, must be real human)
-                const l2LogFound = logs.find((l: any) => {
+                // L2 Calculation: find LATEST log by L2 roles (excluding creation, must be real human)
+                const l2LogFound = [...logs].reverse().find((l: any) => {
                     const actor = actorMap.get(l.actor_id);
                     return l2Roles.includes(actor?.role_id) &&
                         isRealHuman(actor) &&
@@ -940,11 +972,17 @@ const ReportsView: React.FC = () => {
                                 className="w-full pl-11 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all"
                             />
                         </div>
-                        <select className="px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-600 outline-none transition-all">
-                            <option>All Statuses</option>
-                            <option>Open</option>
-                            <option>Resolved</option>
-                            <option>Closed</option>
+                        <select
+                            value={exportStatus}
+                            onChange={(e) => setExportStatus(e.target.value)}
+                            className="px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-600 outline-none transition-all cursor-pointer hover:border-indigo-400"
+                        >
+                            <option value="All">All Statuses</option>
+                            <option value="Open">Open</option>
+                            <option value="Pending">Pending</option>
+                            <option value="Resolved">Resolved</option>
+                            <option value="Closed">Closed</option>
+                            <option value="Canceled">Canceled</option>
                         </select>
                     </div>
 
@@ -1018,7 +1056,7 @@ const ReportsView: React.FC = () => {
                                         let l1Name = '-';
                                         const escalatorProfile = escalationLog ? (escalationLog.actor || escalationLog.actor?.[0]) : null;
 
-                                        const l1LogFound = logs.find((l: any) => l1Roles.includes(l.actor?.role_id) && isRealHuman(l.actor));
+                                        const l1LogFound = [...logs].reverse().find((l: any) => l1Roles.includes(l.actor?.role_id) && isRealHuman(l.actor));
 
                                         if (escalatorProfile && isRealHuman(escalatorProfile)) {
                                             l1Name = escalatorProfile.full_name;
@@ -1031,8 +1069,8 @@ const ReportsView: React.FC = () => {
                                         }
 
 
-                                        // 2. Identify L2: First work log (skipping creation) OR escalation log (must be real human)
-                                        const l2LogFound = logs.find((l: any) =>
+                                        // 2. Identify L2: LATEST work log (skipping creation) OR escalation log (must be real human)
+                                        const l2LogFound = [...logs].reverse().find((l: any) =>
                                             l2Roles.includes(l.actor?.role_id) &&
                                             isRealHuman(l.actor) &&
                                             !(l.action || '').toLowerCase().includes('created')
