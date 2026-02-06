@@ -45,6 +45,7 @@ const ReportsView: React.FC = () => {
     const [slaTargets, setSlaTargets] = useState<any[]>([]);
     const [allCategories, setAllCategories] = useState<any[]>([]);
     const [statusMap, setStatusMap] = useState<Record<string, string>>({});
+    const [isExporting, setIsExporting] = useState(false);
 
     const checkTicketSla = (t: any, statusMap: Record<string, string> = {}) => {
         const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase();
@@ -101,6 +102,15 @@ const ReportsView: React.FC = () => {
         fetchReportsData();
     }, [dateRange]);
 
+    const formatHandleTime = (hours: number) => {
+        if (!hours || hours <= 0) return '-';
+        const totalMinutes = Math.round(hours * 60);
+        const h = Math.floor(totalMinutes / 60);
+        const m = totalMinutes % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        return `${m}m`;
+    };
+
     const fetchReportsData = async () => {
         setIsLoading(true);
         try {
@@ -139,11 +149,17 @@ const ReportsView: React.FC = () => {
             if (tickets && tickets.length > 0) {
                 // 1.5 Fetch Logs for these tickets to detect L1/L2 splits
                 const tIds = tickets.map((t: any) => t.id);
-                const { data: logData } = await supabase
+                const { data: logData, error: logError } = await supabase
                     .from('ticket_activity_log')
-                    .select('*, actor:profiles!actor_id(id, full_name, role_id)')
+                    .select('id, ticket_id, actor_id, action, created_at')
                     .in('ticket_id', tIds)
                     .order('created_at', { ascending: true });
+
+                if (logError) {
+                    console.error('Log fetch error:', logError);
+                } else {
+                    console.log('Total logs fetched:', logData?.length);
+                }
 
                 const enrichedTickets = tickets.map((t: any) => ({
                     ...t,
@@ -287,6 +303,177 @@ const ReportsView: React.FC = () => {
         t.subject?.toLowerCase().includes(exportSearch.toLowerCase()) ||
         t.assigned_agent?.full_name?.toLowerCase().includes(exportSearch.toLowerCase())
     );
+
+    const handleExportExcel = async () => {
+        setIsExporting(true);
+        try {
+            // Fetch comprehensive data for export
+            const { data: tickets, error } = await supabase
+                .from('tickets')
+                .select(`
+                    id, ticket_number, subject, description, priority, created_at, updated_at, ticket_type, 
+                    total_paused_minutes, status_id, category_id, is_category_verified, tags,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    requester:profiles!fk_tickets_requester (full_name, email),
+                    reporter:profiles!fk_tickets_created_by (full_name),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id),
+                    services (name),
+                    group:groups!assignment_group_id (name)
+                `)
+                .gte('created_at', dateRange.start + 'T00:00:00')
+                .lte('created_at', dateRange.end + 'T23:59:59');
+
+            if (error) throw error;
+            if (!tickets || tickets.length === 0) {
+                const Swal = (await import('sweetalert2')).default;
+                Swal.fire({
+                    icon: 'info',
+                    title: 'No Data',
+                    text: 'No tickets found for the selected date range.',
+                    confirmButtonColor: '#4f46e5'
+                });
+                return;
+            }
+
+            // Fetch activity logs for L1/L2 logic and precise timing
+            const tIds = tickets.map((t: any) => t.id);
+            const { data: logData } = await supabase
+                .from('ticket_activity_log')
+                .select('id, ticket_id, actor_id, action, created_at, actor:profiles!actor_id(full_name, role_id)')
+                .in('ticket_id', tIds)
+                .order('created_at', { ascending: true });
+
+            const excelHeaders = [
+                'Ticket No', 'Subject', 'Type', 'Priority', 'Status', 'Category Path', 'Verified?',
+                'Service', 'Assignment Group', 'Requester Name', 'Requester Email',
+                'Reporter Name', 'Assigned Agent', 'L1 Agent', 'L2 Agent',
+                'Created At', 'Updated At', 'Resolved At', 'Closed At',
+                'Response Time (Mins)', 'Response SLA',
+                'L1 Handle (Hrs)', 'L2 Handle (Hrs)', 'Total Resolution (Hrs)',
+                'Total Paused (Mins)', 'Resolution SLA', 'Tags', 'Description'
+            ];
+
+            const excelRows = tickets.map(t => {
+                const ticket = t as any;
+                const sName = (ticket.ticket_statuses?.status_name || ticket.ticket_statuses?.[0]?.status_name) || 'Open';
+                const isResolved = ['Resolved', 'Closed'].includes(sName);
+                const isClosed = sName === 'Closed';
+                const categoryPath = ticket.category_id ? getBreadcrumb(ticket.category_id, allCategories) : 'Uncategorized';
+
+                const logs = logData?.filter((l: any) => l.ticket_id === ticket.id) || [];
+                const creationTime = new Date(ticket.created_at).getTime();
+                const escalationLog = logs.find((l: any) => l.action.toLowerCase().includes('escalated to l2'));
+                const terminalTime = isResolved ? new Date(ticket.updated_at).getTime() : new Date().getTime();
+
+                const resolvedLog = logs.find((l: any) => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('to resolved'));
+                const closedLog = logs.find((l: any) => l.action.toLowerCase().includes('closed') || l.action.toLowerCase().includes('to closed'));
+
+                const resolvedAt = resolvedLog ? new Date(resolvedLog.created_at).toLocaleString() : (isResolved ? new Date(ticket.updated_at).toLocaleString() : '-');
+                const closedAt = closedLog ? new Date(closedLog.created_at).toLocaleString() : (isClosed ? new Date(ticket.updated_at).toLocaleString() : '-');
+
+                const totalPausedMins = ticket.total_paused_minutes || 0;
+
+                const l1Roles = [2, 3];
+                const l2Roles = [5];
+                const l1Log = logs.find((l: any) => l1Roles.includes(l.actor?.role_id));
+                const agent = Array.isArray(ticket.assigned_agent) ? ticket.assigned_agent[0] : ticket.assigned_agent;
+                const l1Name = l1Log
+                    ? (((l1Log.actor as any)?.full_name || (l1Log.actor as any)?.[0]?.full_name) || 'L1 Agent')
+                    : (agent?.full_name || 'L1 System');
+
+                const l2FirstAction = logs.find((l: any) => l2Roles.includes(l.actor?.role_id));
+                const l2Name = l2FirstAction
+                    ? ((l2FirstAction.actor as any)?.full_name || (l2FirstAction.actor as any)?.[0]?.full_name)
+                    : (escalationLog ? 'L2 Agent' : (agent?.role_id === 5 ? agent?.full_name : '-'));
+
+                const firstReplyLog = logs.find((l: any) => l.action.toLowerCase().includes('agent replied'));
+                const firstReplyTime = firstReplyLog ? new Date(firstReplyLog.created_at).getTime() : null;
+                const responseMins = firstReplyTime ? Math.round((firstReplyTime - creationTime) / 60000) : 0;
+
+                const escalationTime = escalationLog ? new Date(escalationLog.created_at).getTime() : null;
+                const totalResMins = Math.max(0, Math.round((terminalTime - creationTime) / 60000) - totalPausedMins);
+
+                let l1Hrs = 0;
+                let l2Hrs = 0;
+                if (escalationTime && escalationTime > creationTime) {
+                    const l1M = Math.round((escalationTime - creationTime) / 60000);
+                    const l2M = Math.max(0, Math.round((terminalTime - escalationTime) / 60000) - totalPausedMins);
+                    l1Hrs = parseFloat((l1M / 60).toFixed(2));
+                    l2Hrs = parseFloat((l2M / 60).toFixed(2));
+                } else {
+                    l1Hrs = parseFloat((totalResMins / 60).toFixed(2));
+                }
+
+                const sla = checkTicketSla(ticket, statusMap);
+                const cleanDesc = (ticket.description || '').replace(/<[^>]*>/g, '').replace(/\n/g, ' ');
+                const tagsStr = (ticket.tags || []).join(', ');
+
+                const requester = Array.isArray(ticket.requester) ? ticket.requester[0] : ticket.requester;
+                const reporter = Array.isArray(ticket.reporter) ? ticket.reporter[0] : ticket.reporter;
+
+                return [
+                    ticket.ticket_number,
+                    ticket.subject || '',
+                    ticket.ticket_type,
+                    ticket.priority,
+                    sName,
+                    categoryPath,
+                    ticket.is_category_verified ? 'YES' : 'NO',
+                    (ticket.services?.name || ticket.services?.[0]?.name) || '-',
+                    (ticket.group?.name || ticket.group?.[0]?.name) || '-',
+                    (requester?.full_name) || 'Guest',
+                    (requester?.email) || '-',
+                    (reporter?.full_name) || '-',
+                    (agent?.full_name) || 'Unassigned',
+                    l1Name,
+                    l2Name,
+                    new Date(ticket.created_at).toLocaleString(),
+                    new Date(ticket.updated_at).toLocaleString(),
+                    resolvedAt,
+                    closedAt,
+                    responseMins,
+                    sla.isResponseOverdue ? 'BREACHED' : 'MET',
+                    l1Hrs,
+                    l2Hrs,
+                    parseFloat((totalResMins / 60).toFixed(2)),
+                    totalPausedMins,
+                    sla.isResolveOverdue ? 'BREACHED' : 'MET',
+                    tagsStr,
+                    cleanDesc
+                ];
+            });
+
+            const XLSX = await import('xlsx');
+            const worksheet = XLSX.utils.aoa_to_sheet([excelHeaders, ...excelRows]);
+
+            // Auto-size columns for better readability
+            const maxWidths = excelHeaders.map((h, i) => {
+                let maxLen = h.length;
+                excelRows.forEach(row => {
+                    const val = String(row[i] || '');
+                    if (val.length > maxLen) maxLen = val.length;
+                });
+                return { wch: Math.min(maxLen + 2, 50) };
+            });
+            worksheet['!cols'] = maxWidths;
+
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'Tickets');
+            XLSX.writeFile(workbook, `ServiceDesk_Export_${dateRange.start}_to_${dateRange.end}.xlsx`);
+
+        } catch (err: any) {
+            console.error('Export failed:', err);
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'error',
+                title: 'Export Failed',
+                text: err.message || 'An unexpected error occurred during export. Check console for details.',
+                confirmButtonColor: '#ef4444'
+            });
+        } finally {
+            setIsExporting(false);
+        }
+    };
 
     return (
         <div className="p-8 bg-[#f8f9fa] min-h-full font-sans text-slate-700 overflow-y-auto">
@@ -580,8 +767,17 @@ const ReportsView: React.FC = () => {
                             <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">Advanced Data Export</h2>
                             <p className="text-sm font-medium text-slate-500 mt-1">Configure filters and export raw incident data to Excel/CSV</p>
                         </div>
-                        <button className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-100 font-black uppercase tracking-widest text-[10px] hover:bg-indigo-700 transition-all active:scale-95">
-                            <Download size={16} /> Export to Excel
+                        <button
+                            onClick={handleExportExcel}
+                            disabled={isExporting}
+                            className={`flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-100 font-black uppercase tracking-widest text-[10px] hover:bg-indigo-700 transition-all active:scale-95 ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            {isExporting ? (
+                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                                <Download size={16} />
+                            )}
+                            {isExporting ? 'Exporting...' : 'Export to Excel'}
                         </button>
                     </div>
 
@@ -619,8 +815,9 @@ const ReportsView: React.FC = () => {
                                     <th className="px-8 py-5">Ticket #</th>
                                     <th className="px-8 py-5">L1 Agent</th>
                                     <th className="px-8 py-5">L2 Agent</th>
-                                    <th className="px-8 py-5 text-center">L1 Handle (Hrs)</th>
-                                    <th className="px-8 py-5 text-center">L2 Handle (Hrs)</th>
+                                    <th className="px-8 py-5 text-center">Response Time</th>
+                                    <th className="px-8 py-5 text-center">L1 Handle</th>
+                                    <th className="px-8 py-5 text-center">L2 Handle</th>
                                     <th className="px-8 py-5">Closed Time</th>
                                     <th className="px-8 py-5 text-right w-10">Status</th>
                                 </tr>
@@ -628,7 +825,7 @@ const ReportsView: React.FC = () => {
                             <tbody className="divide-y divide-slate-50 text-slate-600">
                                 {filteredExportTickets.length === 0 ? (
                                     <tr>
-                                        <td colSpan={7} className="px-8 py-20 text-center text-slate-400 italic text-sm font-medium">
+                                        <td colSpan={8} className="px-8 py-20 text-center text-slate-400 italic text-sm font-medium">
                                             {isLoading ? 'Fetching data...' : 'No tickets found for this period.'}
                                         </td>
                                     </tr>
@@ -649,10 +846,10 @@ const ReportsView: React.FC = () => {
 
                                         // 1. Identify L1: Supervisor (2) or Agent (3) OR Escalator
                                         const l1Log = logs.find((l: any) => l1Roles.includes(l.actor?.role_id)) || escalationLog;
-                                        const currAgent = (t as any).assigned_agent;
+                                        const currAgent = Array.isArray((t as any).assigned_agent) ? (t as any).assigned_agent[0] : (t as any).assigned_agent;
                                         const l1Name = l1Log
-                                            ? (l1Log.actor?.full_name || 'L1 Agent')
-                                            : (l1Roles.includes(currAgent?.role_id) ? currAgent.full_name : 'L1 System');
+                                            ? ((l1Log.actor as any)?.full_name || (l1Log.actor as any)?.[0]?.full_name || 'L1 Agent')
+                                            : (l1Roles.includes(currAgent?.role_id) ? currAgent?.full_name : 'L1 System');
 
 
                                         // 2. Identify L2: First work log (skipping creation) OR escalation log
@@ -661,27 +858,57 @@ const ReportsView: React.FC = () => {
                                         );
                                         const l2TriggerLog = l2FirstAction || escalationLog;
 
-                                        let l2Name = '-';
-                                        if (l2FirstAction) {
-                                            l2Name = l2FirstAction.actor?.full_name;
-                                        } else if (escalationLog) {
-                                            const parts = escalationLog.action.split(':');
-                                            l2Name = parts.length > 1 ? parts[1].trim() : 'L2 Agent';
-                                        } else if (l2Roles.includes(currAgent?.role_id)) {
-                                            l2Name = currAgent.full_name;
-                                        }
+                                        const l2Name = l2FirstAction
+                                            ? ((l2FirstAction.actor as any)?.full_name || (l2FirstAction.actor as any)?.[0]?.full_name)
+                                            : (escalationLog ? 'L2 Agent' : (l2Roles.includes(currAgent?.role_id) ? currAgent?.full_name : '-'));
 
                                         const escalationTime = l2TriggerLog ? new Date(l2TriggerLog.created_at).getTime() : null;
                                         const terminalTime = isResolved ? new Date(t.updated_at).getTime() : new Date().getTime();
 
-                                        let l1H = 0;
-                                        let l2H = 0;
-                                        if (escalationTime) {
-                                            l1H = Math.max(0, (escalationTime - creationTime) / 3600000);
-                                            l2H = Math.max(0, (terminalTime - escalationTime) / 3600000);
+                                        // === TIMING LOGIC (v4 - Match SLA Widget) ===
+                                        // Sort logs chronologically
+                                        const sortedLogs = [...logs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+                                        // 1. Find First Agent Reply (for Response Time)
+                                        const firstReplyLog = sortedLogs.find((l: any) =>
+                                            l.action.toLowerCase().includes('agent replied')
+                                        );
+                                        const firstReplyTime = firstReplyLog ? new Date(firstReplyLog.created_at).getTime() : null;
+
+                                        // Response Time: Created -> First Reply (floor to whole minutes)
+                                        const responseTimeMs = firstReplyTime ? (firstReplyTime - creationTime) : 0;
+                                        const responseTimeMins = Math.floor(responseTimeMs / 60000); // Convert to whole minutes
+                                        const responseTimeH = responseTimeMins / 60; // Convert to hours for display
+
+                                        // 2. L1/L2 Handle Time using total_paused_minutes from DB
+                                        // This matches the SLA widget calculation
+                                        const totalPausedMins = (t as any).total_paused_minutes || 0;
+
+                                        // L1/L2 Handle Time - SAME formula as SLA widget:
+                                        // Resolution = (Resolved - Created) - total_paused_minutes
+                                        const totalElapsedMins = Math.floor((terminalTime - creationTime) / 60000);
+                                        const totalResolutionMins = Math.max(0, totalElapsedMins - totalPausedMins);
+
+                                        // Check if escalated to L2
+                                        let finalL1H = 0;
+                                        let finalL2H = 0;
+
+                                        if (escalationTime && escalationTime > creationTime) {
+                                            // Has L2 escalation: split the time
+                                            // L1 = Created -> Escalation (no pause)
+                                            // L2 = Escalation -> Resolved (minus pause)
+                                            const l1Mins = Math.floor((escalationTime - creationTime) / 60000);
+                                            const l2ElapsedMins = Math.floor((terminalTime - escalationTime) / 60000);
+                                            const l2Mins = Math.max(0, l2ElapsedMins - totalPausedMins);
+
+                                            finalL1H = l1Mins / 60;
+                                            finalL2H = l2Mins / 60;
                                         } else {
-                                            l1H = Math.max(0, (terminalTime - creationTime) / 3600000);
+                                            // No L2 escalation: all resolution time is L1
+                                            finalL1H = totalResolutionMins / 60;
                                         }
+
+
 
                                         const sla = checkTicketSla(t, statusMap);
 
@@ -701,11 +928,14 @@ const ReportsView: React.FC = () => {
                                                 </td>
                                                 <td className="px-8 py-5 font-bold text-xs">{l1Name}</td>
                                                 <td className="px-8 py-5 font-bold text-xs">{l2Name}</td>
-                                                <td className="px-8 py-5 font-black text-xs text-slate-700 text-center">
-                                                    {l1H.toFixed(1)}
+                                                <td className="px-8 py-5 font-black text-xs text-blue-600 text-center">
+                                                    {formatHandleTime(responseTimeH)}
                                                 </td>
-                                                <td className={`px-8 py-5 font-black text-xs text-center ${l2H > 0 ? 'text-indigo-600' : 'text-slate-400'}`}>
-                                                    {l2H > 0 ? l2H.toFixed(1) : '-'}
+                                                <td className="px-8 py-5 font-black text-xs text-slate-700 text-center">
+                                                    {formatHandleTime(finalL1H)}
+                                                </td>
+                                                <td className={`px-8 py-5 font-black text-xs text-center ${finalL2H > 0 ? 'text-indigo-600' : 'text-slate-400'}`}>
+                                                    {formatHandleTime(finalL2H)}
                                                 </td>
                                                 <td className="px-8 py-5 text-xs font-bold text-slate-400 italic">
                                                     {isResolved ? new Date(t.updated_at).toLocaleString() : '-'}

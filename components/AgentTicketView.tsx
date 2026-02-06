@@ -887,8 +887,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
         const activeSlaType = firstResponseTime ? 'resolution' : 'response';
         const activeTarget = firstResponseTime ? resolutionTarget : responseTarget;
-        const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
-        const stopTime = activityLogs.find(l => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('canceled'))?.created_at;
+
+        // Terminal status detection - case insensitive, handles both Canceled and Cancelled
+        const currentStatusLower = selectedTicket.ticket_statuses?.status_name?.toLowerCase() || '';
+        const isTerminal = ['resolved', 'closed', 'canceled', 'cancelled'].includes(currentStatusLower);
+        const stopTime = activityLogs.find(l => {
+            const actionLower = l.action.toLowerCase();
+            return actionLower.includes('resolved') || actionLower.includes('closed') || actionLower.includes('canceled') || actionLower.includes('cancelled') || (actionLower.includes('status changed') && (actionLower.includes('to resolved') || actionLower.includes('to closed') || actionLower.includes('to canceled') || actionLower.includes('to cancelled')));
+        })?.created_at;
 
         // 4. Calculate Elapsed Time (Aware of Pauses)
         const isPaused = selectedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending');
@@ -901,8 +907,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
             const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), (isTerminal && stopTime) ? new Date(stopTime) : now, schedule);
             activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
         } else {
-            // Response SLA
-            const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
+            // Response SLA - STOP at stopTime if terminal
+            const endTime = (isTerminal && stopTime) ? new Date(stopTime) : now;
+            const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), endTime, schedule);
             activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
         }
 
@@ -1488,39 +1495,114 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     const handleEscalate = async (targetId: string) => {
         if (!selectedTicketId || isTransferring || !targetId) return;
 
-
-
         const targetAgent = allAgents.find(a => a.id === targetId);
         const targetName = targetAgent?.full_name || 'Agent';
 
         // @ts-ignore
         const Swal = (await import('sweetalert2')).default;
+
+        // Show escalation popup with remark input
         const result = await Swal.fire({
-            title: 'Escalate to L2?',
-            text: `Are you sure you want to escalate this ticket to ${targetName}?`,
+            title: 'Escalate to L2',
+            html: `
+                <div class="text-left">
+                    <p class="text-sm text-gray-600 mb-3">Escalating ticket to <strong>${targetName}</strong></p>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Escalation Remark (Internal Note)</label>
+                    <textarea id="escalation-remark" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-400" rows="4" placeholder="Provide context for L2 agent (e.g., what you've tried, why escalating...)"></textarea>
+                </div>
+            `,
             icon: 'warning',
             showCancelButton: true,
-            confirmButtonColor: '#fbbf24',
-            cancelButtonColor: '#d33',
-            confirmButtonText: 'Yes, escalate!'
+            confirmButtonColor: '#f97316',
+            cancelButtonColor: '#6b7280',
+            confirmButtonText: 'Escalate',
+            cancelButtonText: 'Cancel',
+            preConfirm: () => {
+                const remark = (document.getElementById('escalation-remark') as HTMLTextAreaElement)?.value;
+                if (!remark || remark.trim() === '') {
+                    Swal.showValidationMessage('Please provide an escalation remark');
+                    return false;
+                }
+                return remark;
+            }
         });
 
-        if (!result.isConfirmed) return;
+        if (!result.isConfirmed || !result.value) return;
+
+        const escalationRemark = result.value;
 
         setIsTransferring(true);
         try {
+            // 1. Find "In Progress" status ID
+            const inProgressStatus = availableStatuses.find(s => s.status_name === 'In Progress');
+
+            // 2. Update ticket: assign to L2 agent AND set status to In Progress
+            const updateData: any = { assigned_to: targetId };
+            if (inProgressStatus) {
+                updateData.status_id = inProgressStatus.status_id;
+            }
+
             const { error } = await supabase
                 .from('tickets')
-                .update({ assigned_to: targetId })
+                .update(updateData)
                 .eq('id', selectedTicketId);
 
             if (error) throw error;
 
+            // 3. Create Internal Note with escalation remark
+            const senderId = userProfile?.id;
+            if (senderId) {
+                const escalationNote = `[ESCALATION TO L2: ${targetName}]\n\n${escalationRemark}`;
+                await supabase.from('ticket_messages').insert({
+                    ticket_id: selectedTicketId,
+                    sender_id: senderId,
+                    sender_role: 'agent',
+                    content: escalationNote,
+                    is_internal: true
+                });
+            }
+
+            // 4. Log activity
             await supabase.from('ticket_activity_log').insert({
                 ticket_id: selectedTicketId,
                 actor_id: userProfile?.id,
                 action: `Ticket escalated to L2 Agent: ${targetName}`
             });
+
+            // 5. If status changed, log that too
+            if (inProgressStatus) {
+                const previousStatus = selectedTicket?.ticket_statuses?.status_name || 'Unknown';
+                await supabase.from('ticket_activity_log').insert({
+                    ticket_id: selectedTicketId,
+                    actor_id: userProfile?.id,
+                    action: `Status changed from ${previousStatus} to In Progress`
+                });
+            }
+
+            // 6. Send notifications
+            const ticketNumber = selectedTicket?.ticket_number || selectedTicketId;
+
+            // Notify L2 Agent - ticket escalated to them
+            await supabase.from('notifications').insert({
+                user_id: targetId,
+                title: 'Tiket Di-escalate ke Anda',
+                message: `Tiket ${ticketNumber} telah di-escalate ke Anda oleh ${userProfile?.full_name || 'L1 Agent'}. Cek internal note untuk detail.`,
+                type: 'escalation',
+                reference_type: 'ticket',
+                reference_id: selectedTicketId
+            });
+
+            // Notify Requester - their ticket has been escalated
+            if (selectedTicket?.requester_id) {
+                await supabase.from('notifications').insert({
+                    user_id: selectedTicket.requester_id,
+                    title: 'Tiket Anda Di-escalate',
+                    message: `Tiket ${ticketNumber} telah di-escalate ke tim support level 2 untuk penanganan lebih lanjut.`,
+                    type: 'info',
+                    reference_type: 'ticket',
+                    reference_id: selectedTicketId
+                });
+            }
 
             // Refresh activity logs
             const { data: logs } = await supabase
@@ -1529,6 +1611,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 .eq('ticket_id', selectedTicketId)
                 .order('created_at', { ascending: false });
             if (logs) setActivityLogs(logs);
+
+            // Refresh messages to show the internal note
+            const { data: msgs } = await supabase
+                .from('ticket_messages')
+                .select('*, sender:profiles!sender_id(full_name)')
+                .eq('ticket_id', selectedTicketId)
+                .order('created_at', { ascending: true });
+            if (msgs) setMessages(msgs);
 
             // Refresh ticket details
             const { data: updatedTicket } = await supabase
@@ -1539,7 +1629,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
-                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name, roles(role_name)),
                     group:groups!assignment_group_id (id, name, company_id)
                 `)
                 .eq('id', selectedTicketId)
@@ -1550,7 +1640,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
             }
 
-            Swal.fire({ icon: 'success', title: 'Escalated', timer: 1500 });
+            Swal.fire({
+                icon: 'success',
+                title: 'Escalated!',
+                html: `<p>Ticket escalated to <strong>${targetName}</strong></p><p class="text-sm text-gray-500">Status changed to In Progress</p>`,
+                timer: 2000
+            });
         } catch (err: any) {
             console.error('Escalation Error:', err);
             Swal.fire({ icon: 'error', title: 'Escalation Failed', text: err.message });
@@ -2695,6 +2790,52 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     </div>
                                 )}
 
+                                {/* Attachments in Conversation */}
+                                {selectedTicket.ticket_attachments && selectedTicket.ticket_attachments.length > 0 && (
+                                    <div className="flex gap-4 group">
+                                        <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-[11px] font-black flex-shrink-0 text-slate-600 shadow-sm">
+                                            <Paperclip size={14} />
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <span className="text-[13px] font-black text-gray-900">Attachments</span>
+                                                <span className="bg-slate-50 text-slate-500 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
+                                                    <Paperclip size={10} /> {selectedTicket.ticket_attachments.length} Files
+                                                </span>
+                                            </div>
+                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                                {selectedTicket.ticket_attachments.map((file: any, index: number) => {
+                                                    const fileUrl = supabase.storage.from('ticket-attachments').getPublicUrl(file.file_path).data.publicUrl;
+                                                    const isImage = file.mime_type?.startsWith('image/');
+
+                                                    return (
+                                                        <a
+                                                            key={file.id || index}
+                                                            href={fileUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 hover:shadow-md transition-all group/file"
+                                                        >
+                                                            {isImage ? (
+                                                                <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 border border-gray-100">
+                                                                    <img src={fileUrl} alt={file.file_name} className="w-full h-full object-cover" />
+                                                                </div>
+                                                            ) : (
+                                                                <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600 group-hover/file:bg-indigo-600 group-hover/file:text-white transition-colors flex-shrink-0">
+                                                                    <FileText size={18} />
+                                                                </div>
+                                                            )}
+                                                            <div className="flex-1 min-w-0">
+                                                                <p className="text-xs font-bold text-gray-800 truncate group-hover/file:text-indigo-600">{file.file_name}</p>
+                                                                <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">{file.mime_type?.split('/')[1] || 'file'}</p>
+                                                            </div>
+                                                        </a>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                                 {messages.map((msg) => {
                                     const isAgent = msg.sender_role === 'agent';
                                     const isInternal = msg.is_internal;
@@ -3062,6 +3203,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             const totalPausedMinutes = selectedTicket.total_paused_minutes || 0;
                             const pausedAt = selectedTicket.paused_at;
 
+                            // Terminal status detection - case insensitive (MUST be before elapsed calculation)
+                            const slaStatusLower = selectedTicket.ticket_statuses?.status_name?.toLowerCase() || '';
+                            const isTerminal = ['resolved', 'closed', 'canceled', 'cancelled'].includes(slaStatusLower);
+                            const stopTime = activityLogs.find(l => {
+                                const actionLower = l.action.toLowerCase();
+                                return actionLower.includes('resolved') || actionLower.includes('closed') || actionLower.includes('canceled') || actionLower.includes('cancelled') || (actionLower.includes('status changed') && (actionLower.includes('to resolved') || actionLower.includes('to closed') || actionLower.includes('to canceled') || actionLower.includes('to cancelled')));
+                            })?.created_at;
+
                             const getActiveBusinessElapsed = (start: Date, end: Date) => {
                                 let elapsed = calculateBusinessElapsed(start, end, schedule);
                                 elapsed = Math.max(0, elapsed - totalPausedMinutes);
@@ -3072,12 +3221,36 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                 return elapsed;
                             };
 
+                            // Response elapsed - STOP at stopTime if terminal
                             const responseElapsed = firstResponseTime ?
                                 calculateBusinessElapsed(new Date(selectedTicket.created_at), new Date(firstResponseTime), schedule) :
-                                getActiveBusinessElapsed(new Date(selectedTicket.created_at), now);
+                                (isTerminal && stopTime) ?
+                                    getActiveBusinessElapsed(new Date(selectedTicket.created_at), new Date(stopTime)) :
+                                    getActiveBusinessElapsed(new Date(selectedTicket.created_at), now);
 
-                            const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
-                            const stopTime = activityLogs.find(l => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('canceled'))?.created_at;
+                            // Detect L2 Escalation
+                            const escalationLog = activityLogs.find(l => l.action.toLowerCase().includes('escalated to l2'));
+                            const isEscalated = !!escalationLog;
+                            const escalationTime = escalationLog ? new Date(escalationLog.created_at) : null;
+
+                            // Get L1 and L2 agent names from escalation log
+                            const l1Agent = escalationLog ? allAgents.find(a => a.id === escalationLog.actor_id)?.full_name : null;
+                            const l2AgentMatch = escalationLog?.action.match(/escalated to L2 Agent: (.+)/i);
+                            const l2Agent = l2AgentMatch ? l2AgentMatch[1] : selectedTicket.assigned_agent?.full_name;
+
+                            // Calculate L1 and L2 Resolution Times (if escalated)
+                            let l1ResolutionElapsed = 0;
+                            let l2ResolutionElapsed = 0;
+
+                            if (isEscalated && escalationTime) {
+                                // L1 Resolution = Created -> Escalation
+                                l1ResolutionElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), escalationTime, schedule);
+
+                                // L2 Resolution = Escalation -> Resolved (or now if not resolved)
+                                const l2EndTime = stopTime ? new Date(stopTime) : now;
+                                l2ResolutionElapsed = Math.max(0, calculateBusinessElapsed(escalationTime, l2EndTime, schedule) - totalPausedMinutes);
+                            }
+
 
                             // Get SLA escalation mode from department
                             const escalationMode = selectedTicket.group?.company?.sla_escalation_mode || 'immediate';
@@ -3204,37 +3377,90 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                             <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">SLA Status</div>
                                             <div className="flex flex-col gap-1.5 items-end">
                                                 {getStatusBadge(responseStatus, `Response: ${responseStatus === 'met' ? 'MET' : responseStatus === 'breached' ? 'BREACHED' : responseStatus === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`)}
-                                                {getStatusBadge(resolutionStatus, `Resolution: ${resolutionStatus === 'met' ? 'MET' : resolutionStatus === 'breached' ? 'BREACHED' : resolutionStatus === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`)}
+                                                {isEscalated ? (
+                                                    <>
+                                                        {(() => {
+                                                            const l1Status = getStatusSla(l1ResolutionElapsed, effectiveTargetMinutes, !!escalationTime);
+                                                            return getStatusBadge(l1Status, `L1 Resolution: ${l1Status === 'met' ? 'MET' : l1Status === 'breached' ? 'BREACHED' : l1Status === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`);
+                                                        })()}
+                                                        {(() => {
+                                                            const l2Status = getStatusSla(l2ResolutionElapsed, effectiveTargetMinutes, isTerminal);
+                                                            return getStatusBadge(l2Status, `L2 Resolution: ${l2Status === 'met' ? 'MET' : l2Status === 'breached' ? 'BREACHED' : l2Status === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`);
+                                                        })()}
+                                                    </>
+                                                ) : (
+                                                    getStatusBadge(resolutionStatus, `Resolution: ${resolutionStatus === 'met' ? 'MET' : resolutionStatus === 'breached' ? 'BREACHED' : resolutionStatus === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`)
+                                                )}
                                             </div>
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-6">
-                                        <SLACard
-                                            label="First Response"
-                                            target={formatTarget(responseTarget?.target_minutes)}
-                                            actual={firstResponseTime ? `${Math.floor(responseElapsed / 60)}h ${responseElapsed % 60}m` : `${Math.floor(responseElapsed / 60)}h ${responseElapsed % 60}m (Elapsed)`}
-                                            remaining={!firstResponseTime && responseTarget?.target_minutes ? (() => {
-                                                const rem = Math.max(0, responseTarget.target_minutes - responseElapsed);
-                                                return `${Math.floor(rem / 60)}h ${rem % 60}m (Remaining)`;
-                                            })() : undefined}
-                                            status={getStatusSla(responseElapsed, responseTarget?.target_minutes, !!firstResponseTime)}
-                                            percentage={getSlaPercentage(responseElapsed, responseTarget?.target_minutes, !!firstResponseTime)}
-                                            deadline={responseDeadline ? responseDeadline.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
-                                        />
-                                        <SLACard
-                                            label="Resolution"
-                                            target={formatTarget(effectiveTargetMinutes || resolutionTarget?.target_minutes)}
-                                            actual={stopTime ? `${Math.floor(resolutionElapsed / 60)}h ${resolutionElapsed % 60}m` : `${Math.floor(resolutionElapsed / 60)}h ${resolutionElapsed % 60}m (Elapsed)`}
-                                            remaining={!isTerminal && effectiveTargetMinutes ? (() => {
-                                                const rem = Math.max(0, effectiveTargetMinutes - resolutionElapsed);
-                                                return `${Math.floor(rem / 60)}h ${rem % 60}m (Remaining)`;
-                                            })() : undefined}
-                                            status={getStatusSla(resolutionElapsed, effectiveTargetMinutes, isTerminal)}
-                                            percentage={getSlaPercentage(resolutionElapsed, effectiveTargetMinutes, isTerminal)}
-                                            deadline={resolutionDeadline ? resolutionDeadline.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
-                                        />
-                                    </div>
+
+                                    {isEscalated ? (
+                                        /* L1/L2 Split Resolution Cards */
+                                        <div className="grid grid-cols-3 gap-4">
+                                            <SLACard
+                                                label="First Response"
+                                                target={formatTarget(responseTarget?.target_minutes)}
+                                                actual={firstResponseTime ? `${Math.floor(responseElapsed / 60)}h ${responseElapsed % 60}m` : `${Math.floor(responseElapsed / 60)}h ${responseElapsed % 60}m (Elapsed)`}
+                                                remaining={!firstResponseTime && responseTarget?.target_minutes ? (() => {
+                                                    const rem = Math.max(0, responseTarget.target_minutes - responseElapsed);
+                                                    return `${Math.floor(rem / 60)}h ${rem % 60}m (Remaining)`;
+                                                })() : undefined}
+                                                status={getStatusSla(responseElapsed, responseTarget?.target_minutes, !!firstResponseTime)}
+                                                percentage={getSlaPercentage(responseElapsed, responseTarget?.target_minutes, !!firstResponseTime)}
+                                                deadline={responseDeadline ? responseDeadline.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                                            />
+                                            <SLACard
+                                                label={`L1 Resolution${l1Agent ? ` (${l1Agent})` : ''}`}
+                                                target={formatTarget(effectiveTargetMinutes || resolutionTarget?.target_minutes)}
+                                                actual={`${Math.floor(l1ResolutionElapsed / 60)}h ${l1ResolutionElapsed % 60}m`}
+                                                status={getStatusSla(l1ResolutionElapsed, effectiveTargetMinutes, !!escalationTime)}
+                                                percentage={getSlaPercentage(l1ResolutionElapsed, effectiveTargetMinutes, !!escalationTime)}
+                                                deadline={escalationTime ? escalationTime.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                                            />
+                                            <SLACard
+                                                label={`L2 Resolution${l2Agent ? ` (${l2Agent})` : ''}`}
+                                                target={formatTarget(effectiveTargetMinutes || resolutionTarget?.target_minutes)}
+                                                actual={isTerminal ? `${Math.floor(l2ResolutionElapsed / 60)}h ${l2ResolutionElapsed % 60}m` : `${Math.floor(l2ResolutionElapsed / 60)}h ${l2ResolutionElapsed % 60}m (Elapsed)`}
+                                                remaining={!isTerminal && effectiveTargetMinutes ? (() => {
+                                                    const rem = Math.max(0, effectiveTargetMinutes - l2ResolutionElapsed);
+                                                    return `${Math.floor(rem / 60)}h ${rem % 60}m (Remaining)`;
+                                                })() : undefined}
+                                                status={getStatusSla(l2ResolutionElapsed, effectiveTargetMinutes, isTerminal)}
+                                                percentage={getSlaPercentage(l2ResolutionElapsed, effectiveTargetMinutes, isTerminal)}
+                                                deadline={resolutionDeadline ? resolutionDeadline.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                                            />
+                                        </div>
+                                    ) : (
+                                        /* Standard 2-column layout for non-escalated tickets */
+                                        <div className="grid grid-cols-2 gap-6">
+                                            <SLACard
+                                                label="First Response"
+                                                target={formatTarget(responseTarget?.target_minutes)}
+                                                actual={firstResponseTime ? `${Math.floor(responseElapsed / 60)}h ${responseElapsed % 60}m` : `${Math.floor(responseElapsed / 60)}h ${responseElapsed % 60}m (Elapsed)`}
+                                                remaining={!firstResponseTime && responseTarget?.target_minutes ? (() => {
+                                                    const rem = Math.max(0, responseTarget.target_minutes - responseElapsed);
+                                                    return `${Math.floor(rem / 60)}h ${rem % 60}m (Remaining)`;
+                                                })() : undefined}
+                                                status={getStatusSla(responseElapsed, responseTarget?.target_minutes, !!firstResponseTime)}
+                                                percentage={getSlaPercentage(responseElapsed, responseTarget?.target_minutes, !!firstResponseTime)}
+                                                deadline={responseDeadline ? responseDeadline.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                                            />
+                                            <SLACard
+                                                label="Resolution"
+                                                target={formatTarget(effectiveTargetMinutes || resolutionTarget?.target_minutes)}
+                                                actual={stopTime ? `${Math.floor(resolutionElapsed / 60)}h ${resolutionElapsed % 60}m` : `${Math.floor(resolutionElapsed / 60)}h ${resolutionElapsed % 60}m (Elapsed)`}
+                                                remaining={!isTerminal && effectiveTargetMinutes ? (() => {
+                                                    const rem = Math.max(0, effectiveTargetMinutes - resolutionElapsed);
+                                                    return `${Math.floor(rem / 60)}h ${rem % 60}m (Remaining)`;
+                                                })() : undefined}
+                                                status={getStatusSla(resolutionElapsed, effectiveTargetMinutes, isTerminal)}
+                                                percentage={getSlaPercentage(resolutionElapsed, effectiveTargetMinutes, isTerminal)}
+                                                deadline={resolutionDeadline ? resolutionDeadline.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                                            />
+                                        </div>
+                                    )}
 
                                     <div className="pt-6 border-t border-gray-100">
                                         <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">Milestones History</h4>
@@ -3248,17 +3474,34 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                                 <span className="text-gray-800">{new Date(selectedTicket.created_at).toLocaleTimeString()} WIB</span>
                                             </div>
                                             {firstResponseTime && (
-                                                <div className="flex justify-between text-xs font-bold py-2">
+                                                <div className="flex justify-between text-xs font-bold py-2 border-b border-gray-50">
                                                     <span className="text-gray-500">First Response Met</span>
                                                     <span className="text-green-600 font-black">SUCCESS • {new Date(firstResponseTime).toLocaleTimeString()} WIB</span>
                                                 </div>
                                             )}
+                                            {/* L1/L2 Escalation Milestones */}
+                                            {isEscalated && escalationTime && (
+                                                <>
+                                                    <div className="flex justify-between text-xs font-bold py-2 border-b border-orange-100 bg-orange-50/50 px-2 -mx-2 rounded">
+                                                        <span className="text-orange-600">L1 Resolution Complete</span>
+                                                        <span className="text-orange-600 font-black">L1 COMPLETE • {escalationTime.toLocaleTimeString()} WIB</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-xs font-bold py-2 border-b border-orange-100 bg-orange-50/50 px-2 -mx-2 rounded">
+                                                        <span className="text-orange-600">Escalated to L2: {l2Agent}</span>
+                                                        <span className="text-orange-600 font-black">ESCALATED • {escalationTime.toLocaleTimeString()} WIB</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-xs font-bold py-2 border-b border-gray-50">
+                                                        <span className="text-gray-500">L2 Started Working</span>
+                                                        <span className="text-indigo-600 font-black">IN PROGRESS • {escalationTime.toLocaleTimeString()} WIB</span>
+                                                    </div>
+                                                </>
+                                            )}
                                             {isTerminal && stopTime && (
                                                 <div className="flex justify-between text-xs font-bold py-2">
                                                     <span className="text-gray-500">
-                                                        {selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'Ticket Canceled' : 'Resolution Met'}
+                                                        {slaStatusLower.includes('cancel') ? 'Ticket Canceled' : isEscalated ? 'L2 Resolution Met' : 'Resolution Met'}
                                                     </span>
-                                                    <span className={`${selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'text-rose-600' : 'text-indigo-600'} font-black`}>
+                                                    <span className={`${slaStatusLower.includes('cancel') ? 'text-rose-600' : 'text-indigo-600'} font-black`}>
                                                         {selectedTicket.ticket_statuses?.status_name?.toUpperCase()} • {new Date(stopTime).toLocaleTimeString()} WIB
                                                     </span>
                                                 </div>
