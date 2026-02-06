@@ -155,15 +155,33 @@ const ReportsView: React.FC = () => {
                     .in('ticket_id', tIds)
                     .order('created_at', { ascending: true });
 
+                let actorMap = new Map();
+                if (logData && logData.length > 0) {
+                    const uniqueActorIds = [...new Set(logData.map(l => l.actor_id).filter(Boolean))];
+                    const { data: profiles } = await supabase
+                        .from('profiles')
+                        .select('id, full_name, role_id')
+                        .in('id', uniqueActorIds);
+                    if (profiles) {
+                        profiles.forEach(p => actorMap.set(p.id, p));
+                    }
+                }
+
                 if (logError) {
                     console.error('Log fetch error:', logError);
                 } else {
                     console.log('Total logs fetched:', logData?.length);
                 }
 
+                // Attach actor info to logs
+                const logsWithActor = (logData || []).map(l => ({
+                    ...l,
+                    actor: actorMap.get(l.actor_id)
+                }));
+
                 const enrichedTickets = tickets.map((t: any) => ({
                     ...t,
-                    activity_logs: logData?.filter((l: any) => l.ticket_id === t.id) || []
+                    activity_logs: logsWithActor.filter((l: any) => l.ticket_id === t.id)
                 }));
 
                 const ticketsToUse = enrichedTickets;
@@ -312,7 +330,7 @@ const ReportsView: React.FC = () => {
                 .from('tickets')
                 .select(`
                     id, ticket_number, subject, description, priority, created_at, updated_at, ticket_type, 
-                    total_paused_minutes, status_id, category_id, is_category_verified, tags,
+                    total_paused_minutes, status_id, category_id, is_category_verified, tags, requester_id,
                     ticket_statuses!fk_tickets_status (status_name),
                     requester:profiles!fk_tickets_requester (full_name, email),
                     reporter:profiles!fk_tickets_created_by (full_name),
@@ -337,10 +355,30 @@ const ReportsView: React.FC = () => {
 
             // Fetch activity logs for L1/L2 logic and precise timing
             const tIds = tickets.map((t: any) => t.id);
-            const { data: logData } = await supabase
+            const { data: logData, error: logError } = await supabase
                 .from('ticket_activity_log')
-                .select('id, ticket_id, actor_id, action, created_at, actor:profiles!actor_id(full_name, role_id)')
+                .select('id, ticket_id, actor_id, action, created_at')
                 .in('ticket_id', tIds)
+                .order('created_at', { ascending: true });
+
+            // Fetch actor profiles separately for L1/L2 agent names
+            const logActorIds = (logData || []).map((l: any) => l.actor_id);
+            const assignedIds = (tickets || []).map((t: any) => (Array.isArray(t.assigned_agent) ? t.assigned_agent[0] : t.assigned_agent)?.id).filter(Boolean);
+            const uniqueActorIds = [...new Set([...logActorIds, ...assignedIds].filter(Boolean))];
+            const { data: actorProfiles } = await supabase
+                .from('profiles')
+                .select('id, full_name, role_id')
+                .in('id', uniqueActorIds.length > 0 ? uniqueActorIds : ['none']);
+
+            // Create a map for quick lookup
+            const actorMap = new Map((actorProfiles || []).map((p: any) => [p.id, p]));
+
+            // Fetch ticket messages to find first agent response (matching UI calculation)
+            const { data: messageData } = await supabase
+                .from('ticket_messages')
+                .select('id, ticket_id, sender_id, sender_role, is_internal, created_at')
+                .in('ticket_id', tIds)
+                .eq('is_internal', false)
                 .order('created_at', { ascending: true });
 
             const excelHeaders = [
@@ -360,48 +398,158 @@ const ReportsView: React.FC = () => {
                 const isClosed = sName === 'Closed';
                 const categoryPath = ticket.category_id ? getBreadcrumb(ticket.category_id, allCategories) : 'Uncategorized';
 
-                const logs = logData?.filter((l: any) => l.ticket_id === ticket.id) || [];
+                // Filter logs for this ticket - use string comparison to avoid UUID mismatch
+                const logs = logData?.filter((l: any) => String(l.ticket_id) === String(ticket.id)) || [];
                 const creationTime = new Date(ticket.created_at).getTime();
-                const escalationLog = logs.find((l: any) => l.action.toLowerCase().includes('escalated to l2'));
+
+                // Find escalation log - action contains "escalated" and "l2" (more robust matching)
+                // Exclude SLA/Resolution notifications
+                // Find LATEST escalation log - matches AgentTicketView (Latest log)
+                const escalationLog = [...logs].reverse().find((l: any) => {
+                    const actionLower = (l.action || '').toLowerCase();
+                    if (actionLower.includes('notify') || actionLower.includes('triggered') || actionLower.includes('sla')) return false;
+                    return (actionLower.includes('escalated') && actionLower.includes('l2')) ||
+                        actionLower.includes('ticket escalated') ||
+                        actionLower.includes('escalation');
+                });
+
                 const terminalTime = isResolved ? new Date(ticket.updated_at).getTime() : new Date().getTime();
 
-                const resolvedLog = logs.find((l: any) => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('to resolved'));
-                const closedLog = logs.find((l: any) => l.action.toLowerCase().includes('closed') || l.action.toLowerCase().includes('to closed'));
+                // Find resolved/closed logs - action is "Status changed from X to Resolved"
+                const resolvedLog = logs.find((l: any) => {
+                    const actionLower = l.action.toLowerCase();
+                    return actionLower.includes('to resolved') ||
+                        (actionLower.includes('status') && actionLower.includes('resolved'));
+                });
+                const closedLog = logs.find((l: any) => {
+                    const actionLower = l.action.toLowerCase();
+                    return actionLower.includes('to closed') ||
+                        (actionLower.includes('status') && actionLower.includes('closed'));
+                });
 
                 const resolvedAt = resolvedLog ? new Date(resolvedLog.created_at).toLocaleString() : (isResolved ? new Date(ticket.updated_at).toLocaleString() : '-');
                 const closedAt = closedLog ? new Date(closedLog.created_at).toLocaleString() : (isClosed ? new Date(ticket.updated_at).toLocaleString() : '-');
 
                 const totalPausedMins = ticket.total_paused_minutes || 0;
 
-                const l1Roles = [2, 3];
-                const l2Roles = [5];
-                const l1Log = logs.find((l: any) => l1Roles.includes(l.actor?.role_id));
                 const agent = Array.isArray(ticket.assigned_agent) ? ticket.assigned_agent[0] : ticket.assigned_agent;
-                const l1Name = l1Log
-                    ? (((l1Log.actor as any)?.full_name || (l1Log.actor as any)?.[0]?.full_name) || 'L1 Agent')
-                    : (agent?.full_name || 'L1 System');
 
-                const l2FirstAction = logs.find((l: any) => l2Roles.includes(l.actor?.role_id));
-                const l2Name = l2FirstAction
-                    ? ((l2FirstAction.actor as any)?.full_name || (l2FirstAction.actor as any)?.[0]?.full_name)
-                    : (escalationLog ? 'L2 Agent' : (agent?.role_id === 5 ? agent?.full_name : '-'));
+                // Get L1/L2 agent names (matching AgentTicketView logic but with better filtering)
+                const l1Roles = [1, 2, 3]; // Include Admin (1)
+                const l2Roles = [5];
 
-                const firstReplyLog = logs.find((l: any) => l.action.toLowerCase().includes('agent replied'));
-                const firstReplyTime = firstReplyLog ? new Date(firstReplyLog.created_at).getTime() : null;
-                const responseMins = firstReplyTime ? Math.round((firstReplyTime - creationTime) / 60000) : 0;
+                // Helper to check if actor is a real person (not system/bot/notification)
+                const isRealHuman = (profile: any) => {
+                    if (!profile) return false;
+                    const name = (profile.full_name || '').toLowerCase();
+                    return name &&
+                        !name.includes('system') &&
+                        !name.includes('notify') &&
+                        !name.includes('bot') &&
+                        !name.includes('service desk') &&
+                        !name.includes('triggered') &&
+                        !name.includes('sla');
+                };
 
-                const escalationTime = escalationLog ? new Date(escalationLog.created_at).getTime() : null;
-                const totalResMins = Math.max(0, Math.round((terminalTime - creationTime) / 60000) - totalPausedMins);
+                // 1. Identify L1
+                let l1Name = '-';
+                const escalatorProfile = escalationLog ? actorMap.get(escalationLog.actor_id) : null;
 
-                let l1Hrs = 0;
-                let l2Hrs = 0;
-                if (escalationTime && escalationTime > creationTime) {
-                    const l1M = Math.round((escalationTime - creationTime) / 60000);
-                    const l2M = Math.max(0, Math.round((terminalTime - escalationTime) / 60000) - totalPausedMins);
-                    l1Hrs = parseFloat((l1M / 60).toFixed(2));
-                    l2Hrs = parseFloat((l2M / 60).toFixed(2));
+                const l1LogFound = logs.find((l: any) => {
+                    const actor = actorMap.get(l.actor_id);
+                    return l1Roles.includes(actor?.role_id) && isRealHuman(actor);
+                });
+
+                if (escalatorProfile && isRealHuman(escalatorProfile)) {
+                    l1Name = escalatorProfile.full_name;
+                } else if (l1LogFound) {
+                    l1Name = actorMap.get(l1LogFound.actor_id)?.full_name || 'L1 Agent';
                 } else {
-                    l1Hrs = parseFloat((totalResMins / 60).toFixed(2));
+                    if (l1Roles.includes(agent?.role_id) && isRealHuman(agent)) {
+                        l1Name = agent.full_name || 'L1 Agent';
+                    }
+                }
+
+                // L2 Calculation: find first log by L2 roles (excluding creation, must be real human)
+                const l2LogFound = logs.find((l: any) => {
+                    const actor = actorMap.get(l.actor_id);
+                    return l2Roles.includes(actor?.role_id) &&
+                        isRealHuman(actor) &&
+                        !(l.action || '').toLowerCase().includes('created');
+                });
+
+                let l2Name = '-';
+                if (l2LogFound) {
+                    l2Name = actorMap.get(l2LogFound.actor_id)?.full_name || 'L2 Agent';
+                } else if (escalationLog) {
+                    const action = escalationLog.action || '';
+                    const l2Match = action.match(/L2 Agent:\s*(.+)/i);
+                    if (l2Match) {
+                        const matchedName = l2Match[1].trim();
+                        if (matchedName.length < 50 && !matchedName.toLowerCase().includes('notify')) {
+                            l2Name = matchedName;
+                        }
+                    } else if (action.toLowerCase().includes('escalated to')) {
+                        const parts = action.split(':');
+                        if (parts.length > 1) {
+                            const possibleName = parts[1].trim();
+                            if (possibleName.length < 50 && !possibleName.toLowerCase().includes('notify')) {
+                                l2Name = possibleName;
+                            }
+                        }
+                    }
+                }
+
+                if (l2Name === '-' && l2Roles.includes(agent?.role_id) && isRealHuman(agent)) {
+                    l2Name = agent.full_name || 'L2 Agent';
+                }
+
+                // Helper function for HH:MM format
+                const formatToHHMM = (mins: number) => {
+                    const totalMins = Math.round(mins);
+                    const h = Math.floor(Math.abs(totalMins) / 60);
+                    const m = Math.floor(Math.abs(totalMins) % 60);
+                    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+                };
+
+                // Find first agent reply from MESSAGES (matching UI - not from activity log)
+                const ticketMessages = messageData?.filter((m: any) => String(m.ticket_id) === String(ticket.id)) || [];
+                const requesterObj = Array.isArray(ticket.requester) ? ticket.requester[0] : ticket.requester;
+                const requesterId = ticket.requester_id;
+
+                // First response = first non-internal message NOT from requester (i.e., agent reply)
+                const firstAgentMessage = ticketMessages.find((m: any) =>
+                    m.sender_id !== requesterId && m.sender_role === 'agent'
+                );
+                const firstResponseTime = firstAgentMessage ? new Date(firstAgentMessage.created_at).getTime() : null;
+                // Use Math.floor to match UI behavior (truncate, not round)
+                const responseMins = firstResponseTime ? Math.floor((firstResponseTime - creationTime) / 60000) : 0;
+
+                // Find escalation time and terminal time
+                const escalationTime = escalationLog ? new Date(escalationLog.created_at).getTime() : null;
+
+                // Find resolved log for accurate terminal time (stopTime)
+                const resolvedLogTime = resolvedLog ? new Date(resolvedLog.created_at).getTime() : null;
+                const actualTerminalTime = resolvedLogTime || (isResolved ? new Date(ticket.updated_at).getTime() : new Date().getTime());
+
+                // Calculate L1/L2 times in minutes (matching UI calculation - use floor, not round)
+                let l1Mins = 0;
+                let l2Mins = 0;
+                let totalResMins = 0;
+
+                // Total resolution = terminal - creation - paused (calculate directly, not from L1+L2)
+                totalResMins = Math.max(0, Math.floor((actualTerminalTime - creationTime) / 60000) - totalPausedMins);
+
+                if (escalationTime && escalationTime > creationTime) {
+                    const rawL1 = Math.floor((escalationTime - creationTime) / 60000);
+                    const rawL2 = Math.floor((actualTerminalTime - escalationTime) / 60000);
+
+                    // Match SLA Widget: L1 is clock time, L2 absorbs total pause
+                    l1Mins = rawL1;
+                    l2Mins = Math.max(0, rawL2 - totalPausedMins);
+                } else {
+                    l1Mins = totalResMins;
+                    l2Mins = 0;
                 }
 
                 const sla = checkTicketSla(ticket, statusMap);
@@ -431,13 +579,13 @@ const ReportsView: React.FC = () => {
                     new Date(ticket.updated_at).toLocaleString(),
                     resolvedAt,
                     closedAt,
-                    responseMins,
-                    sla.isResponseOverdue ? 'BREACHED' : 'MET',
-                    l1Hrs,
-                    l2Hrs,
-                    parseFloat((totalResMins / 60).toFixed(2)),
-                    totalPausedMins,
-                    sla.isResolveOverdue ? 'BREACHED' : 'MET',
+                    formatToHHMM(responseMins),
+                    sla.isResponseOverdue ? 'OVERDUE' : 'WITHIN SLA',
+                    formatToHHMM(l1Mins),
+                    formatToHHMM(l2Mins),
+                    formatToHHMM(totalResMins),
+                    formatToHHMM(totalPausedMins),
+                    sla.isResolveOverdue ? 'OVERDUE' : 'WITHIN SLA',
                     tagsStr,
                     cleanDesc
                 ];
@@ -840,72 +988,125 @@ const ReportsView: React.FC = () => {
                                         const logs = (t as any).activity_logs || [];
                                         const creationTime = new Date(t.created_at).getTime();
 
-                                        const l1Roles = [2, 3];
+                                        const l1Roles = [1, 2, 3]; // Include Admin (1)
                                         const l2Roles = [5];
-                                        const escalationLog = logs.find((l: any) => l.action.toLowerCase().includes('escalated to l2'));
 
-                                        // 1. Identify L1: Supervisor (2) or Agent (3) OR Escalator
-                                        const l1Log = logs.find((l: any) => l1Roles.includes(l.actor?.role_id)) || escalationLog;
+                                        const isRealHuman = (profile: any) => {
+                                            if (!profile) return false;
+                                            const name = (profile.full_name || '').toLowerCase();
+                                            return name &&
+                                                !name.includes('system') &&
+                                                !name.includes('notify') &&
+                                                !name.includes('bot') &&
+                                                !name.includes('service desk') &&
+                                                !name.includes('triggered') &&
+                                                !name.includes('sla');
+                                        };
+
+                                        // Better Escalation Log Detection (Find LATEST escalation log to match SLA widget logic)
+                                        const escalationLog = [...logs].reverse().find((l: any) => {
+                                            const actionLower = (l.action || '').toLowerCase();
+                                            if (actionLower.includes('notify') || actionLower.includes('triggered') || actionLower.includes('sla')) return false;
+                                            return (actionLower.includes('escalated') && actionLower.includes('l2')) ||
+                                                actionLower.includes('ticket escalated') ||
+                                                actionLower.includes('escalation');
+                                        });
+
                                         const currAgent = Array.isArray((t as any).assigned_agent) ? (t as any).assigned_agent[0] : (t as any).assigned_agent;
-                                        const l1Name = l1Log
-                                            ? ((l1Log.actor as any)?.full_name || (l1Log.actor as any)?.[0]?.full_name || 'L1 Agent')
-                                            : (l1Roles.includes(currAgent?.role_id) ? currAgent?.full_name : 'L1 System');
+
+                                        // 1. Identify L1
+                                        let l1Name = '-';
+                                        const escalatorProfile = escalationLog ? (escalationLog.actor || escalationLog.actor?.[0]) : null;
+
+                                        const l1LogFound = logs.find((l: any) => l1Roles.includes(l.actor?.role_id) && isRealHuman(l.actor));
+
+                                        if (escalatorProfile && isRealHuman(escalatorProfile)) {
+                                            l1Name = escalatorProfile.full_name;
+                                        } else if (l1LogFound) {
+                                            l1Name = (l1LogFound.actor as any)?.full_name || 'L1 Agent';
+                                        } else {
+                                            if (l1Roles.includes(currAgent?.role_id) && isRealHuman(currAgent)) {
+                                                l1Name = currAgent?.full_name || 'L1 Agent';
+                                            }
+                                        }
 
 
-                                        // 2. Identify L2: First work log (skipping creation) OR escalation log
-                                        const l2FirstAction = logs.find((l: any) =>
-                                            l2Roles.includes(l.actor?.role_id) && !l.action.toLowerCase().includes('created')
+                                        // 2. Identify L2: First work log (skipping creation) OR escalation log (must be real human)
+                                        const l2LogFound = logs.find((l: any) =>
+                                            l2Roles.includes(l.actor?.role_id) &&
+                                            isRealHuman(l.actor) &&
+                                            !(l.action || '').toLowerCase().includes('created')
                                         );
-                                        const l2TriggerLog = l2FirstAction || escalationLog;
 
-                                        const l2Name = l2FirstAction
-                                            ? ((l2FirstAction.actor as any)?.full_name || (l2FirstAction.actor as any)?.[0]?.full_name)
-                                            : (escalationLog ? 'L2 Agent' : (l2Roles.includes(currAgent?.role_id) ? currAgent?.full_name : '-'));
+                                        let l2Name = '-';
+                                        if (l2LogFound) {
+                                            l2Name = (l2LogFound.actor as any)?.full_name || 'L2 Agent';
+                                        } else if (escalationLog) {
+                                            const action = escalationLog.action || '';
+                                            const l2Match = action.match(/L2 Agent:\s*(.+)/i);
+                                            if (l2Match) {
+                                                const matchedName = l2Match[1].trim();
+                                                if (matchedName.length < 50 && !matchedName.toLowerCase().includes('notify')) {
+                                                    l2Name = matchedName;
+                                                }
+                                            } else if (action.toLowerCase().includes('escalated to')) {
+                                                const parts = action.split(':');
+                                                if (parts.length > 1) {
+                                                    const possibleName = parts[1].trim();
+                                                    if (possibleName.length < 50 && !possibleName.toLowerCase().includes('notify')) {
+                                                        l2Name = possibleName;
+                                                    }
+                                                }
+                                            }
+                                        }
 
-                                        const escalationTime = l2TriggerLog ? new Date(l2TriggerLog.created_at).getTime() : null;
-                                        const terminalTime = isResolved ? new Date(t.updated_at).getTime() : new Date().getTime();
+                                        if (l2Name === '-' && l2Roles.includes(currAgent?.role_id) && isRealHuman(currAgent)) {
+                                            l2Name = currAgent.full_name || 'L2 Agent';
+                                        }
 
-                                        // === TIMING LOGIC (v4 - Match SLA Widget) ===
-                                        // Sort logs chronologically
+                                        // Find Resolved Log to get accurate terminal time
+                                        const resolvedLog = logs.find((l: any) =>
+                                            (l.action || '').toLowerCase().includes('to resolved') ||
+                                            ((l.action || '').toLowerCase().includes('status') && (l.action || '').toLowerCase().includes('resolved'))
+                                        );
+
+                                        const terminalTime = resolvedLog ? new Date(resolvedLog.created_at).getTime() :
+                                            (isResolved ? new Date(t.updated_at).getTime() : new Date().getTime());
+
+                                        // === TIMING LOGIC (v5 - Split Pause Correcty) ===
                                         const sortedLogs = [...logs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
-                                        // 1. Find First Agent Reply (for Response Time)
+                                        // 1. First Response Time (from logs)
                                         const firstReplyLog = sortedLogs.find((l: any) =>
-                                            l.action.toLowerCase().includes('agent replied')
+                                            (l.action || '').toLowerCase().includes('agent replied')
                                         );
                                         const firstReplyTime = firstReplyLog ? new Date(firstReplyLog.created_at).getTime() : null;
 
-                                        // Response Time: Created -> First Reply (floor to whole minutes)
                                         const responseTimeMs = firstReplyTime ? (firstReplyTime - creationTime) : 0;
-                                        const responseTimeMins = Math.floor(responseTimeMs / 60000); // Convert to whole minutes
-                                        const responseTimeH = responseTimeMins / 60; // Convert to hours for display
+                                        const responseTimeMins = Math.floor(responseTimeMs / 60000);
+                                        const responseTimeH = responseTimeMins / 60;
 
-                                        // 2. L1/L2 Handle Time using total_paused_minutes from DB
-                                        // This matches the SLA widget calculation
+                                        // 2. L1/L2 Handle Time with Pause Splitting
                                         const totalPausedMins = (t as any).total_paused_minutes || 0;
+                                        const escalationTime = escalationLog ? new Date(escalationLog.created_at).getTime() : null;
 
-                                        // L1/L2 Handle Time - SAME formula as SLA widget:
-                                        // Resolution = (Resolved - Created) - total_paused_minutes
-                                        const totalElapsedMins = Math.floor((terminalTime - creationTime) / 60000);
-                                        const totalResolutionMins = Math.max(0, totalElapsedMins - totalPausedMins);
-
-                                        // Check if escalated to L2
                                         let finalL1H = 0;
                                         let finalL2H = 0;
 
                                         if (escalationTime && escalationTime > creationTime) {
-                                            // Has L2 escalation: split the time
-                                            // L1 = Created -> Escalation (no pause)
-                                            // L2 = Escalation -> Resolved (minus pause)
-                                            const l1Mins = Math.floor((escalationTime - creationTime) / 60000);
-                                            const l2ElapsedMins = Math.floor((terminalTime - escalationTime) / 60000);
-                                            const l2Mins = Math.max(0, l2ElapsedMins - totalPausedMins);
+                                            const rawL1Mins = Math.floor((escalationTime - creationTime) / 60000);
+                                            const rawL2Mins = Math.floor((terminalTime - escalationTime) / 60000);
+
+                                            // Match SLA Widget: L1 resolution is clock time, L2 resolution absorbs the pause
+                                            const l1Mins = rawL1Mins;
+                                            const l2Mins = Math.max(0, rawL2Mins - totalPausedMins);
 
                                             finalL1H = l1Mins / 60;
                                             finalL2H = l2Mins / 60;
                                         } else {
-                                            // No L2 escalation: all resolution time is L1
-                                            finalL1H = totalResolutionMins / 60;
+                                            const rawTotalMins = Math.floor((terminalTime - creationTime) / 60000);
+                                            const activeMins = Math.max(0, rawTotalMins - totalPausedMins);
+                                            finalL1H = activeMins / 60;
                                         }
 
 

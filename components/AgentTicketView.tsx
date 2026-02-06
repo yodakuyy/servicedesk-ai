@@ -543,11 +543,16 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         };
         const fetchActivityLogs = async () => {
             if (!selectedTicketId) return;
-            const { data } = await supabase
+            const { data, error } = await supabase
                 .from('ticket_activity_log')
                 .select('*')
                 .eq('ticket_id', selectedTicketId)
                 .order('created_at', { ascending: false });
+
+            if (error) {
+                console.error('Error fetching activity logs:', error);
+                return;
+            }
             if (data) setActivityLogs(data);
         };
         fetchDetails();
@@ -3062,27 +3067,89 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     <div className="space-y-5">
                                         <DetailRow label="Assignment Group" value={selectedTicket.group?.name || '-'} />
                                         {(() => {
-                                            const l1Roles = [2, 3];
+                                            const l1Roles = [1, 2, 3]; // Include Admin (1)
                                             const l2Roles = [5];
-                                            const escalationLog = activityLogs.find(l => l.action.toLowerCase().includes('escalated to l2'));
 
-                                            // L1 Calculation
-                                            const l1Log = activityLogs.find(l => l1Roles.includes(l.actor?.role_id)) || escalationLog;
-                                            const l1Name = l1Log
-                                                ? (l1Log.actor?.full_name || 'L1 Agent')
-                                                : (l1Roles.includes(selectedTicket.assigned_agent?.role_id) ? selectedTicket.assigned_agent.full_name : 'L1 System');
+                                            const getStatusName = (t: any) => {
+                                                const status = t?.ticket_statuses;
+                                                if (Array.isArray(status)) return status[0]?.status_name || '';
+                                                return status?.status_name || '';
+                                            };
 
-                                            // L2 Calculation
-                                            const l2FirstAction = activityLogs.find(l =>
-                                                l2Roles.includes(l.actor?.role_id) && !l.action.toLowerCase().includes('created')
-                                            );
+                                            const isRealHuman = (profile: any) => {
+                                                if (!profile) return false;
+                                                const name = (profile.full_name || '').toLowerCase();
+                                                return name &&
+                                                    !name.includes('system') &&
+                                                    !name.includes('notify') &&
+                                                    !name.includes('bot') &&
+                                                    !name.includes('service desk') &&
+                                                    !name.includes('triggered') &&
+                                                    !name.includes('sla');
+                                            };
+
+                                            const getProfile = (log: any) => {
+                                                if (log.actor) return log.actor;
+                                                return allAgents.find(a => a.id === log.actor_id);
+                                            };
+
+                                            const escalationLog = activityLogs.find(l => {
+                                                const actionLower = (l.action || '').toLowerCase();
+                                                if (actionLower.includes('notify') || actionLower.includes('triggered') || actionLower.includes('sla')) return false;
+                                                return (actionLower.includes('escalated') && actionLower.includes('l2')) ||
+                                                    actionLower.includes('ticket escalated') ||
+                                                    actionLower.includes('escalation');
+                                            });
+
+                                            let l1Name = '-';
+                                            const escalatorProfile = escalationLog ? getProfile(escalationLog) : null;
+
+                                            const l1LogFound = activityLogs.find(l => {
+                                                const prof = getProfile(l);
+                                                return l1Roles.includes(prof?.role_id) && isRealHuman(prof);
+                                            });
+
+                                            if (escalatorProfile && isRealHuman(escalatorProfile)) {
+                                                l1Name = escalatorProfile.full_name;
+                                            } else if (l1LogFound) {
+                                                l1Name = getProfile(l1LogFound).full_name;
+                                            } else {
+                                                const currAgent = selectedTicket.assigned_agent;
+                                                if (l1Roles.includes(currAgent?.role_id) && isRealHuman(currAgent)) {
+                                                    l1Name = currAgent.full_name;
+                                                }
+                                            }
+
+                                            const l2LogFound = activityLogs.find(l => {
+                                                const prof = getProfile(l);
+                                                return l2Roles.includes(prof?.role_id) &&
+                                                    isRealHuman(prof) &&
+                                                    !(l.action || '').toLowerCase().includes('created');
+                                            });
+
                                             let l2Name = '-';
-                                            if (l2FirstAction) {
-                                                l2Name = l2FirstAction.actor?.full_name;
+                                            if (l2LogFound) {
+                                                l2Name = getProfile(l2LogFound).full_name || 'L2 Agent';
                                             } else if (escalationLog) {
-                                                const parts = escalationLog.action.split(':');
-                                                l2Name = parts.length > 1 ? parts[1].trim() : 'L2 Agent';
-                                            } else if (l2Roles.includes(selectedTicket.assigned_agent?.role_id)) {
+                                                const action = escalationLog.action || '';
+                                                const l2Match = action.match(/L2 Agent:\s*(.+)/i);
+                                                if (l2Match) {
+                                                    const matchedName = l2Match[1].trim();
+                                                    if (matchedName.length < 50 && !matchedName.toLowerCase().includes('notify')) {
+                                                        l2Name = matchedName;
+                                                    }
+                                                } else {
+                                                    const parts = action.split(':');
+                                                    if (parts.length > 1) {
+                                                        const possibleName = parts[1].trim();
+                                                        if (possibleName.length < 50 && !possibleName.toLowerCase().includes('notify')) {
+                                                            l2Name = possibleName;
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            if (l2Name === '-' && l2Roles.includes(selectedTicket.assigned_agent?.role_id) && isRealHuman(selectedTicket.assigned_agent)) {
                                                 l2Name = selectedTicket.assigned_agent.full_name;
                                             }
 
@@ -3197,19 +3264,34 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                 return `${mins} Minutes`;
                             };
 
+                            const getStatusName = (t: any) => {
+                                const status = t?.ticket_statuses;
+                                if (Array.isArray(status)) return status[0]?.status_name || '';
+                                return status?.status_name || '';
+                            };
+
                             const firstResponseTime = messages.find(m => !m.is_internal && m.sender_id !== selectedTicket.requester_id)?.created_at;
                             const schedule = selectedTicket.group?.business_hours?.weekly_schedule || [];
-                            const isPaused = selectedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending');
+                            const currentStatusName = getStatusName(selectedTicket);
+                            const isPaused = currentStatusName.toLowerCase().includes('pending');
                             const totalPausedMinutes = selectedTicket.total_paused_minutes || 0;
                             const pausedAt = selectedTicket.paused_at;
 
                             // Terminal status detection - case insensitive (MUST be before elapsed calculation)
-                            const slaStatusLower = selectedTicket.ticket_statuses?.status_name?.toLowerCase() || '';
+                            const slaStatusLower = currentStatusName.toLowerCase();
                             const isTerminal = ['resolved', 'closed', 'canceled', 'cancelled'].includes(slaStatusLower);
-                            const stopTime = activityLogs.find(l => {
-                                const actionLower = l.action.toLowerCase();
-                                return actionLower.includes('resolved') || actionLower.includes('closed') || actionLower.includes('canceled') || actionLower.includes('cancelled') || (actionLower.includes('status changed') && (actionLower.includes('to resolved') || actionLower.includes('to closed') || actionLower.includes('to canceled') || actionLower.includes('to cancelled')));
-                            })?.created_at;
+
+                            // Find termination time from logs (most recent terminal status change)
+                            const stopLog = activityLogs.find(l => {
+                                const actionLower = (l.action || '').toLowerCase();
+                                return actionLower.includes('resolved') ||
+                                    actionLower.includes('closed') ||
+                                    actionLower.includes('canceled') ||
+                                    actionLower.includes('cancelled');
+                            });
+
+                            // Robust stopTime: prefer log, fallback to selectedTicket.resolved_at or updated_at
+                            const stopTime = stopLog?.created_at || (isTerminal ? (selectedTicket.resolved_at || selectedTicket.updated_at) : null);
 
                             const getActiveBusinessElapsed = (start: Date, end: Date) => {
                                 let elapsed = calculateBusinessElapsed(start, end, schedule);
@@ -3229,12 +3311,25 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     getActiveBusinessElapsed(new Date(selectedTicket.created_at), now);
 
                             // Detect L2 Escalation
-                            const escalationLog = activityLogs.find(l => l.action.toLowerCase().includes('escalated to l2'));
+                            const escalationLog = activityLogs.find(l => {
+                                const actionLower = (l.action || '').toLowerCase();
+                                return (actionLower.includes('escalated') && actionLower.includes('l2')) ||
+                                    actionLower.includes('ticket escalated') ||
+                                    actionLower.includes('escalation');
+                            });
+
                             const isEscalated = !!escalationLog;
                             const escalationTime = escalationLog ? new Date(escalationLog.created_at) : null;
 
-                            // Get L1 and L2 agent names from escalation log
-                            const l1Agent = escalationLog ? allAgents.find(a => a.id === escalationLog.actor_id)?.full_name : null;
+                            // Get L1 and L2 agent names
+                            const getProfile = (log: any) => {
+                                if (log.actor) return log.actor;
+                                return allAgents.find(a => a.id === log.actor_id);
+                            };
+
+                            const l1AgentObj = escalationLog ? getProfile(escalationLog) : null;
+                            const l1Agent = l1AgentObj?.full_name || '-';
+
                             const l2AgentMatch = escalationLog?.action.match(/escalated to L2 Agent: (.+)/i);
                             const l2Agent = l2AgentMatch ? l2AgentMatch[1] : selectedTicket.assigned_agent?.full_name;
 
