@@ -16,7 +16,8 @@ import {
     ChevronDown,
     Layout,
     Check,
-    X
+    X,
+    Trash2
 } from 'lucide-react';
 // @ts-ignore
 import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
@@ -24,7 +25,7 @@ import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
 interface CategoryNode {
     id: string;
     name: string;
-    type: 'Incident' | 'Service Request';
+    type: 'Incident' | 'Service Request' | 'Change Request';
     level: number;
     description: string;
     isActive: boolean;
@@ -38,7 +39,7 @@ interface CategoryNode {
 const CategoryManagement: React.FC = () => {
     const [categories, setCategories] = useState<CategoryNode[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [ticketType, setTicketType] = useState<'Incident' | 'Service Request'>('Incident');
+    const [ticketType, setTicketType] = useState<'Incident' | 'Service Request' | 'Change Request'>('Incident');
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -52,7 +53,7 @@ const CategoryManagement: React.FC = () => {
         isActive: true,
         parent_id: null as string | null,
         level: 1,
-        type: 'Incident' as 'Incident' | 'Service Request'
+        type: 'Incident' as 'Incident' | 'Service Request' | 'Change Request'
     });
 
     useEffect(() => {
@@ -145,6 +146,56 @@ const CategoryManagement: React.FC = () => {
             };
             return updateInTree(prev);
         });
+    };
+
+    const handleDelete = async (node: CategoryNode) => {
+        if (node.children && node.children.length > 0) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Cannot Delete',
+                text: 'This category has subcategories. Please delete them first.',
+            });
+            return;
+        }
+
+        const result = await Swal.fire({
+            title: 'Delete Category?',
+            text: `Are you sure you want to delete "${node.name}"? This action cannot be undone.`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#ef4444',
+            cancelButtonColor: '#6b7280',
+            confirmButtonText: 'Yes, delete it'
+        });
+
+        if (result.isConfirmed) {
+            try {
+                const { error } = await supabase
+                    .from('ticket_categories')
+                    .delete()
+                    .eq('id', node.id);
+
+                if (error) throw error;
+
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Deleted!',
+                    text: 'Category has been deleted.',
+                    timer: 1500,
+                    showConfirmButton: false
+                });
+
+                setSelectedNodeId(null);
+                fetchCategories();
+            } catch (error: any) {
+                console.error('Error deleting category:', error);
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Error',
+                    text: error.message || 'Failed to delete category'
+                });
+            }
+        }
     };
 
     const buildTree = (flatNodes: CategoryNode[]): CategoryNode[] => {
@@ -381,20 +432,16 @@ const CategoryManagement: React.FC = () => {
                         <div>
                             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 block">Ticket Type</label>
                             <div className="flex bg-white p-1 rounded-xl border border-gray-200/60 shadow-inner">
-                                <button
-                                    onClick={() => setTicketType('Incident')}
-                                    className={`flex-1 py-2 px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${ticketType === 'Incident' ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}
-                                >
-                                    <div className={`w-2 h-2 rounded-full ${ticketType === 'Incident' ? 'bg-white' : 'bg-indigo-300'}`} />
-                                    Incident
-                                </button>
-                                <button
-                                    onClick={() => setTicketType('Service Request')}
-                                    className={`flex-1 py-2 px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${ticketType === 'Service Request' ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}
-                                >
-                                    <div className={`w-2 h-2 rounded-full ${ticketType === 'Service Request' ? 'bg-white' : 'bg-gray-300'}`} />
-                                    Service Request
-                                </button>
+                                {['Incident', 'Service Request', 'Change Request'].map((type) => (
+                                    <button
+                                        key={type}
+                                        onClick={() => setTicketType(type as any)}
+                                        className={`flex-1 py-2 px-2 rounded-lg text-[10px] md:text-xs font-bold transition-all flex items-center justify-center gap-2 ${ticketType === type ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        <div className={`w-1.5 h-1.5 rounded-full ${ticketType === type ? 'bg-white' : type === 'Incident' ? 'bg-indigo-300' : type === 'Change Request' ? 'bg-orange-300' : 'bg-gray-300'}`} />
+                                        {type}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
@@ -489,6 +536,13 @@ const CategoryManagement: React.FC = () => {
                                         >
                                             <Edit3 size={16} />
                                             Edit
+                                        </button>
+                                        <button
+                                            onClick={() => handleDelete(selectedNode)}
+                                            className="bg-white border border-gray-200 text-gray-400 px-3 py-2 rounded-lg text-xs font-bold hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-all shadow-sm"
+                                            title="Delete Category"
+                                        >
+                                            <Trash2 size={16} />
                                         </button>
                                     </>
                                 )}

@@ -67,6 +67,7 @@ import AutoAssignment from './AutoAssignment';
 import AutoCloseRules from './AutoCloseRules';
 import NotificationSettings from './NotificationSettings';
 import ReportsView from './ReportsView';
+import ServiceRequestFields from './ServiceRequestFields';
 import { useNotifications } from '../hooks/useNotifications';
 import { useRealtimeToast } from '../hooks/useRealtimeToast';
 
@@ -1074,7 +1075,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     }
 
     if (currentView === 'create-incident') {
-      return <RequesterTicketManager userProfile={userProfile} initialView="create" />;
+      return <RequesterTicketManager userProfile={userProfile} initialView="create_incident" />;
     }
 
     if (currentView === 'incidents') {
@@ -1083,7 +1084,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
       if (isRequester) {
         // Requester uses the dedicated RequesterTicketManager
-        return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} />;
+        return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} ticketTypeFilter="incident" />;
       } else {
         // Agent/SPV uses the new Agent Workspace View with tabs
         return <AgentTicketView userProfile={userProfile} initialTicketId={selectedTicketId} />;
@@ -1120,42 +1121,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
     // NEW: Empty Placeholder for Service Requests
     // NEW: Empty Placeholder for Service Requests
+    // NEW: Service Requests - Linked to RequesterTicketManager
     if (currentView === 'service-requests' || currentView === 'my-service-request') {
-      return (
-        <div className="p-8 flex flex-col items-center justify-center h-full text-center">
-          <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
-            <Package size={32} className="text-indigo-400" />
-          </div>
-          <h3 className="text-lg font-bold text-gray-800 mb-2">My Service Requests</h3>
-          <p className="text-gray-500 max-w-md">This module is currently under development. You will be able to manage service requests here soon.</p>
-        </div>
-      );
+      return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} ticketTypeFilter="service_request" />;
     }
 
-    // NEW: My Tickets (Empty Placeholder as requested)
-    if (currentView === 'user-incidents') {
-      return (
-        <div className="p-8 flex flex-col items-center justify-center h-full text-center">
-          <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
-            <Ticket size={32} className="text-indigo-400" />
-          </div>
-          <h3 className="text-lg font-bold text-gray-800 mb-2">My Tickets</h3>
-          <p className="text-gray-500 max-w-md">This view is currently empty. Please use "All Incidents" to manage tickets.</p>
-        </div>
-      );
-    }
-
-    // Placeholder for future Change Request Module
+    // NEW: Change Requests (Escalated Tickets) - Linked to RequesterTicketManager
     if (currentView === 'escalated-tickets') {
-      return (
-        <div className="p-8 flex flex-col items-center justify-center h-full text-center">
-          <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mb-4 text-blue-500">
-            <RefreshCw size={32} />
-          </div>
-          <h3 className="text-lg font-bold text-gray-800 mb-2">Change Request Management</h3>
-          <p className="text-gray-500 max-w-md">This area is being prepared for the Change Request module. Use the Incidents menu to manage all support tickets including escalated ones.</p>
-        </div>
-      );
+      return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} ticketTypeFilter="change_request" />;
     }
 
     if (currentView === 'ticket-detail') {
@@ -1234,17 +1207,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       return <NotificationSettings />;
     }
 
-    if (currentView === 'service-request-fields' || currentView === 'portal-highlights') {
-      const titleMap: any = {
-        'service-request-fields': 'Service Request Fields',
-        'portal-highlights': 'Portal Highlights'
-      };
+    if (currentView === 'service-request-fields') {
+      return <ServiceRequestFields />;
+    }
+
+    if (currentView === 'portal-highlights') {
       return (
         <div className="p-8 flex flex-col items-center justify-center h-full text-center">
           <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
-            <Settings size={32} className="text-indigo-400" />
+            <Globe size={32} className="text-indigo-400" />
           </div>
-          <h3 className="text-lg font-bold text-gray-800 mb-2">{titleMap[currentView]}</h3>
+          <h3 className="text-lg font-bold text-gray-800 mb-2">Portal Highlights</h3>
           <p className="text-gray-500 max-w-md">This settings module is currently under development.</p>
         </div>
       );
@@ -1785,11 +1758,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 return null;
               }
 
-              // Determine badge count
+              // Badge count - removed static placeholders
               let badgeCount = '';
-              if (normalizedName.includes('myincidents') || normalizedName.includes('userincidents')) badgeCount = '2';
-              if (normalizedName.includes('servicerequest')) badgeCount = '3';
-              if (normalizedName.includes('escalated')) badgeCount = '1';
 
               // Label Normalizer (Fix Typos & Format Keys)
               let displayLabel = menu.name;

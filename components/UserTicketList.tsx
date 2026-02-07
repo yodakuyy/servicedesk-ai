@@ -15,12 +15,13 @@ interface Ticket {
 interface UserTicketListProps {
     onNavigate?: (view: string) => void;
     onViewTicket?: (ticketId: string) => void;
-    onCreateTicket?: () => void;
+    onCreateTicket?: (type: 'incident' | 'service_request' | 'change_request') => void;
     userName?: string;
     userId?: string; // NEEDED for filtering
+    ticketTypeFilter?: 'incident' | 'service_request' | 'change_request';
 }
 
-const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicket, onCreateTicket, userName, userId }) => {
+const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicket, onCreateTicket, userName, userId, ticketTypeFilter }) => {
     // State
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -28,6 +29,11 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
     const [statusFilter, setStatusFilter] = useState<string>('');
     const [currentPage, setCurrentPage] = useState(1);
     const [isFilterOpen, setIsFilterOpen] = useState(false);
+
+    // Create Menu State
+    const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+    const createMenuRef = useRef<HTMLDivElement>(null);
+    const filterRef = useRef<HTMLDivElement>(null);
 
     // Stats State
     const [stats, setStats] = useState({
@@ -40,7 +46,6 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
     });
 
     const itemsPerPage = 5;
-    const filterRef = useRef<HTMLDivElement>(null);
 
     // Fetch Tickets from Supabase
     useEffect(() => {
@@ -61,25 +66,40 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                     return;
                 }
 
-                const { data, error } = await supabase
+                let query = supabase
                     .from('tickets')
                     .select(`
-                        id, ticket_number, subject, description, created_at, status_id,
+                        id, ticket_number, subject, description, created_at, status_id, ticket_type,
                         ticket_statuses!fk_tickets_status (status_name)
-                    `)
-                    .or(`requester_id.eq.${targetUserId},created_by.eq.${targetUserId}`)
-                    .order('created_at', { ascending: false });
+                    `);
+
+                // Apply Ticket Type Filter
+                if (ticketTypeFilter) {
+                    query = query.eq('ticket_type', ticketTypeFilter);
+                }
+
+                // Apply User Filter
+                query = query.or(`requester_id.eq.${targetUserId},created_by.eq.${targetUserId}`);
+
+                // Apply Order (After filters)
+                const { data, error } = await query.order('created_at', { ascending: false });
 
                 if (error) throw error;
 
                 if (data) {
-                    const formattedTickets: Ticket[] = data.map((t: any) => ({
+                    // Client-side fallback filter
+                    const validData = ticketTypeFilter
+                        ? data.filter((t: any) => t.ticket_type === ticketTypeFilter)
+                        : data;
+
+                    const formattedTickets: Ticket[] = validData.map((t: any) => ({
                         id: t.id,
                         ticket_number: t.ticket_number,
                         subject: t.subject,
                         description: t.description,
                         created_at: new Date(t.created_at).toLocaleDateString() + ' ' + new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        status: t.ticket_statuses?.status_name || 'Unknown'
+                        status: t.ticket_statuses?.status_name || 'Unknown',
+                        ticket_type: t.ticket_type
                     }));
                     setTickets(formattedTickets);
 
@@ -96,19 +116,25 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                 }
             } catch (err) {
                 console.error("Error fetching user tickets:", err);
+                // Clear data on error to prevent stale data from previous view
+                setTickets([]);
+                setStats({ open: 0, pending: 0, resolved: 0, closed: 0, inProgress: 0, canceled: 0 });
             } finally {
                 setIsLoading(false);
             }
         };
 
         fetchUserTickets();
-    }, [userId]);
+    }, [userId, ticketTypeFilter]);
 
-    // Close filter when clicking outside
+    // Close menus when clicking outside
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
                 setIsFilterOpen(false);
+            }
+            if (createMenuRef.current && !createMenuRef.current.contains(event.target as Node)) {
+                setIsCreateMenuOpen(false);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
@@ -134,12 +160,26 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
         currentPage * itemsPerPage
     );
 
+    const getCreateButtonLabel = () => {
+        if (ticketTypeFilter === 'incident') return 'Create Incident';
+        if (ticketTypeFilter === 'service_request') return 'New Service Request';
+        if (ticketTypeFilter === 'change_request') return 'New Change Request';
+        return 'Create New';
+    };
+
     return (
         <div className="p-8 w-full mx-auto space-y-8">
             {/* Header */}
             <div className="space-y-1">
-                <h1 className="text-3xl font-bold text-gray-900">Hi, {userName || 'User'}!</h1>
-                <p className="text-gray-500">Here are your recent tickets and updates.</p>
+                <h1 className="text-3xl font-bold text-gray-900">
+                    {ticketTypeFilter === 'incident' ? 'My Incidents' :
+                        ticketTypeFilter === 'service_request' ? 'My Service Requests' :
+                            ticketTypeFilter === 'change_request' ? 'Change Requests' :
+                                `Hi, ${userName || 'User'}!`}
+                </h1>
+                <p className="text-gray-500">
+                    {ticketTypeFilter ? `Manage your ${ticketTypeFilter.replace('_', ' ')}s here.` : 'Here are your recent tickets and updates.'}
+                </p>
             </div>
 
             {/* Stats Cards */}
@@ -167,70 +207,92 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                 ))}
             </div>
 
-            {/* Quick Actions Row */}
-            <div className="flex justify-end">
-                <button
-                    onClick={() => onCreateTicket && onCreateTicket()}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-200 text-sm font-medium"
-                >
-                    <Plus size={18} />
-                    Create Incident
-                </button>
-            </div>
-
-            {/* Incidents List Table */}
+            {/* Quick Actions and List */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="p-6 border-b border-gray-100 flex justify-between items-center">
                     <div>
-                        <h3 className="text-lg font-bold text-gray-800">Incidents List</h3>
+                        <h3 className="text-lg font-bold text-gray-800">
+                            {ticketTypeFilter ? `${getCreateButtonLabel().replace('Create ', '').replace('New ', '')} List` : 'All Tickets'}
+                        </h3>
                     </div>
-                    <div className="flex items-center gap-3">
-                        <div className="relative w-96">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+
+                    <div className="flex gap-4 items-center">
+                        {/* Search & Filter */}
+                        <div className="relative w-64">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                             <input
                                 type="text"
-                                placeholder="Search by ticket number or subject..."
+                                placeholder="Search tickets..."
                                 value={filter}
                                 onChange={(e) => setFilter(e.target.value)}
-                                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-gray-50"
+                                className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-gray-50/50"
                             />
                         </div>
-                        <div className="relative" ref={filterRef}>
+
+                        {/* Create Dropdown */}
+                        <div className="relative" ref={createMenuRef}>
                             <button
-                                onClick={() => setIsFilterOpen(!isFilterOpen)}
-                                className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition-all font-medium text-sm ${isFilterOpen ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-gray-200 text-gray-500 bg-white hover:bg-gray-50'}`}
+                                onClick={() => ticketTypeFilter ? (onCreateTicket && onCreateTicket(ticketTypeFilter)) : setIsCreateMenuOpen(!isCreateMenuOpen)}
+                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-200 text-sm font-bold"
                             >
-                                <Filter size={16} />
-                                <span>Filter</span>
+                                <Plus size={16} />
+                                {getCreateButtonLabel()}
                             </button>
 
-                            {isFilterOpen && (
-                                <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl shadow-xl border border-gray-100 p-0 z-20 animate-in fade-in zoom-in-95 duration-200 overflow-hidden">
-                                    <div className="max-h-[70vh] overflow-y-auto p-4 custom-scrollbar">
-                                        {/* Status Filter */}
-                                        <div className="mb-6">
-                                            <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 px-1">Status</div>
-                                            <select
-                                                value={statusFilter}
-                                                onChange={(e) => setStatusFilter(e.target.value)}
-                                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-gray-50/30"
-                                            >
-                                                <option value="">All Statuses</option>
-                                                <option value="Open">Open</option>
-                                                <option value="In Progress">In Progress</option>
-                                                <option value="Pending">Pending</option>
-                                                <option value="Resolved">Resolved</option>
-                                                <option value="Closed">Closed</option>
-                                                <option value="Canceled">Canceled</option>
-                                            </select>
+                            {isCreateMenuOpen && (
+                                <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-30 animate-in fade-in zoom-in-95 duration-200">
+                                    <button
+                                        onClick={() => {
+                                            setIsCreateMenuOpen(false);
+                                            if (onCreateTicket) onCreateTicket('incident');
+                                        }}
+                                        className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-3 transition-colors"
+                                    >
+                                        <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                                            <AlertCircle size={16} />
                                         </div>
-                                    </div>
+                                        <div>
+                                            <div className="leading-tight">Incident</div>
+                                            <div className="text-[10px] text-gray-400 font-normal">Report an issue</div>
+                                        </div>
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setIsCreateMenuOpen(false);
+                                            if (onCreateTicket) onCreateTicket('service_request');
+                                        }}
+                                        className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-3 border-t border-gray-50 transition-colors"
+                                    >
+                                        <div className="p-1.5 bg-green-50 text-green-600 rounded-lg">
+                                            <CheckCircle size={16} />
+                                        </div>
+                                        <div>
+                                            <div className="leading-tight">Service Request</div>
+                                            <div className="text-[10px] text-gray-400 font-normal">Request service or items</div>
+                                        </div>
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setIsCreateMenuOpen(false);
+                                            if (onCreateTicket) onCreateTicket('change_request');
+                                        }}
+                                        className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-3 border-t border-gray-50 transition-colors"
+                                    >
+                                        <div className="p-1.5 bg-orange-50 text-orange-600 rounded-lg">
+                                            <Activity size={16} />
+                                        </div>
+                                        <div>
+                                            <div className="leading-tight">Change Request</div>
+                                            <div className="text-[10px] text-gray-400 font-normal">System modification</div>
+                                        </div>
+                                    </button>
                                 </div>
                             )}
                         </div>
                     </div>
                 </div>
 
+                {/* Table */}
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
                         <thead>
@@ -314,9 +376,9 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                         </button>
                     </div>
                 </div>
-            </div>
+            </div >
 
-        </div>
+        </div >
     );
 };
 

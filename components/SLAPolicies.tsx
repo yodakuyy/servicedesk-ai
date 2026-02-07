@@ -737,7 +737,8 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
                                         case 'ticket_type':
                                             return [
                                                 { value: 'Incident', label: 'Incident' },
-                                                { value: 'Service Request', label: 'Service Request' }
+                                                { value: 'Service Request', label: 'Service Request' },
+                                                { value: 'Change Request', label: 'Change Request' }
                                             ];
                                         default:
                                             return [];
