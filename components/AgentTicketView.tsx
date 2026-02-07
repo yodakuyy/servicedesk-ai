@@ -135,7 +135,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         let currentDate = new Date(startDate);
 
         while (remainingMinutes > 0) {
-            const dayName = currentDate.toLocaleString('en-US', { weekday: 'long' });
+            const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const dayName = dayNames[currentDate.getDay()];
             const dayConfig = schedule.find((d: any) => d.day === dayName);
 
             if (!dayConfig || !dayConfig.isActive) {
@@ -203,7 +204,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         let currentDate = new Date(startDate);
 
         while (currentDate < endDate) {
-            const dayName = currentDate.toLocaleString('en-US', { weekday: 'long' });
+            const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const dayName = dayNames[currentDate.getDay()];
             const dayConfig = schedule.find((d: any) => d.day === dayName);
 
             if (!dayConfig || !dayConfig.isActive) {
@@ -472,6 +474,26 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                     // Client-side filter for L2 agents since deep join filtering is complex in simple queries
                     finalData = data.filter((t: any) => t.assigned_agent?.roles?.role_name?.includes('L2'));
                 }
+
+                // Sort: Active tickets first (Open, In Progress, Pending), then terminal (Closed, Canceled) at bottom
+                // Within each group, sort by updated_at descending
+                const terminalStatuses = ['closed', 'resolved', 'canceled', 'cancelled'];
+                finalData = [...finalData].sort((a, b) => {
+                    const aStatusObj = Array.isArray(a.ticket_statuses) ? a.ticket_statuses[0] : a.ticket_statuses;
+                    const bStatusObj = Array.isArray(b.ticket_statuses) ? b.ticket_statuses[0] : b.ticket_statuses;
+                    const aStatus = (aStatusObj?.status_name || '').toLowerCase();
+                    const bStatus = (bStatusObj?.status_name || '').toLowerCase();
+                    const aIsTerminal = terminalStatuses.includes(aStatus);
+                    const bIsTerminal = terminalStatuses.includes(bStatus);
+
+                    // Active tickets first
+                    if (!aIsTerminal && bIsTerminal) return -1;
+                    if (aIsTerminal && !bIsTerminal) return 1;
+
+                    // Within same group, sort by updated_at descending
+                    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+                });
+
                 setTickets(finalData);
                 // Auto-select first ticket if none selected
                 if (data.length > 0 && !selectedTicketId) {
@@ -896,24 +918,38 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
         // Terminal status detection - case insensitive, handles both Canceled and Cancelled
         const currentStatusLower = selectedTicket.ticket_statuses?.status_name?.toLowerCase() || '';
         const isTerminal = ['resolved', 'closed', 'canceled', 'cancelled'].includes(currentStatusLower);
-        const stopTime = activityLogs.find(l => {
-            const actionLower = l.action.toLowerCase();
-            return actionLower.includes('resolved') || actionLower.includes('closed') || actionLower.includes('canceled') || actionLower.includes('cancelled') || (actionLower.includes('status changed') && (actionLower.includes('to resolved') || actionLower.includes('to closed') || actionLower.includes('to canceled') || actionLower.includes('to cancelled')));
-        })?.created_at;
+
+        // Find the OLDEST terminal log in the history to use as the stop time (Fulfillment Time)
+        // This ensures that if a ticket is Resolved then Closed, we use the Resolution time.
+        const terminalLogs = activityLogs.filter(l => {
+            const actionLower = (l.action || '').toLowerCase();
+            return actionLower.includes('resolved') ||
+                actionLower.includes('closed') ||
+                actionLower.includes('canceled') ||
+                actionLower.includes('cancelled');
+        });
+
+        // Since activityLogs is sorted DESC, the LAST item in terminalLogs is the OLDEST.
+        const oldestTerminalLog = terminalLogs.length > 0 ? terminalLogs[terminalLogs.length - 1] : null;
+        const stopTime = oldestTerminalLog?.created_at;
 
         // 4. Calculate Elapsed Time (Aware of Pauses)
         const isPaused = selectedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending');
         const totalPausedMinutes = selectedTicket.total_paused_minutes || 0;
         const pausedAt = selectedTicket.paused_at;
 
+        // Terminal stop time fallback: prefer stopLog, then resolved_at, then updated_at
+        const effectiveStopTime = stopTime || (isTerminal ? selectedTicket.updated_at : null);
+
         let activeElapsed = 0;
         if (firstResponseTime) {
             // Resolution SLA
-            const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), (isTerminal && stopTime) ? new Date(stopTime) : now, schedule);
+            const endTime = (isTerminal && effectiveStopTime) ? new Date(effectiveStopTime) : now;
+            const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), endTime, schedule);
             activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
         } else {
-            // Response SLA - STOP at stopTime if terminal
-            const endTime = (isTerminal && stopTime) ? new Date(stopTime) : now;
+            // Response SLA - STOP at effectiveStopTime if terminal
+            const endTime = (isTerminal && effectiveStopTime) ? new Date(effectiveStopTime) : now;
             const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), endTime, schedule);
             activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
         }
@@ -2676,8 +2712,20 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                             const activeSlaType = firstResponseTime ? 'Resolution' : 'Response';
                             const activeTarget = firstResponseTime ? resolutionTarget : responseTarget;
-                            const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
-                            const stopTime = activityLogs.find(l => l.action.toLowerCase().includes('resolved') || l.action.toLowerCase().includes('canceled'))?.created_at;
+                            const isTerminal = ['Resolved', 'Closed', 'Canceled', 'Cancelled'].includes(selectedTicket.ticket_statuses?.status_name);
+
+                            // Find termination time from logs (OLDEST terminal status change)
+                            const terminalLogs = activityLogs.filter(l => {
+                                const actionLower = (l.action || '').toLowerCase();
+                                return actionLower.includes('resolved') ||
+                                    actionLower.includes('closed') ||
+                                    actionLower.includes('canceled') ||
+                                    actionLower.includes('cancelled');
+                            });
+                            const oldestTerminalLog = terminalLogs.length > 0 ? terminalLogs[terminalLogs.length - 1] : null;
+
+                            // Robust stopTime with fallbacks
+                            const stopTime = oldestTerminalLog?.created_at || (isTerminal ? selectedTicket.updated_at : null);
 
                             // 4. Calculate Elapsed Time (Aware of Pauses)
                             const isPaused = selectedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending');
@@ -2685,17 +2733,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             const pausedAt = selectedTicket.paused_at;
 
                             let activeElapsed = 0;
-                            if (firstResponseTime) {
-                                // Resolution SLA
-                                const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), stopTime ? new Date(stopTime) : now, schedule);
-                                activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
-                            } else {
-                                // Response SLA
-                                const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), now, schedule);
-                                activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
-                            }
+                            const calculationEndTime = stopTime ? new Date(stopTime) : now;
 
-                            // If currently paused, stop the ticker by using paused_at instead of 'now'
+                            const baseElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), calculationEndTime, schedule);
+                            activeElapsed = Math.max(0, baseElapsed - totalPausedMinutes);
+
+                            // If currently paused, stop the ticker
                             if (isPaused && pausedAt) {
                                 const currentPauseElapsed = calculateBusinessElapsed(new Date(pausedAt), now, schedule);
                                 activeElapsed = Math.max(0, activeElapsed - currentPauseElapsed);
@@ -2703,6 +2746,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                             const targetMins = activeTarget?.target_minutes || 60;
                             const percentage = Math.min(100, (activeElapsed / targetMins) * 100);
+                            const isBreached = activeElapsed > targetMins;
+                            const displayPercentage = isTerminal ? (isBreached ? 100 : (activeElapsed / targetMins) * 100) : percentage;
 
                             const h = Math.floor(activeElapsed / 60);
                             const m = Math.floor(activeElapsed % 60);
@@ -2717,12 +2762,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                         <div className="flex items-center gap-3">
                                             <span
                                                 title="SLA Usage: Percentage of target time consumed (Active work time only)"
-                                                className={`${percentage >= 75 ? 'text-red-500' : 'text-amber-500'} font-black cursor-help`}
+                                                className={`${percentage >= 100 ? 'text-red-500' : percentage >= 75 ? 'text-orange-500' : 'text-amber-500'} font-black cursor-help`}
                                             >
                                                 {Math.floor(percentage)}% Used
                                             </span>
                                             <span
-                                                title={`Time until breach: The maximum time remaining before SLA is violated. Adjusted for business hours ${isPaused ? 'and currently paused.' : ''}`}
+                                                title="Time remaining before SLA breach"
                                                 className="text-indigo-600 font-black flex items-center gap-1 cursor-help"
                                             >
                                                 Remaining: {rh}h {rm}m
@@ -2737,11 +2782,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     </div>
                                     <div className="h-2.5 w-full bg-gray-100 rounded-full overflow-hidden flex shadow-inner">
                                         <div
-                                            className={`h-full transition-all duration-500 ${percentage >= 75 ? 'bg-red-500' :
-                                                percentage >= 50 ? 'bg-amber-500' :
-                                                    'bg-green-500'
+                                            className={`h-full transition-all duration-500 ${percentage >= 100 ? 'bg-red-500' :
+                                                percentage >= 75 ? 'bg-orange-500' :
+                                                    percentage >= 50 ? 'bg-amber-500' :
+                                                        'bg-emerald-500'
                                                 }`}
-                                            style={{ width: `${percentage}%` }}
+                                            style={{ width: `${Math.min(100, percentage)}%` }}
                                         />
                                     </div>
                                 </div>
@@ -3281,17 +3327,20 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             const slaStatusLower = currentStatusName.toLowerCase();
                             const isTerminal = ['resolved', 'closed', 'canceled', 'cancelled'].includes(slaStatusLower);
 
-                            // Find termination time from logs (most recent terminal status change)
-                            const stopLog = activityLogs.find(l => {
+                            // Find termination time from logs (OLDEST terminal status change in current stream)
+                            const terminalStream = activityLogs.filter(l => {
                                 const actionLower = (l.action || '').toLowerCase();
                                 return actionLower.includes('resolved') ||
                                     actionLower.includes('closed') ||
                                     actionLower.includes('canceled') ||
                                     actionLower.includes('cancelled');
                             });
+                            // Since activityLogs is DESC, the LAST in terminalLogs is the OLDEST.
+                            const oldestTerminalLog = terminalStream.length > 0 ? terminalStream[terminalStream.length - 1] : null;
+                            const stopLog = oldestTerminalLog;
 
-                            // Robust stopTime: prefer log, fallback to selectedTicket.resolved_at or updated_at
-                            const stopTime = stopLog?.created_at || (isTerminal ? (selectedTicket.resolved_at || selectedTicket.updated_at) : null);
+                            // Robust stopTime: prefer log, fallback to selectedTicket.updated_at
+                            const stopTime = stopLog?.created_at || (isTerminal ? selectedTicket.updated_at : null);
 
                             const getActiveBusinessElapsed = (start: Date, end: Date) => {
                                 let elapsed = calculateBusinessElapsed(start, end, schedule);
@@ -3310,25 +3359,33 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     getActiveBusinessElapsed(new Date(selectedTicket.created_at), new Date(stopTime)) :
                                     getActiveBusinessElapsed(new Date(selectedTicket.created_at), now);
 
-                            // Detect L2 Escalation
+                            // Robust escalation detection: ONLY check logs for explicit L2 escalation
+                            // Must have BOTH "escalated" AND "l2" in the same action, or specific escalation patterns
                             const escalationLog = activityLogs.find(l => {
                                 const actionLower = (l.action || '').toLowerCase();
-                                return (actionLower.includes('escalated') && actionLower.includes('l2')) ||
-                                    actionLower.includes('ticket escalated') ||
-                                    actionLower.includes('escalation');
+                                // Must explicitly mention L2 escalation
+                                const hasEscalatedToL2 = (actionLower.includes('escalated') && (actionLower.includes('l2') || actionLower.includes('level 2')));
+                                const hasAssignedToL2 = actionLower.includes('assigned to l2');
+                                const hasTransferToL2 = actionLower.includes('transfer') && actionLower.includes('l2');
+                                // Exclude notifications and SLA triggers
+                                const isNotification = actionLower.includes('notify') || actionLower.includes('triggered') || actionLower.includes('sla');
+
+                                return (hasEscalatedToL2 || hasAssignedToL2 || hasTransferToL2) && !isNotification;
                             });
 
+                            // Only consider escalated if there's an explicit escalation LOG (not just current agent role)
                             const isEscalated = !!escalationLog;
                             const escalationTime = escalationLog ? new Date(escalationLog.created_at) : null;
 
                             // Get L1 and L2 agent names
                             const getProfile = (log: any) => {
-                                if (log.actor) return log.actor;
+                                if (!log) return null;
                                 return allAgents.find(a => a.id === log.actor_id);
                             };
 
+                            // L1 Agent is the one who performed escalation
                             const l1AgentObj = escalationLog ? getProfile(escalationLog) : null;
-                            const l1Agent = l1AgentObj?.full_name || '-';
+                            const l1Agent = l1AgentObj?.full_name || (escalationLog ? 'Agent' : '-');
 
                             const l2AgentMatch = escalationLog?.action.match(/escalated to L2 Agent: (.+)/i);
                             const l2Agent = l2AgentMatch ? l2AgentMatch[1] : selectedTicket.assigned_agent?.full_name;
@@ -3338,7 +3395,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             let l2ResolutionElapsed = 0;
 
                             if (isEscalated && escalationTime) {
-                                // L1 Resolution = Created -> Escalation
+                                // L1 Resolution = Created -> Escalation (time spent before L2 handoff)
                                 l1ResolutionElapsed = calculateBusinessElapsed(new Date(selectedTicket.created_at), escalationTime, schedule);
 
                                 // L2 Resolution = Escalation -> Resolved (or now if not resolved)
@@ -3471,20 +3528,21 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                         <div className="text-right">
                                             <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">SLA Status</div>
                                             <div className="flex flex-col gap-1.5 items-end">
-                                                {getStatusBadge(responseStatus, `Response: ${responseStatus === 'met' ? 'MET' : responseStatus === 'breached' ? 'BREACHED' : responseStatus === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`)}
+                                                {getStatusBadge(responseStatus, `Response: ${responseStatus === 'met' ? 'WITHIN SLA' : responseStatus === 'breached' ? 'BREACHED' : responseStatus === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`)}
                                                 {isEscalated ? (
                                                     <>
                                                         {(() => {
-                                                            const l1Status = getStatusSla(l1ResolutionElapsed, effectiveTargetMinutes, !!escalationTime);
-                                                            return getStatusBadge(l1Status, `L1 Resolution: ${l1Status === 'met' ? 'MET' : l1Status === 'breached' ? 'BREACHED' : l1Status === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`);
+                                                            // L1 Resolution is always 'met' once escalated - it's just showing handoff time
+                                                            const l1Status = escalationTime ? 'met' : 'running';
+                                                            return getStatusBadge(l1Status, `L1 Resolution: ${l1Status === 'met' ? 'ESCALATED' : 'IN PROGRESS'}`);
                                                         })()}
                                                         {(() => {
                                                             const l2Status = getStatusSla(l2ResolutionElapsed, effectiveTargetMinutes, isTerminal);
-                                                            return getStatusBadge(l2Status, `L2 Resolution: ${l2Status === 'met' ? 'MET' : l2Status === 'breached' ? 'BREACHED' : l2Status === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`);
+                                                            return getStatusBadge(l2Status, `L2 Resolution: ${l2Status === 'met' ? 'WITHIN SLA' : l2Status === 'breached' ? 'BREACHED' : l2Status === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`);
                                                         })()}
                                                     </>
                                                 ) : (
-                                                    getStatusBadge(resolutionStatus, `Resolution: ${resolutionStatus === 'met' ? 'MET' : resolutionStatus === 'breached' ? 'BREACHED' : resolutionStatus === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`)
+                                                    getStatusBadge(resolutionStatus, `Resolution: ${resolutionStatus === 'met' ? 'WITHIN SLA' : resolutionStatus === 'breached' ? 'BREACHED' : resolutionStatus === 'at_risk' ? 'AT RISK' : 'ON TRACK'}`)
                                                 )}
                                             </div>
                                         </div>
@@ -3507,11 +3565,11 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                                 deadline={responseDeadline ? responseDeadline.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
                                             />
                                             <SLACard
-                                                label={`L1 Resolution${l1Agent ? ` (${l1Agent})` : ''}`}
+                                                label={`L1 Resolution${l1Agent !== '-' ? ` (${l1Agent})` : ''}`}
                                                 target={formatTarget(effectiveTargetMinutes || resolutionTarget?.target_minutes)}
-                                                actual={`${Math.floor(l1ResolutionElapsed / 60)}h ${l1ResolutionElapsed % 60}m`}
-                                                status={getStatusSla(l1ResolutionElapsed, effectiveTargetMinutes, !!escalationTime)}
-                                                percentage={getSlaPercentage(l1ResolutionElapsed, effectiveTargetMinutes, !!escalationTime)}
+                                                actual={`${Math.floor(l1ResolutionElapsed / 60)}h ${Math.floor(l1ResolutionElapsed % 60)}m`}
+                                                status={escalationTime ? 'met' : 'running'}
+                                                percentage={100}
                                                 deadline={escalationTime ? escalationTime.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
                                             />
                                             <SLACard
@@ -3609,29 +3667,53 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
 
                         {activeTab === 'activities' && (
                             <div className="max-w-4xl mx-auto space-y-4">
-                                {activityLogs.map((log) => (
-                                    <div key={log.id} className="flex gap-4 p-4 rounded-xl border border-slate-50 hover:bg-slate-50/50 transition-colors">
-                                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-black text-slate-500">
-                                            {log.actor_id === userProfile?.id ? 'Y' : (log.actor_id ? 'A' : 'S')}
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="flex justify-between items-start">
-                                                <p className="text-[13px] font-bold text-slate-800">{log.action}</p>
-                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
-                                                    {new Date(log.created_at).toLocaleString()}
-                                                </span>
+                                {activityLogs.map((log) => {
+                                    // Replace 'Customer' with 'Requester' in action text
+                                    const actionText = (log.action || '').replace(/Customer/gi, 'Requester');
+
+                                    // Determine if this is a requester action (replied, reopened, etc.)
+                                    const isRequesterAction = actionText.toLowerCase().includes('requester replied') ||
+                                        actionText.toLowerCase().includes('ticket reopened') ||
+                                        actionText.toLowerCase().includes('requester submitted');
+
+                                    // Determine performer name
+                                    let performerName = 'System';
+                                    if (log.action?.toLowerCase().startsWith('system')) {
+                                        performerName = 'System';
+                                    } else if (isRequesterAction) {
+                                        performerName = selectedTicket?.requester?.full_name || 'Requester';
+                                    } else if (log.actor_id === userProfile?.id) {
+                                        performerName = 'You';
+                                    } else {
+                                        performerName = log.actor?.full_name ||
+                                            allAgents.find(a => a.id === log.actor_id)?.full_name ||
+                                            'System';
+                                    }
+
+                                    // Get initial for avatar
+                                    const initial = isRequesterAction
+                                        ? (selectedTicket?.requester?.full_name?.charAt(0) || 'R')
+                                        : (log.actor_id === userProfile?.id ? 'Y' : (log.actor_id ? 'A' : 'S'));
+
+                                    return (
+                                        <div key={log.id} className="flex gap-4 p-4 rounded-xl border border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-black text-slate-500">
+                                                {initial}
                                             </div>
-                                            <p className="text-[11px] text-slate-400 font-medium">
-                                                Performed by {
-                                                    log.actor_id === userProfile?.id ? 'You' :
-                                                        (log.actor?.full_name ||
-                                                            allAgents.find(a => a.id === log.actor_id)?.full_name ||
-                                                            'System / Agent')
-                                                }
-                                            </p>
+                                            <div className="flex-1">
+                                                <div className="flex justify-between items-start">
+                                                    <p className="text-[13px] font-bold text-slate-800">{actionText}</p>
+                                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                                                        {new Date(log.created_at).toLocaleString()}
+                                                    </span>
+                                                </div>
+                                                <p className="text-[11px] text-slate-400 font-medium">
+                                                    Performed by {performerName}
+                                                </p>
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
 
                                 {/* Static Ticket Creation Log */}
                                 <div className="flex gap-4 p-4 rounded-xl border border-slate-50 hover:bg-slate-50/50 transition-colors opacity-75">

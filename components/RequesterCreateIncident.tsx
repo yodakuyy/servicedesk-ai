@@ -152,20 +152,41 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
 
     // Helper to determine Category & Service based on Content (Improved AI Simulation)
     const getSystemClassification = (type: string, subject: string, description: string) => {
-        const text = `${subject} ${description}`.toLowerCase();
-        let catKeyword = '';
-        let svcKeyword = '';
+        const rawText = `${subject} ${description}`.toLowerCase();
 
-        // Broad type handling (still useful as a base filter)
-        switch (type) {
-            case 'software': catKeyword = 'software'; svcKeyword = 'application'; break;
-            case 'hardware': catKeyword = 'hardware'; svcKeyword = 'computing'; break;
-            case 'network': catKeyword = 'network'; svcKeyword = 'network'; break;
-            default: catKeyword = 'access'; svcKeyword = 'general';
-        }
+        // SYNONYM MAPPING (Indo -> Eng)
+        const synonymMap: Record<string, string[]> = {
+            'slow': ['lambat', 'lemot', 'lelet', 'lag', 'lola'],
+            'broken': ['rusak', 'pecah', 'hancur', 'mati'],
+            'unable': ['tidak', 'bisa', 'tak', 'gagal', 'susah', 'gabisa', 'gak'],
+            'access': ['akses', 'buka', 'masuk', 'login'],
+            'connection': ['koneksi', 'jaringan', 'sinyal', 'wifi', 'hubun', 'connect'],
+            'internet': ['wifi', 'net', 'online', 'web'],
+            'printer': ['print', 'ngeprint', 'cetak'],
+            'install': ['pasang', 'setup', 'kerjm'],
+            'error': ['eror', 'fauilure', 'fail']
+        };
 
-        // 1. IMPROVED CATEGORY MATCHING (Scoring System)
-        // We look for the most specific match in the master categories table
+        // Inject synonyms
+        let text = rawText;
+        Object.entries(synonymMap).forEach(([engWord, indoWords]) => {
+            if (indoWords.some(w => rawText.includes(w))) {
+                text += ` ${engWord}`;
+            }
+        });
+
+        // Define Generic Words to Ignore or Downweight
+        const genericWords = new Set([
+            'error', 'issue', 'problem', 'fail', 'failed', 'failure', 'broken', 'rusak', 'tidak', 'bisa',
+            'unable', 'cannot', 'cant', 'not', 'working', 'help', 'support', 'request', 'masalah', 'gagal',
+            'submit', 'submission', 'system', 'aplikasi', 'application' // 'system' and 'app' can be generic context too
+        ]);
+
+        // Define Type-Specific Keywords to Boost
+        const hardwareKeywords = ['hardware', 'laptop', 'desktop', 'printer', 'mouse', 'keyboard', 'monitor', 'screen', 'device', 'equipment', 'pc', 'cpu', 'scanner', 'webcam'];
+        const softwareKeywords = ['software', 'application', 'app', 'login', 'password', 'access', 'email', 'internet', 'slow', 'lambat', 'bug', 'crash'];
+        const networkKeywords = ['network', 'wifi', 'internet', 'connection', 'vpn', 'lan', 'wan', 'signal', 'slow', 'connect'];
+
         let bestCategory = null;
         let highestScore = -1;
 
@@ -173,34 +194,68 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
             const catNameLower = cat.name.toLowerCase();
             let score = 0;
 
-            // Broad Type Match (Base)
-            if (catNameLower.includes(catKeyword)) score += 5;
+            // 1. Initial Boost from Issue Type (Broad Match)
+            // Penalize cross-type matches (e.g. Don't match "Software" category if type is Hardware)
+            if (type === 'hardware') {
+                if (hardwareKeywords.some(k => catNameLower.includes(k))) score += 20; // Strong Boost for Hardware Cats
+                if (catNameLower.includes('software') || catNameLower.includes('application')) score -= 50; // Penalty for Software Cats
+            } else if (type === 'software') {
+                if (softwareKeywords.some(k => catNameLower.includes(k)) || catNameLower.includes('software')) score += 10;
+                if (catNameLower.includes('hardware') || catNameLower.includes('device')) score -= 20;
+            } else if (type === 'network') {
+                if (networkKeywords.some(k => catNameLower.includes(k)) || catNameLower.includes('network')) score += 20;
+            }
 
-            // Specific Keyword Match
-            // Split category name into words and check if they exist in user text
+            // 2. Keyword Match (Content vs Category Name)
+            // Split category name into significant words
             const catWords = catNameLower.split(/[\s-/]+/).filter(w => w.length > 2);
+
             catWords.forEach(word => {
+                // SKIP GENERIC WORDS from scoring
+                if (genericWords.has(word)) return;
+
                 if (text.includes(word)) {
                     score += 10;
                     // Bonus for exact word match
-                    if (text.split(' ').includes(word)) score += 5;
+                    if (text.split(/[\s,.]+/).includes(word)) score += 5;
                 }
             });
 
+            // 3. Keep track of best score
             if (score > highestScore) {
                 highestScore = score;
                 bestCategory = cat;
             }
         });
 
-        // 2. SERVICE MATCHING
+        // Fallback: If score is very low or negative, use a generic/first category
+        if (highestScore <= 0) {
+            // Try to find a "General" category relevant to type, else default
+            if (type === 'hardware') {
+                bestCategory = categories.find(c => c.name.toLowerCase().includes('hardware') || c.name.toLowerCase().includes('general')) || categories[0];
+            } else if (type === 'software') {
+                bestCategory = categories.find(c => c.name.toLowerCase().includes('software') || c.name.toLowerCase().includes('general')) || categories[0];
+            } else {
+                bestCategory = categories[0];
+            }
+        }
+
+        // 2. SERVICE MATCHING (Simple keyword match)
+        // Refine service matching similarly if needed, but keeping simple for now
+        let svcKeyword = 'general';
+        switch (type) {
+            case 'software': svcKeyword = 'application'; break;
+            case 'hardware': svcKeyword = 'computing'; break;
+            case 'network': svcKeyword = 'network'; break;
+        }
+
         const bestService = services.find(s => {
             const svcNameLower = s.name.toLowerCase();
             return text.includes(svcNameLower) || svcNameLower.includes(svcKeyword);
         }) || services[0];
 
         return {
-            category_id: bestCategory?.id || categories[0]?.id || null,
+            category_id: bestCategory?.id || null,
             service_id: bestService?.id || services[0]?.id || null
         };
     };
@@ -717,23 +772,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                             </div>
                         </label>
 
-                        <label className={`flex items-start gap-4 p-4 border rounded-xl cursor-pointer transition-all hover:bg-gray-50 ${issueType === 'other' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-500/20' : 'border-gray-200'}`}>
-                            <input
-                                type="radio"
-                                name="issueType"
-                                value="other"
-                                checked={issueType === 'other'}
-                                onChange={(e) => setIssueType(e.target.value)}
-                                className="mt-1 w-5 h-5 text-indigo-600 border-gray-300 focus:ring-indigo-500 flex-shrink-0"
-                            />
-                            <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                    <MoreHorizontal size={18} className="text-gray-500" />
-                                    <span className="font-semibold text-gray-900">Other</span>
-                                </div>
-                                <p className="text-sm text-gray-500">Not sure or doesn't fit above categories.</p>
-                            </div>
-                        </label>
+
                     </div>
                 </section>
 

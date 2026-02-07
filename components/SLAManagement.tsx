@@ -176,31 +176,69 @@ const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
                 .from('groups')
                 .select('id, sla_policy_id');
 
-            // Fetch ticket counts per group (only active tickets)
-            const { data: ticketCountsData } = await supabase
+            // Fetch tickets with all necessary fields for SLA matching
+            const { data: matchingTickets } = await supabase
                 .from('tickets')
-                .select('assignment_group_id, ticket_statuses!inner(status_name)')
+                .select(`
+                    id,
+                    ticket_type,
+                    priority,
+                    ticket_statuses!inner(status_name),
+                    group:groups!assignment_group_id (
+                        id,
+                        company:company_id (company_name),
+                        group_sla_policies (sla_policy_id)
+                    ),
+                    ticket_categories (name)
+                `)
                 .not('assignment_group_id', 'is', null);
 
-            // Calculate ticket counts per SLA policy
+            // Calculate ticket counts per SLA policy with robust matching
             const ticketCountByPolicy: Record<string, number> = {};
-            if (groupsData && ticketCountsData) {
-                // Create a map of group_id to sla_policy_id
-                const groupPolicyMap = new Map<string, string>();
-                groupsData.forEach((g: any) => {
-                    if (g.sla_policy_id) {
-                        groupPolicyMap.set(g.id, g.sla_policy_id);
-                    }
-                });
 
-                // Count tickets per policy (excluding resolved/closed/canceled)
-                ticketCountsData.forEach((t: any) => {
-                    const statusName = t.ticket_statuses?.status_name;
-                    if (statusName && !['Resolved', 'Closed', 'Canceled'].includes(statusName)) {
-                        const policyId = groupPolicyMap.get(t.assignment_group_id);
-                        if (policyId) {
-                            ticketCountByPolicy[policyId] = (ticketCountByPolicy[policyId] || 0) + 1;
-                        }
+            if (matchingTickets && policiesData) {
+                matchingTickets.forEach((t: any) => {
+                    // Normalize ticket data for matching
+                    const ticketStatus = t.ticket_statuses?.status_name;
+                    // OPTIONAL: Uncomment to exclude terminal tickets if "Used By" means "Actively Used By"
+                    // if (['Resolved', 'Closed', 'Canceled'].includes(ticketStatus)) return;
+
+                    const linkedSlaIds = t.group?.group_sla_policies?.map((ug: any) => ug.sla_policy_id) || [];
+
+                    // Find matching policy for this ticket
+                    const matchingPolicy = policiesData.find((policy: any) => {
+                        // 1. Check Link (Group Link)
+                        if (linkedSlaIds.length > 0 && !linkedSlaIds.includes(policy.id)) return false;
+
+                        // 2. Check Conditions
+                        if (!policy.conditions || !Array.isArray(policy.conditions) || policy.conditions.length === 0) return false;
+
+                        return policy.conditions.every((cond: any) => {
+                            let ticketVal: any;
+                            switch (cond.field) {
+                                case 'company': ticketVal = t.group?.company?.company_name; break;
+                                case 'ticket_type': ticketVal = t.ticket_type; break;
+                                case 'category': ticketVal = t.ticket_categories?.name; break;
+                                case 'priority': ticketVal = t.priority; break;
+                                default: return false;
+                            }
+
+                            if (!ticketVal) return false;
+
+                            const valLower = String(cond.value).toLowerCase();
+                            const ticketValLower = String(ticketVal).toLowerCase();
+
+                            if (cond.operator === 'equals') return ticketValLower === valLower;
+                            if (cond.operator === 'not_equals') return ticketValLower !== valLower;
+                            if (cond.operator === 'in') return valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+                            if (cond.operator === 'not_in') return !valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+
+                            return false;
+                        });
+                    });
+
+                    if (matchingPolicy) {
+                        ticketCountByPolicy[matchingPolicy.id] = (ticketCountByPolicy[matchingPolicy.id] || 0) + 1;
                     }
                 });
             }

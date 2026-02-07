@@ -105,6 +105,8 @@ const ReportsView: React.FC = () => {
     const [statusMap, setStatusMap] = useState<Record<string, string>>({});
     const [isExporting, setIsExporting] = useState(false);
     const [drillDown, setDrillDown] = useState<{ title: string, tickets: any[] } | null>(null);
+    const [exportTicketType, setExportTicketType] = useState<'all' | 'incident' | 'service' | 'change'>('all');
+    const [slaTicketType, setSlaTicketType] = useState<'all' | 'incident' | 'service' | 'change'>('all');
 
     // Pagination States
     const [exportPage, setExportPage] = useState(1);
@@ -114,16 +116,16 @@ const ReportsView: React.FC = () => {
     const itemsPerPage = 10;
 
     // Reset pages on state changes
-    useEffect(() => { setExportPage(1); }, [exportSearch, exportStatus, dateRange]);
-    useEffect(() => { setSlaPage(1); }, [dateRange]);
+    useEffect(() => { setExportPage(1); }, [exportSearch, exportStatus, dateRange, exportTicketType]);
+    useEffect(() => { setSlaPage(1); }, [dateRange, slaTicketType]);
     useEffect(() => { setDrillDownPage(1); }, [drillDown]);
     useEffect(() => { setBreachPage(1); }, [isBreachModalOpen]);
     useEffect(() => { setExportPage(1); setSlaPage(1); }, [activeTab]);
 
     const checkTicketSla = (t: any, policies: any[] = [], targets: any[] = []) => {
         const sName = (t.ticket_statuses?.status_name || (Array.isArray(t.ticket_statuses) ? t.ticket_statuses[0]?.status_name : null))?.toLowerCase();
-        const isCanceled = sName === 'canceled';
-        const isTerminal = ['resolved', 'closed'].includes(sName);
+        const isCanceled = sName === 'canceled' || sName === 'cancelled';
+        const isTerminal = ['resolved', 'closed', 'canceled', 'cancelled'].includes(sName);
 
         // 1. Find Matching Policy
         const matchingPolicy = policies.find(policy => {
@@ -165,8 +167,17 @@ const ReportsView: React.FC = () => {
         const isResponseOverdue = !isCanceled && respElapsed > respTarget;
 
         // 3. Resolution SLA
-        const stopLog = (t.activity_logs || []).find((l: any) => l.action?.toLowerCase().includes('resolved') || l.action?.toLowerCase().includes('canceled'));
-        const resolutionTime = stopLog ? new Date(stopLog.created_at) : (isTerminal ? new Date(t.updated_at) : new Date());
+        const stopLog = (t.activity_logs || []).find((l: any) => {
+            const actionLower = (l.action || '').toLowerCase();
+            return actionLower.includes('resolved') ||
+                actionLower.includes('closed') ||
+                actionLower.includes('canceled') ||
+                actionLower.includes('cancelled');
+        });
+
+        // Terminal stop time fallback: prefer stopLog, then updated_at
+        const effectiveStopTime = stopLog?.created_at || (isTerminal ? t.updated_at : null);
+        const resolutionTime = effectiveStopTime ? new Date(effectiveStopTime) : new Date();
 
         let resolveElapsed = calculateBusinessElapsed(startTime, resolutionTime, schedule);
         const netResolve = Math.max(0, resolveElapsed - (t.total_paused_minutes || 0));
@@ -410,8 +421,8 @@ const ReportsView: React.FC = () => {
                 })).sort((a, b) => b.count - a.count).slice(0, 5);
                 setCategoryTrends(catChartData);
 
-                // E. Recent Tickets (For export table preview)
-                setRecentTickets(enrichedTickets);
+                // E. Recent Tickets (For export table preview) - Use validTickets to match stats (exclude canceled)
+                setRecentTickets(validTickets);
             }
         } catch (err) {
             console.error('Error fetching reports data:', err);
@@ -432,6 +443,7 @@ const ReportsView: React.FC = () => {
 
     const filteredExportTickets = recentTickets.filter(t => {
         const sName = ((t as any).ticket_statuses?.status_name || (t as any).ticket_statuses?.[0]?.status_name) || 'Open';
+        const ticketType = (t.ticket_type || '').toLowerCase();
 
         const matchesSearch = t.ticket_number?.toLowerCase().includes(exportSearch.toLowerCase()) ||
             t.subject?.toLowerCase().includes(exportSearch.toLowerCase()) ||
@@ -439,8 +451,13 @@ const ReportsView: React.FC = () => {
 
         const matchesStatus = exportStatus === 'All' || sName.toLowerCase() === exportStatus.toLowerCase();
 
-        return matchesSearch && matchesStatus;
-    });
+        const matchesTicketType = exportTicketType === 'all' ||
+            (exportTicketType === 'incident' && ticketType === 'incident') ||
+            (exportTicketType === 'service' && (ticketType === 'service request' || ticketType === 'request')) ||
+            (exportTicketType === 'change' && (ticketType === 'change request' || ticketType === 'change'));
+
+        return matchesSearch && matchesStatus && matchesTicketType;
+    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
     // SLA Tab Analytics
     const slaDetailsData = React.useMemo(() => {
@@ -1215,6 +1232,16 @@ const ReportsView: React.FC = () => {
                             <option value="Closed">Closed</option>
                             <option value="Canceled">Canceled</option>
                         </select>
+                        <select
+                            value={exportTicketType}
+                            onChange={(e: any) => setExportTicketType(e.target.value)}
+                            className="px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-600 outline-none transition-all cursor-pointer hover:border-indigo-400"
+                        >
+                            <option value="all">All Types</option>
+                            <option value="incident">Incidents</option>
+                            <option value="service">Service Requests</option>
+                            <option value="change">Change Requests</option>
+                        </select>
                     </div>
 
                     <div className="overflow-x-auto min-h-[400px] relative">
@@ -1626,9 +1653,25 @@ const ReportsView: React.FC = () => {
 
                         {/* SLA Performance Details Table */}
                         <div className="bg-white rounded-[40px] border border-slate-100 shadow-sm overflow-hidden mt-8">
-                            <div className="px-8 py-6 border-b border-slate-50">
-                                <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">SLA Performance Details</h3>
-                                <p className="text-sm font-medium text-slate-500 mt-1">Detailed SLA metrics for all tickets in the selected period</p>
+                            <div className="px-8 py-6 border-b border-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                                <div>
+                                    <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">SLA Performance Details</h3>
+                                    <p className="text-sm font-medium text-slate-500 mt-1">Detailed SLA metrics for all tickets in the selected period</p>
+                                </div>
+                                <div className="flex bg-slate-100 p-1 rounded-xl">
+                                    {['all', 'incident', 'service', 'change'].map((type) => (
+                                        <button
+                                            key={type}
+                                            onClick={() => setSlaTicketType(type as any)}
+                                            className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${slaTicketType === type
+                                                ? 'bg-white text-indigo-600 shadow-sm'
+                                                : 'text-slate-500 hover:text-slate-700'
+                                                }`}
+                                        >
+                                            {type === 'all' ? 'All' : type === 'service' ? 'Service Req' : type === 'change' ? 'Change Req' : 'Incidents'}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left whitespace-nowrap">
@@ -1637,14 +1680,15 @@ const ReportsView: React.FC = () => {
                                             <th className="px-8 py-4">Ticket</th>
                                             <th className="px-8 py-4">Priority</th>
                                             <th className="px-8 py-4 text-center">Response SLA</th>
-                                            <th className="px-8 py-4 text-center">Resolution SLA</th>
+                                            <th className="px-8 py-4 text-center">L1 Resolution</th>
+                                            <th className="px-8 py-4 text-center">L2 Resolution</th>
                                             <th className="px-8 py-4 text-right">Net Resolution</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-50">
                                         {recentTickets.length === 0 ? (
                                             <tr>
-                                                <td colSpan={5} className="px-8 py-20 text-center text-slate-400 italic text-sm font-medium">
+                                                <td colSpan={6} className="px-8 py-20 text-center text-slate-400 italic text-sm font-medium">
                                                     No tickets found for SLA tracking.
                                                 </td>
                                             </tr>
@@ -1652,11 +1696,56 @@ const ReportsView: React.FC = () => {
                                             recentTickets
                                                 .filter((t: any) => {
                                                     const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase();
-                                                    return sName !== 'canceled';
+                                                    const ticketType = (t.ticket_type || '').toLowerCase();
+
+                                                    const matchesType = slaTicketType === 'all' ||
+                                                        (slaTicketType === 'incident' && ticketType === 'incident') ||
+                                                        (slaTicketType === 'service' && (ticketType === 'service request' || ticketType === 'request')) ||
+                                                        (slaTicketType === 'change' && (ticketType === 'change request' || ticketType === 'change'));
+
+                                                    return sName !== 'canceled' && matchesType;
                                                 })
+                                                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
                                                 .slice((slaPage - 1) * itemsPerPage, slaPage * itemsPerPage)
                                                 .map((t: any) => {
                                                     const sla = checkTicketSla(t, slaPolicies, slaTargets);
+
+                                                    // Check if ticket was escalated to L2 (strict detection)
+                                                    const logs = t.activity_logs || [];
+                                                    const escalationLog = logs.find((l: any) => {
+                                                        const actionLower = (l.action || '').toLowerCase();
+                                                        // Must explicitly mention L2 escalation
+                                                        const hasEscalatedToL2 = (actionLower.includes('escalated') && (actionLower.includes('l2') || actionLower.includes('level 2')));
+                                                        const hasAssignedToL2 = actionLower.includes('assigned to l2');
+                                                        const hasTransferToL2 = actionLower.includes('transfer') && actionLower.includes('l2');
+                                                        // Exclude notifications and SLA triggers
+                                                        const isNotification = actionLower.includes('notify') || actionLower.includes('triggered') || actionLower.includes('sla');
+
+                                                        return (hasEscalatedToL2 || hasAssignedToL2 || hasTransferToL2) && !isNotification;
+                                                    });
+                                                    const isEscalated = !!escalationLog;
+
+                                                    // Calculate L2 resolution time if escalated
+                                                    let l2Status = 'n/a';
+                                                    if (isEscalated) {
+                                                        const escalationTime = new Date(escalationLog.created_at).getTime();
+                                                        const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase();
+                                                        const isTerminal = ['resolved', 'closed'].includes(sName);
+
+                                                        const terminalLog = logs.find((l: any) => {
+                                                            const actionLower = (l.action || '').toLowerCase();
+                                                            return actionLower.includes('resolved') || actionLower.includes('closed');
+                                                        });
+
+                                                        const endTime = terminalLog ? new Date(terminalLog.created_at).getTime() :
+                                                            (isTerminal ? new Date(t.updated_at).getTime() : Date.now());
+
+                                                        const l2ElapsedMins = Math.max(0, (endTime - escalationTime) / 60000 - (t.total_paused_minutes || 0));
+                                                        const l2TargetMins = sla.baseTarget || 480;
+
+                                                        l2Status = l2ElapsedMins > l2TargetMins ? 'overdue' : 'within';
+                                                    }
+
                                                     return (
                                                         <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
                                                             <td className="px-8 py-4">
@@ -1675,13 +1764,22 @@ const ReportsView: React.FC = () => {
                                                             </td>
                                                             <td className="px-8 py-4 text-center">
                                                                 <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-lg ${sla.isResponseOverdue ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                                                                    {sla.isResponseOverdue ? 'Overdue' : 'Met'}
+                                                                    {sla.isResponseOverdue ? 'Overdue' : 'Within SLA'}
                                                                 </span>
                                                             </td>
                                                             <td className="px-8 py-4 text-center">
                                                                 <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-lg ${sla.isResolveOverdue ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                                                                    {sla.isResolveOverdue ? 'Overdue' : 'Met'}
+                                                                    {sla.isResolveOverdue ? 'Overdue' : 'Within SLA'}
                                                                 </span>
+                                                            </td>
+                                                            <td className="px-8 py-4 text-center">
+                                                                {isEscalated ? (
+                                                                    <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-lg ${l2Status === 'overdue' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                                                                        {l2Status === 'overdue' ? 'Overdue' : 'Within SLA'}
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase bg-slate-50 px-3 py-1 rounded-lg">L1 Only</span>
+                                                                )}
                                                             </td>
                                                             <td className="px-8 py-4 text-right">
                                                                 <span className="text-xs font-black text-slate-700">

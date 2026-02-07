@@ -124,7 +124,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                 await supabase.from('ticket_activity_log').insert({
                     ticket_id: ticketId,
                     actor_id: user.id,
-                    action: 'Customer replied - Ticket Reopened'
+                    action: 'Requester replied - Ticket Reopened'
                 });
             }
 

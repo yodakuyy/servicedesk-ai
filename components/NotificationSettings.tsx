@@ -74,7 +74,7 @@ const NotificationSettings: React.FC = () => {
         },
         {
             id: 'customer_reply',
-            label: 'Customer Replied',
+            label: 'Requester Replied',
             description: 'When a customer replies to your ticket',
             enabled: true,
             channels: { email: true, push: true, inApp: true }

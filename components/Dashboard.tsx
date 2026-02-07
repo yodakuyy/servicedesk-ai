@@ -302,7 +302,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         const activityLogs = ticketsToClose.map(t => ({
           ticket_id: t.id,
           action: 'System auto-closed ticket after 24 hours in Resolved status.',
-          actor_id: userProfile?.id || null // System action, but attribute to current user if possible or use null
+          actor_id: null // System action, do not attribute to specific user
         }));
 
         await supabase.from('ticket_activity_log').insert(activityLogs);
