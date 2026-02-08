@@ -16,9 +16,12 @@ import {
     Bell,
     Timer,
     Archive,
-    TrendingDown
+    TrendingDown,
+    Play,
+    AlertCircle
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { processAutoCloseRules, previewAutoClose } from '../lib/autoClose';
 
 interface AutoCloseRule {
     id: string;
@@ -94,6 +97,46 @@ const AutoCloseRules: React.FC = () => {
         ticketsClosedToday: 0,
         avgCloseTime: 0
     });
+
+    // Run Now state
+    const [isRunning, setIsRunning] = useState(false);
+    const [runResult, setRunResult] = useState<{
+        show: boolean;
+        processed: number;
+        closed: number;
+        errors: string[];
+    } | null>(null);
+
+    // Handler for manual Run Now
+    const handleRunNow = async () => {
+        setIsRunning(true);
+        setRunResult(null);
+
+        try {
+            const result = await processAutoCloseRules();
+            setRunResult({
+                show: true,
+                processed: result.processed,
+                closed: result.closed,
+                errors: result.errors
+            });
+
+            // Refresh data after running
+            fetchData();
+
+            // Auto-hide result after 10 seconds
+            setTimeout(() => setRunResult(null), 10000);
+        } catch (error: any) {
+            setRunResult({
+                show: true,
+                processed: 0,
+                closed: 0,
+                errors: [error.message || 'Unknown error occurred']
+            });
+        } finally {
+            setIsRunning(false);
+        }
+    };
 
     useEffect(() => {
         fetchData();
@@ -405,6 +448,35 @@ const AutoCloseRules: React.FC = () => {
 
     return (
         <div className="p-8 max-w-7xl mx-auto">
+            {/* Run Result Notification */}
+            {runResult?.show && (
+                <div className={`mb-6 p-4 rounded-xl flex items-start gap-3 ${runResult.errors.length > 0
+                        ? 'bg-red-50 border border-red-200'
+                        : 'bg-green-50 border border-green-200'
+                    }`}>
+                    {runResult.errors.length > 0 ? (
+                        <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+                    ) : (
+                        <CheckCircle2 size={20} className="text-green-600 flex-shrink-0 mt-0.5" />
+                    )}
+                    <div className="flex-1">
+                        <p className={`font-medium ${runResult.errors.length > 0 ? 'text-red-800' : 'text-green-800'}`}>
+                            Auto-Close Complete
+                        </p>
+                        <p className={`text-sm mt-1 ${runResult.errors.length > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            Processed {runResult.processed} tickets, closed {runResult.closed} tickets.
+                            {runResult.errors.length > 0 && ` (${runResult.errors.length} errors)`}
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => setRunResult(null)}
+                        className="text-gray-400 hover:text-gray-600"
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+            )}
+
             {/* Header */}
             <div className="mb-8 flex items-center justify-between">
                 <div>
@@ -414,13 +486,32 @@ const AutoCloseRules: React.FC = () => {
                     </h1>
                     <p className="text-gray-500 mt-1">Automatically close stale or resolved tickets</p>
                 </div>
-                <button
-                    onClick={() => handleOpenModal()}
-                    className="px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 font-medium shadow-lg shadow-indigo-200"
-                >
-                    <Plus size={18} />
-                    Create Rule
-                </button>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={handleRunNow}
+                        disabled={isRunning}
+                        className="px-4 py-2.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors flex items-center gap-2 font-medium shadow-lg shadow-orange-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isRunning ? (
+                            <>
+                                <RefreshCw size={18} className="animate-spin" />
+                                Running...
+                            </>
+                        ) : (
+                            <>
+                                <Play size={18} />
+                                Run Now
+                            </>
+                        )}
+                    </button>
+                    <button
+                        onClick={() => handleOpenModal()}
+                        className="px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 font-medium shadow-lg shadow-indigo-200"
+                    >
+                        <Plus size={18} />
+                        Create Rule
+                    </button>
+                </div>
             </div>
 
             {/* Stats Cards */}

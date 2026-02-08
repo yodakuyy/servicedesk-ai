@@ -211,9 +211,62 @@ const EscalationRules: React.FC = () => {
     const [ruleToToggle, setRuleToToggle] = useState<EscalationRule | null>(null);
     const [showPreview, setShowPreview] = useState(false);
 
+    // Run Now state
+    const [isRunning, setIsRunning] = useState(false);
+    const [runResult, setRunResult] = useState<{
+        show: boolean;
+        processed: number;
+        triggered: number;
+        success: boolean;
+    } | null>(null);
+
     // Pagination
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 10;
+
+    // Handler for manual Run Now
+    const handleRunNow = async () => {
+        setIsRunning(true);
+        setRunResult(null);
+
+        try {
+            // Try the new escalation_rules function first
+            let result = await supabase.rpc('process_escalation_rules');
+
+            if (result.error) {
+                // Fallback to existing sla_percentage_escalations
+                result = await supabase.rpc('check_sla_percentage_escalations');
+            }
+
+            if (result.error) {
+                throw result.error;
+            }
+
+            const data = result.data as any;
+            setRunResult({
+                show: true,
+                processed: data?.processed || data?.processed_tickets || 0,
+                triggered: data?.triggered || data?.notifications_sent || 0,
+                success: true
+            });
+
+            // Refresh data after running
+            fetchData();
+
+            // Auto-hide result after 10 seconds
+            setTimeout(() => setRunResult(null), 10000);
+        } catch (error: any) {
+            setRunResult({
+                show: true,
+                processed: 0,
+                triggered: 0,
+                success: false
+            });
+            console.error('Error running escalation check:', error);
+        } finally {
+            setIsRunning(false);
+        }
+    };
 
     useEffect(() => { fetchData(); }, []);
 
@@ -244,7 +297,7 @@ const EscalationRules: React.FC = () => {
                 .from('sla_escalations')
                 .select(`
                     *,
-                    policy:policy_id(id, name)
+                    policy:sla_policy_id(id, name)
                 `)
                 .order('created_at', { ascending: false });
 
@@ -256,7 +309,7 @@ const EscalationRules: React.FC = () => {
                 const transformedRules: EscalationRule[] = escalationsData.map((esc: any) => ({
                     id: esc.id?.toString(),
                     name: esc.name || 'Unnamed Rule',
-                    sla_policy_id: esc.policy_id?.toString() || '',
+                    sla_policy_id: esc.sla_policy_id?.toString() || '',
                     sla_policy_name: esc.policy?.name || 'Unknown Policy',
                     sla_type: esc.sla_type || 'response',
                     trigger_type: esc.trigger_type || 'percentage',
@@ -345,10 +398,13 @@ const EscalationRules: React.FC = () => {
         try {
             const dataToSave: any = {
                 name: formData.name,
-                policy_id: formData.sla_policy_id,
+                sla_policy_id: formData.sla_policy_id,
                 sla_type: formData.sla_type,
                 trigger_type: formData.trigger_type,
                 trigger_value: formData.trigger_value,
+                // Required columns
+                trigger_percentage: formData.trigger_type === 'percentage' ? formData.trigger_value : 100,
+                action_type: formData.actions.length > 0 ? formData.actions[0].type : 'notify_supervisor',
                 trigger_source: formData.trigger_source,
                 actions: formData.actions,
                 notification_channels: formData.notification_channels,
@@ -443,8 +499,46 @@ const EscalationRules: React.FC = () => {
                                 className="w-full sm:w-64 pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
                         </div>
                         <button onClick={fetchData} className="p-2.5 border border-gray-200 rounded-lg hover:bg-gray-50"><RefreshCw size={18} className={loading ? 'animate-spin text-indigo-500' : 'text-gray-500'} /></button>
+                        <button
+                            onClick={handleRunNow}
+                            disabled={isRunning}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-medium rounded-lg shadow-sm transition-colors"
+                        >
+                            <PlayCircle size={18} className={isRunning ? 'animate-pulse' : ''} />
+                            {isRunning ? 'Running...' : 'Run Now'}
+                        </button>
                     </div>
                 </div>
+
+                {/* Run Result Notification */}
+                {runResult?.show && (
+                    <div className={`mb-6 p-4 rounded-lg flex items-center justify-between ${runResult.success ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
+                        <div className="flex items-center gap-3">
+                            {runResult.success ? (
+                                <div className="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center">
+                                    <AlertTriangle size={18} className="text-emerald-600" />
+                                </div>
+                            ) : (
+                                <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
+                                    <X size={18} className="text-red-600" />
+                                </div>
+                            )}
+                            <div>
+                                <p className={`font-medium ${runResult.success ? 'text-emerald-800' : 'text-red-800'}`}>
+                                    {runResult.success ? 'Escalation Check Completed' : 'Escalation Check Failed'}
+                                </p>
+                                <p className={`text-sm ${runResult.success ? 'text-emerald-600' : 'text-red-600'}`}>
+                                    {runResult.success
+                                        ? `Processed ${runResult.processed} tickets, triggered ${runResult.triggered} escalations`
+                                        : 'An error occurred while running escalation check'}
+                                </p>
+                            </div>
+                        </div>
+                        <button onClick={() => setRunResult(null)} className="p-1 hover:bg-white/50 rounded">
+                            <X size={18} className={runResult.success ? 'text-emerald-600' : 'text-red-600'} />
+                        </button>
+                    </div>
+                )}
 
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <table className="w-full text-left">

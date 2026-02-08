@@ -16,7 +16,8 @@ import {
     CheckCircle2,
     ArrowRight,
     Settings,
-    TrendingUp
+    TrendingUp,
+    Copy
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
@@ -147,14 +148,14 @@ const AutoAssignment: React.FC = () => {
             }
 
             // Calculate stats from actual data
-            const actualRules = rulesData && rulesData.length > 0 ? rulesData : getMockRules();
-            const activeCount = actualRules.filter(r => r.is_active).length;
-            const totalRouted = actualRules.reduce((sum, r) => sum + (r.tickets_routed || 0), 0);
+            const rulesToCalculate = rulesData || [];
+            const activeCount = rulesToCalculate.filter(r => r.is_active).length;
+            const totalRouted = rulesToCalculate.reduce((sum, r) => sum + (r.tickets_routed || 0), 0);
 
             setStats({
                 activeRules: activeCount,
                 ticketsRoutedToday: totalRouted,
-                assignmentRate: activeCount > 0 ? Math.round((activeCount / actualRules.length) * 100) : 0
+                assignmentRate: rulesToCalculate.length > 0 ? Math.round((activeCount / rulesToCalculate.length) * 100) : 0
             });
 
         } catch (error) {
@@ -276,6 +277,24 @@ const AutoAssignment: React.FC = () => {
         setIsModalOpen(true);
     };
 
+    const handleDuplicateRule = (rule: AssignmentRule) => {
+        setEditingRule(null);
+        setFormData({
+            name: `Copy of ${rule.name}`,
+            description: rule.description || '',
+            conditions: rule.conditions.map(c => ({
+                field: c.field,
+                operator: c.operator,
+                value: Array.isArray(c.value) ? c.value.join(', ') : c.value
+            })),
+            assign_to_type: rule.assign_to_type,
+            assign_to_id: rule.assign_to_id || '',
+            priority: rule.priority, // Keep the same priority or increase it
+            is_active: rule.is_active
+        });
+        setIsModalOpen(true);
+    };
+
     const handleSaveRule = async () => {
         if (!formData.name.trim()) return;
 
@@ -386,13 +405,69 @@ const AutoAssignment: React.FC = () => {
     );
 
     const conditionFields = [
-        { value: 'category', label: 'Category' },
-        { value: 'priority', label: 'Priority' },
-        { value: 'department', label: 'Department' },
-        { value: 'user_type', label: 'User Type' },
-        { value: 'subject', label: 'Subject Contains' },
-        { value: 'source', label: 'Source' }
+        { value: 'category', label: 'Category', hasDropdown: true },
+        { value: 'priority', label: 'Priority', hasDropdown: true },
+        { value: 'department', label: 'Department', hasDropdown: true },
+        { value: 'user_type', label: 'User Type', hasDropdown: true },
+        { value: 'ticket_type', label: 'Ticket Type', hasDropdown: true },
+        { value: 'subject', label: 'Subject Contains', hasDropdown: false },
+        { value: 'source', label: 'Source', hasDropdown: true }
     ];
+
+    // Predefined options for each condition field
+    const conditionValueOptions: Record<string, { value: string; label: string }[]> = {
+        category: [
+            { value: 'hardware', label: 'Hardware' },
+            { value: 'software', label: 'Software' },
+            { value: 'network', label: 'Network' },
+            { value: 'endpoint', label: 'Endpoint' },
+            { value: 'security', label: 'Security' },
+            { value: 'email', label: 'Email' },
+            { value: 'access', label: 'Access Request' },
+            { value: 'other', label: 'Other' }
+        ],
+        priority: [
+            { value: 'critical', label: 'Critical' },
+            { value: 'high', label: 'High' },
+            { value: 'medium', label: 'Medium' },
+            { value: 'low', label: 'Low' }
+        ],
+        department: [
+            { value: 'IT', label: 'IT' },
+            { value: 'Finance', label: 'Finance' },
+            { value: 'HR', label: 'HR' },
+            { value: 'Operations', label: 'Operations' },
+            { value: 'Marketing', label: 'Marketing' },
+            { value: 'Sales', label: 'Sales' },
+            { value: 'Legal', label: 'Legal' },
+            { value: 'Engineering', label: 'Engineering' }
+        ],
+        user_type: [
+            { value: 'VIP', label: 'VIP' },
+            { value: 'Executive', label: 'Executive' },
+            { value: 'Regular', label: 'Regular' },
+            { value: 'Contractor', label: 'Contractor' },
+            { value: 'Guest', label: 'Guest' }
+        ],
+        source: [
+            { value: 'email', label: 'Email' },
+            { value: 'portal', label: 'Self-Service Portal' },
+            { value: 'phone', label: 'Phone' },
+            { value: 'chat', label: 'Live Chat' },
+            { value: 'walk-in', label: 'Walk-in' }
+        ],
+        ticket_type: [
+            { value: 'incident', label: 'Incident' },
+            { value: 'service_request', label: 'Service Request' },
+            { value: 'change_request', label: 'Change Request' }
+        ]
+    };
+
+    // Helper to check if field should use dropdown
+    const shouldUseDropdown = (fieldValue: string): boolean => {
+        const field = conditionFields.find(f => f.value === fieldValue);
+        return field?.hasDropdown ?? false;
+    };
 
     const conditionOperators = [
         { value: 'equals', label: 'Equals' },
@@ -563,7 +638,14 @@ const AutoAssignment: React.FC = () => {
                                     <td className="px-6 py-4">
                                         <div className="flex items-center gap-2">
                                             {getAssignToTypeBadge(rule.assign_to_type)}
-                                            <span className="text-sm text-gray-700">{rule.assign_to_name || 'Not set'}</span>
+                                            <span className="text-sm text-gray-700">
+                                                {rule.assign_to_type === 'agent'
+                                                    ? (agents.find(a => a.id === rule.assign_to_id)?.full_name || rule.assign_to_name || 'Not set')
+                                                    : rule.assign_to_type === 'round_robin' || rule.assign_to_type === 'group'
+                                                        ? (groups.find(g => g.id === rule.assign_to_id)?.name || rule.assign_to_name || 'Not set')
+                                                        : (rule.assign_to_name || 'Not set')
+                                                }
+                                            </span>
                                         </div>
                                     </td>
                                     <td className="px-6 py-4">
@@ -583,6 +665,13 @@ const AutoAssignment: React.FC = () => {
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={() => handleDuplicateRule(rule)}
+                                                className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                title="Duplicate"
+                                            >
+                                                <Copy size={16} />
+                                            </button>
                                             <button
                                                 onClick={() => handleOpenModal(rule)}
                                                 className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
@@ -724,13 +813,54 @@ const AutoAssignment: React.FC = () => {
                                                     <option key={o.value} value={o.value}>{o.label}</option>
                                                 ))}
                                             </select>
-                                            <input
-                                                type="text"
-                                                value={String(condition.value)}
-                                                onChange={(e) => updateCondition(index, 'value', e.target.value)}
-                                                placeholder="Value"
-                                                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                            />
+                                            {/* Dynamic value input - dropdown or text based on field type */}
+                                            {shouldUseDropdown(condition.field) ? (
+                                                condition.operator === 'in' ? (
+                                                    <div className="flex-1 flex flex-wrap gap-1 p-2 border border-gray-200 rounded-lg bg-white min-h-[42px]">
+                                                        {(conditionValueOptions[condition.field] || []).map(opt => {
+                                                            const currentValues = String(condition.value).split(',').map(v => v.trim()).filter(v => v);
+                                                            const isSelected = currentValues.includes(opt.value);
+                                                            return (
+                                                                <button
+                                                                    key={opt.value}
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        const newValues = isSelected
+                                                                            ? currentValues.filter(v => v !== opt.value)
+                                                                            : [...currentValues, opt.value];
+                                                                        updateCondition(index, 'value', newValues.join(', '));
+                                                                    }}
+                                                                    className={`px-2 py-1 rounded text-[10px] font-bold uppercase transition-colors ${isSelected
+                                                                        ? 'bg-indigo-600 text-white shadow-sm'
+                                                                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                                                                        }`}
+                                                                >
+                                                                    {opt.label}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                ) : (
+                                                    <select
+                                                        value={String(condition.value)}
+                                                        onChange={(e) => updateCondition(index, 'value', e.target.value)}
+                                                        className="flex-1 px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    >
+                                                        <option value="">Select value...</option>
+                                                        {(conditionValueOptions[condition.field] || []).map(opt => (
+                                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                                        ))}
+                                                    </select>
+                                                )
+                                            ) : (
+                                                <input
+                                                    type="text"
+                                                    value={String(condition.value)}
+                                                    onChange={(e) => updateCondition(index, 'value', e.target.value)}
+                                                    placeholder={condition.operator === 'in' ? "Enter values separated by comma..." : "Enter keywords..."}
+                                                    className="flex-1 px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                />
+                                            )}
                                             {formData.conditions.length > 1 && (
                                                 <button
                                                     onClick={() => removeCondition(index)}

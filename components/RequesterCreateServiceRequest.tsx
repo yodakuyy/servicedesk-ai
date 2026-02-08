@@ -5,6 +5,7 @@ import {
     List, Paperclip, Info, AlertCircle
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { applyAutoAssignment } from '../lib/autoAssignment';
 // @ts-ignore
 import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
 
@@ -52,6 +53,8 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
     const [selectedCategoryName, setSelectedCategoryName] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoadingCategories, setIsLoadingCategories] = useState(true);
+    const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+    const [categoriesWithFields, setCategoriesWithFields] = useState<Set<string>>(new Set());
 
     // Step 2: Form Data
     const [fields, setFields] = useState<CustomField[]>([]);
@@ -82,19 +85,29 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
     const fetchCategories = async () => {
         setIsLoadingCategories(true);
         try {
-            const { data, error } = await supabase
+            // 1. Fetch Categories
+            const { data: catData, error: catError } = await supabase
                 .from('ticket_categories')
                 .select('*')
-                .eq('category_type', ticketType) // Filter by Service Request or Change Request
+                .eq('category_type', ticketType)
                 .eq('is_active', true)
                 .order('level', { ascending: true })
                 .order('name', { ascending: true });
 
-            if (error) throw error;
+            if (catError) throw catError;
 
-            if (data) {
-                // Build Tree
-                const nodes: CategoryNode[] = data.map((item: any) => ({
+            // 2. Fetch Category IDs that have fields
+            const { data: fieldData, error: fieldError } = await supabase
+                .from('ticket_form_fields')
+                .select('category_id');
+
+            if (fieldError) throw fieldError;
+
+            const validIds = new Set(fieldData?.map(f => String(f.category_id)) || []);
+            setCategoriesWithFields(validIds);
+
+            if (catData) {
+                const nodes: CategoryNode[] = catData.map((item: any) => ({
                     id: String(item.id),
                     name: item.name,
                     description: item.description,
@@ -103,8 +116,31 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                     parent_id: item.parent_id ? String(item.parent_id) : null,
                     children: []
                 }));
-                const tree = buildTree(nodes);
-                setCategories(tree);
+
+                // Build initial tree to determine which branches are valid
+                const fullTree = buildTree(nodes);
+
+                // Helper to check if a node or any descendant has fields
+                const hasValidLeaf = (node: CategoryNode): boolean => {
+                    if (validIds.has(node.id)) return true;
+                    if (node.children && node.children.length > 0) {
+                        return node.children.some(child => hasValidLeaf(child));
+                    }
+                    return false;
+                };
+
+                // Filter tree recursively
+                const filterTree = (treeNodes: CategoryNode[]): CategoryNode[] => {
+                    return treeNodes
+                        .filter(node => hasValidLeaf(node))
+                        .map(node => ({
+                            ...node,
+                            children: node.children ? filterTree(node.children) : []
+                        }));
+                };
+
+                const filteredTree = filterTree(fullTree);
+                setCategories(filteredTree);
             }
         } catch (error) {
             console.error('Error fetching categories:', error);
@@ -127,7 +163,19 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
         return roots;
     };
 
+    const toggleExpand = (categoryId: string) => {
+        const next = new Set(expandedCategories);
+        if (next.has(categoryId)) next.delete(categoryId);
+        else next.add(categoryId);
+        setExpandedCategories(next);
+    };
+
     const handleCategorySelect = (node: CategoryNode) => {
+        if (node.children && node.children.length > 0) {
+            toggleExpand(node.id);
+            return;
+        }
+
         setSelectedCategoryId(node.id);
         setSelectedCategoryName(node.name);
         fetchFields(node.id);
@@ -153,19 +201,25 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                             className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all hover:bg-indigo-50 hover:border-indigo-200 group ${selectedCategoryId === node.id ? 'bg-indigo-50 border-indigo-300 ring-1 ring-indigo-500/20' : 'bg-white border-gray-100'}`}
                         >
                             <div className="p-2 bg-gray-50 rounded-lg text-gray-400 group-hover:text-indigo-500 group-hover:bg-white transition-colors">
-                                {node.children && node.children.length > 0 ? <Folder size={18} /> : <FileText size={18} />}
+                                {node.children && node.children.length > 0 ? (
+                                    <Folder size={18} className={expandedCategories.has(node.id) ? 'text-indigo-500' : ''} />
+                                ) : (
+                                    <FileText size={18} />
+                                )}
                             </div>
                             <div className="flex-1">
                                 <h4 className="font-bold text-gray-800 text-sm">{node.name}</h4>
                                 {node.description && <p className="text-xs text-gray-500 mt-0.5">{node.description}</p>}
                             </div>
-                            {node.children && node.children.length === 0 && (
+                            {node.children && node.children.length > 0 ? (
+                                <ChevronRight size={16} className={`text-gray-300 transition-transform duration-200 ${expandedCategories.has(node.id) ? 'rotate-90 text-indigo-400' : ''}`} />
+                            ) : (
                                 <ChevronRight size={16} className="text-gray-300 group-hover:text-indigo-400" />
                             )}
                         </div>
-                        {/* Recursive Children */}
-                        {node.children && node.children.length > 0 && (
-                            <div className="mt-2 ml-4 border-l-2 border-gray-100 pl-4">
+                        {/* Recursive Children - Only show if expanded */}
+                        {node.children && node.children.length > 0 && expandedCategories.has(node.id) && (
+                            <div className="mt-2 ml-4 border-l-2 border-indigo-100 pl-4 animate-in slide-in-from-top-2 duration-300">
                                 {renderCategoryTree(node.children)}
                             </div>
                         )}
@@ -288,17 +342,36 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
             });
             descriptionHtml += `</table></div>`;
 
-            // 2. Insert Ticket
+            // 2. Try Auto-Assignment Rules
+            const autoAssignResult = await applyAutoAssignment({
+                category: selectedCategoryName?.toLowerCase(), // Use category name
+                priority: 'medium', // Default priority
+                subject: `${ticketType}: ${selectedCategoryName}`,
+                source: 'portal'
+            });
+
+            let assignedGroupId = null;
+            let assignedAgentId = null;
+
+            if (autoAssignResult.assigned) {
+                console.log(`Auto-assignment applied: Rule "${autoAssignResult.ruleName}"`);
+                assignedGroupId = autoAssignResult.groupId;
+                assignedAgentId = autoAssignResult.agentId;
+            }
+
+            // 3. Insert Ticket with assignment
             const ticketPayload = {
                 subject: `${ticketType}: ${selectedCategoryName}`, // Subject is Category Name or maybe a field?
                 description: descriptionHtml,
                 status_id: openStatusId,
                 ticket_number: `SR-${Math.floor(Math.random() * 100000)}`, // Simple random number for now
-                priority: 'Medium', // Default
+                priority: 'medium', // Default
                 requester_id: userProfile?.id,
                 created_by: userProfile?.id,
                 ticket_type: ticketType === 'Service Request' ? 'service_request' : 'change_request',
                 category_id: selectedCategoryId,
+                assignment_group_id: assignedGroupId,
+                assigned_to: assignedAgentId,
                 is_category_verified: true,
             };
 
@@ -450,11 +523,19 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
         }
     };
 
+    const handleBack = () => {
+        if (step === 2) {
+            setStep(1);
+        } else {
+            if (onBack) onBack();
+        }
+    };
+
     return (
         <div className="max-w-4xl mx-auto p-8 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 bg-gray-50/50 min-h-screen">
             {/* Header */}
             <div className="flex items-center justify-between">
-                <button onClick={onBack} className="flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-gray-900 transition-colors">
+                <button onClick={handleBack} className="flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-gray-900 transition-colors">
                     <ArrowLeft size={16} /> Back
                 </button>
                 <div className="flex items-center gap-2 px-3 py-1 bg-white border border-gray-200 rounded-full shadow-sm">

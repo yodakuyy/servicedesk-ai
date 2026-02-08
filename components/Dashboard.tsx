@@ -66,6 +66,7 @@ import NotificationPanel from './NotificationPanel';
 import AutoAssignment from './AutoAssignment';
 import AutoCloseRules from './AutoCloseRules';
 import NotificationSettings from './NotificationSettings';
+import UserNotificationPreferences from './UserNotificationPreferences';
 import ReportsView from './ReportsView';
 import ServiceRequestFields from './ServiceRequestFields';
 import { useNotifications } from '../hooks/useNotifications';
@@ -157,13 +158,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     ticketConfig: false,
     slaConfig: false,
     automation: false,
-    portal: false
+    portal: false,
+    notifications: false
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'access-policy' | 'create-incident' | 'reports'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'change-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'my-notifications' | 'access-policy' | 'create-incident' | 'reports'>('dashboard');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile' | 'user-dashboard'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
+  const [navVersion, setNavVersion] = useState(0);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
@@ -723,7 +726,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             'allservicerequests': 'service-requests', // "All" view
 
             'escalatedtickets': 'escalated-tickets',
-            'changerequest': 'escalated-tickets',
+            'changerequest': 'change-requests',
             'reports': 'reports',
             'reportsanalytics': 'reports',
             'settings': 'settings'
@@ -1078,16 +1081,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       return <RequesterTicketManager userProfile={userProfile} initialView="create_incident" />;
     }
 
-    if (currentView === 'incidents') {
+    if (currentView === 'incidents' || currentView === 'service-requests' || currentView === 'change-requests') {
       // Check if user is Requester (role_id = 4)
       const isRequester = userProfile?.role_id === 4 || userProfile?.role_id === '4';
 
+      let typeFilter: 'incident' | 'service_request' | 'change_request' = 'incident';
+      if (currentView === 'service-requests') typeFilter = 'service_request';
+      if (currentView === 'change-requests') typeFilter = 'change_request';
+
       if (isRequester) {
         // Requester uses the dedicated RequesterTicketManager
-        return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} ticketTypeFilter="incident" />;
+        return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} ticketTypeFilter={typeFilter} />;
       } else {
         // Agent/SPV uses the new Agent Workspace View with tabs
-        return <AgentTicketView userProfile={userProfile} initialTicketId={selectedTicketId} />;
+        return <AgentTicketView userProfile={userProfile} initialTicketId={selectedTicketId} ticketTypeFilter={typeFilter} />;
       }
     }
 
@@ -1122,7 +1129,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     // NEW: Empty Placeholder for Service Requests
     // NEW: Empty Placeholder for Service Requests
     // NEW: Service Requests - Linked to RequesterTicketManager
-    if (currentView === 'service-requests' || currentView === 'my-service-request') {
+    // NEW: My Service Requests
+    if (currentView === 'my-service-request') {
       return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} ticketTypeFilter="service_request" />;
     }
 
@@ -1205,6 +1213,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
     if (currentView === 'notifications') {
       return <NotificationSettings />;
+    }
+
+    if (currentView === 'my-notifications') {
+      return <UserNotificationPreferences />;
     }
 
     if (currentView === 'service-request-fields') {
@@ -1680,9 +1692,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   };
 
   return (
-    <div className="flex min-h-screen bg-[#f3f4f6] font-sans">
-      {/* Sidebar */}
-      <div className={`${isSidebarOpen ? 'w-72 border-r' : 'w-0 border-none'} bg-white border-gray-200 flex flex-col hidden lg:flex sticky top-0 h-screen transition-all duration-300 overflow-hidden`}>
+    <div className="flex bg-[#f3f4f6] font-sans h-screen overflow-hidden">
+      {/* Sidebar - Desktop */}
+      <div
+        className={`${isSidebarOpen ? 'w-72 border-r' : 'w-0 border-none'} bg-white border-gray-200 flex flex-col hidden lg:flex transition-all duration-300 overflow-hidden z-50 flex-shrink-0 relative h-full shadow-sm`}
+      >
         <div className="p-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-md shadow-indigo-200 flex-shrink-0">
@@ -1709,59 +1723,35 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               const menuViewMap: { [key: string]: any } = {
                 'dashboard': 'dashboard',
                 'usertickets': 'user-dashboard',
-
-                // Incidents (unified view with tabs)
-                'incidents': 'incidents',           // NEW: merged menu name
-                'allincidents': 'incidents',        // Legacy: All Incidents
-
-                // My Dashboard (Requester view)
+                'incidents': 'incidents',
+                'allincidents': 'incidents',
                 'mydashboard': 'my-dashboard',
-                'mydashbord': 'my-dashboard', // Typo support
-
-                // My Incidents (Requester's own incidents - now uses unified view)
+                'mydashbord': 'my-dashboard',
                 'myincidents': 'my-incidents',
                 'userincidents': 'my-incidents',
                 'mytickets': 'my-incidents',
-
-                // Service Requests (unified view with tabs)
-                'servicerequests': 'service-requests',      // NEW: merged menu name
-                'allservicerequests': 'service-requests',   // Legacy: All Service Requests
-
-                // My Service Request (now uses unified view)
+                'servicerequests': 'service-requests',
+                'allservicerequests': 'service-requests',
                 'myservicerequest': 'my-service-request',
                 'myservicerequests': 'my-service-request',
-
-                // Other menus
                 'outofoffice': 'outofoffice',
                 'knowledgebase': 'knowledge',
                 'helpcenter': 'help-center',
                 'escalatedtickets': 'escalated-tickets',
-                'changerequest': 'escalated-tickets',
+                'changerequest': 'change-requests',
                 'reports': 'reports',
                 'reportsanalytics': 'reports',
-                'settings': 'settings', // Settings handled separately but include for completeness
+                'settings': 'settings',
               };
 
-              // Normalize Name for Lookup (Remove spaces, special chars, lowercase)
+              // Normalize Name for Lookup
               const normalizedName = menu.name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-              // Skip Settings here - it's handled separately below
-              if (normalizedName === 'settings') {
-                return null;
-              }
+              if (normalizedName === 'settings') return null;
 
-              // Lookup View
               let view = menuViewMap[normalizedName];
+              if (!view) return null;
 
-              if (!view) {
-                console.warn(`Dashboard: Skipping unmapped menu item: "${menu.name}" (Normalized: "${normalizedName}")`);
-                return null;
-              }
-
-              // Badge count - removed static placeholders
-              let badgeCount = '';
-
-              // Label Normalizer (Fix Typos & Format Keys)
               let displayLabel = menu.name;
               if (normalizedName === 'mydashboard' || normalizedName === 'mydashbord') displayLabel = 'My Dashboard';
               if (normalizedName === 'myincidents' || normalizedName === 'userincidents') displayLabel = 'My Incidents';
@@ -1770,10 +1760,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               if (normalizedName === 'knowledgebase') displayLabel = 'Knowledge Base';
               if (normalizedName === 'helpcenter') displayLabel = 'Help Center';
               if (normalizedName === 'outofoffice') displayLabel = 'Out of Office';
-              if (normalizedName === 'escalatedtickets' || normalizedName === 'changerequest') displayLabel = 'Change Request';
+              if (normalizedName === 'escalatedtickets') displayLabel = 'Escalated Tickets';
+              if (normalizedName === 'changerequest') displayLabel = 'Change Requests';
               if (normalizedName === 'allservicerequests' || normalizedName === 'servicerequests') displayLabel = 'Service Requests';
 
-              // Determine icon based on menu type
               const getMenuIcon = () => {
                 if (normalizedName === 'dashboard') return LayoutDashboard;
                 if (normalizedName === 'mydashboard' || normalizedName === 'mydashbord' || normalizedName === 'usertickets') return User;
@@ -1793,10 +1783,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   key={menu.id}
                   icon={getMenuIcon()}
                   label={displayLabel}
-                  badge={badgeCount}
                   active={currentView === view}
                   onClick={() => {
-                    setSelectedTicketId(null); // Reset ticket selection when navigating via menu
+                    setNavVersion(v => v + 1);
+                    setSelectedTicketId(null);
                     setCurrentView(view);
                   }}
                 />
@@ -1806,7 +1796,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             <div className="px-6 py-4 text-xs text-gray-400 italic">No accessible menus found for your role.</div>
           )}
 
-          {/* Settings - hanya tampilkan jika user adalah admin atau punya akses settings */}
           {accessibleMenus.some(m => m.name === 'Settings') && (
             <>
               <SidebarItem
@@ -1815,14 +1804,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 onClick={() => setIsSettingsOpen(!isSettingsOpen)}
                 expanded={isSettingsOpen}
               />
-
               {isSettingsOpen && (
                 <div className="bg-gray-50/50 pb-2 transition-all duration-300 ease-in-out">
-
-                  {/* Organization */}
                   <div
                     onClick={() => toggleSettingsSub('organization')}
-                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium mt-1 whitespace-nowrap"
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium mt-1"
                   >
                     <div className="flex items-center gap-2">
                       <Building2 size={16} />
@@ -1832,25 +1818,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   </div>
                   {settingsSubOpen.organization && (
                     <div className="bg-gray-100/30 pb-1">
-                      <div
-                        onClick={() => setCurrentView('department-management')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'department-management' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Departments
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('business-hours')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'business-hours' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Business Hours
-                      </div>
+                      <div onClick={() => setCurrentView('department-management')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'department-management' ? 'text-indigo-600' : 'text-gray-500'}`}>Departments</div>
+                      <div onClick={() => setCurrentView('business-hours')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'business-hours' ? 'text-indigo-600' : 'text-gray-500'}`}>Business Hours</div>
                     </div>
                   )}
 
-                  {/* Users & Access */}
                   <div
                     onClick={() => toggleSettingsSub('usersAccess')}
-                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium whitespace-nowrap"
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium"
                   >
                     <div className="flex items-center gap-2">
                       <Users size={16} />
@@ -1860,31 +1835,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   </div>
                   {settingsSubOpen.usersAccess && (
                     <div className="bg-gray-100/30 pb-1">
-                      <div
-                        onClick={() => setCurrentView('user-management')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'user-management' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        User Management
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('group-management')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'group-management' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Group Management
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('access-policy')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'access-policy' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Access Policy
-                      </div>
+                      <div onClick={() => setCurrentView('user-management')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'user-management' ? 'text-indigo-600' : 'text-gray-500'}`}>User Management</div>
+                      <div onClick={() => setCurrentView('group-management')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'group-management' ? 'text-indigo-600' : 'text-gray-500'}`}>Group Management</div>
+                      <div onClick={() => setCurrentView('access-policy')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'access-policy' ? 'text-indigo-600' : 'text-gray-500'}`}>Access Policy</div>
                     </div>
                   )}
 
-                  {/* Ticket Configuration */}
                   <div
                     onClick={() => toggleSettingsSub('ticketConfig')}
-                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium whitespace-nowrap"
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium"
                   >
                     <div className="flex items-center gap-2">
                       <Wrench size={16} />
@@ -1894,77 +1853,35 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   </div>
                   {settingsSubOpen.ticketConfig && (
                     <div className="bg-gray-100/30 pb-1">
-                      <div
-                        onClick={() => setCurrentView('categories')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'categories' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Categories
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('service-request-fields')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'service-request-fields' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Service Request Fields
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('status-management')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'status-management' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Status Management
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('workflow-mapping')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'workflow-mapping' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Workflow Mapping
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('workflow-template')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'workflow-template' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Workflow Template
-                      </div>
+                      <div onClick={() => setCurrentView('categories')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'categories' ? 'text-indigo-600' : 'text-gray-500'}`}>Categories</div>
+                      <div onClick={() => setCurrentView('service-request-fields')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'service-request-fields' ? 'text-indigo-600' : 'text-gray-500'}`}>Service Request Fields</div>
+                      <div onClick={() => setCurrentView('status-management')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'status-management' ? 'text-indigo-600' : 'text-gray-500'}`}>Status Management</div>
+                      <div onClick={() => setCurrentView('workflow-mapping')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'workflow-mapping' ? 'text-indigo-600' : 'text-gray-500'}`}>Workflow Mapping</div>
+                      <div onClick={() => setCurrentView('workflow-template')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'workflow-template' ? 'text-indigo-600' : 'text-gray-500'}`}>Workflow Template</div>
                     </div>
                   )}
 
-                  {/* SLA Configuration */}
                   <div
                     onClick={() => toggleSettingsSub('slaConfig')}
-                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium whitespace-nowrap"
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium"
                   >
                     <div className="flex items-center gap-2">
-                      <Shield size={16} />
+                      <Clock size={16} />
                       <span>SLA Configuration</span>
                     </div>
                     <ChevronRight size={14} className={`transition-transform duration-200 ${settingsSubOpen.slaConfig ? 'rotate-90' : ''}`} />
                   </div>
                   {settingsSubOpen.slaConfig && (
                     <div className="bg-gray-100/30 pb-1">
-                      <div
-                        onClick={() => setCurrentView('sla-management')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'sla-management' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        SLA Management
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('sla-policies')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'sla-policies' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        SLA Policies
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('escalation-rules')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'escalation-rules' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Escalation Rules
-                      </div>
+                      <div onClick={() => setCurrentView('sla-management')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'sla-management' ? 'text-indigo-600' : 'text-gray-500'}`}>SLA Management</div>
+                      <div onClick={() => setCurrentView('sla-policies')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'sla-policies' ? 'text-indigo-600' : 'text-gray-500'}`}>SLA Policies</div>
+                      <div onClick={() => setCurrentView('escalation-rules')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'escalation-rules' ? 'text-indigo-600' : 'text-gray-500'}`}>Escalation Rules</div>
                     </div>
                   )}
 
-                  {/* Automation */}
                   <div
                     onClick={() => toggleSettingsSub('automation')}
-                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium whitespace-nowrap"
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium"
                   >
                     <div className="flex items-center gap-2">
                       <Zap size={16} />
@@ -1974,174 +1891,91 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   </div>
                   {settingsSubOpen.automation && (
                     <div className="bg-gray-100/30 pb-1">
-                      <div
-                        onClick={() => setCurrentView('auto-assignment')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'auto-assignment' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Auto Assignment
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('auto-close-rules')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'auto-close-rules' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Auto Close Rules
-                      </div>
-                      <div
-                        onClick={() => setCurrentView('notifications')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'notifications' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Notifications
-                      </div>
+                      <div onClick={() => setCurrentView('auto-assignment')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'auto-assignment' ? 'text-indigo-600' : 'text-gray-500'}`}>Auto Assignment</div>
+                      <div onClick={() => setCurrentView('auto-close-rules')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'auto-close-rules' ? 'text-indigo-600' : 'text-gray-500'}`}>Auto Close Rules</div>
                     </div>
                   )}
 
-                  {/* Portal */}
                   <div
                     onClick={() => toggleSettingsSub('portal')}
-                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium whitespace-nowrap"
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium"
                   >
                     <div className="flex items-center gap-2">
                       <Globe size={16} />
-                      <span>Portal</span>
+                      <span>Self Service Portal</span>
                     </div>
                     <ChevronRight size={14} className={`transition-transform duration-200 ${settingsSubOpen.portal ? 'rotate-90' : ''}`} />
                   </div>
                   {settingsSubOpen.portal && (
                     <div className="bg-gray-100/30 pb-1">
-                      <div
-                        onClick={() => setCurrentView('portal-highlights')}
-                        className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors font-medium whitespace-nowrap ${currentView === 'portal-highlights' ? 'text-indigo-600' : 'text-gray-500'}`}
-                      >
-                        Portal Highlights
-                      </div>
+                      <div onClick={() => setCurrentView('portal-highlights')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'portal-highlights' ? 'text-indigo-600' : 'text-gray-500'}`}>Portal Highlights</div>
                     </div>
                   )}
 
+                  <div
+                    onClick={() => toggleSettingsSub('notifications')}
+                    className="flex items-center justify-between pl-10 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100/50 text-gray-600 hover:text-indigo-600 font-medium"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Bell size={16} />
+                      <span>Notification Settings</span>
+                    </div>
+                    <ChevronRight size={14} className={`transition-transform duration-200 ${settingsSubOpen.notifications ? 'rotate-90' : ''}`} />
+                  </div>
+                  {settingsSubOpen.notifications && (
+                    <div className="bg-gray-100/30 pb-1">
+                      <div onClick={() => setCurrentView('notifications')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'notifications' ? 'text-indigo-600' : 'text-gray-500'}`}>Global Settings</div>
+                      <div onClick={() => setCurrentView('my-notifications')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'my-notifications' ? 'text-indigo-600' : 'text-gray-500'}`}>My Preferences</div>
+                    </div>
+                  )}
                 </div>
               )}
             </>
           )}
         </nav>
 
-        {/* User Profile */}
         <div className="p-6 border-t border-gray-100 flex items-center gap-3 relative flex-shrink-0" ref={menuRef}>
           <img src={`https://ui-avatars.com/api/?name=${userProfile?.full_name || 'User'}&background=random`} alt="User" className="w-10 h-10 rounded-full border-2 border-white shadow-sm flex-shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-gray-700 truncate">{userProfile?.full_name || 'User'}</p>
           </div>
-          <button
-            onClick={() => setShowUserMenu(!showUserMenu)}
-            className="p-1 hover:bg-gray-100 rounded-full transition-colors focus:outline-none"
-          >
-            <MoreVertical size={16} className="text-gray-400 cursor-pointer" />
-          </button>
-
-          {/* User Menu Dropdown */}
+          <button onClick={() => setShowUserMenu(!showUserMenu)} className="p-1 hover:bg-gray-100 rounded-full transition-colors"><MoreVertical size={16} className="text-gray-400" /></button>
           {showUserMenu && (
-            <div className="absolute bottom-16 left-4 right-4 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-              <button
-                onClick={() => {
-                  setPreviousViewBeforeProfile('user-dashboard');
-                  setCurrentView('profile');
-                  setShowUserMenu(false);
-                }}
-                className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-              >
-                <User size={16} className="text-gray-400" />
-                Profile
-              </button>
-              {!(userProfile?.role_id === 4 || userProfile?.role_id === '4') && (
-                <button
-                  onClick={() => {
-                    setCurrentView('availability');
-                    setShowUserMenu(false);
-                  }}
-                  className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                >
-                  <CalendarOff size={16} className="text-gray-400" />
-                  Availability / OOO
-                </button>
-              )}
-              <button
-                onClick={onChangeDepartment}
-                className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-              >
-                <ArrowLeftRight size={16} className="text-gray-400" />
-                Change Department
-              </button>
+            <div className="absolute bottom-16 left-4 right-4 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-50">
+              <button onClick={() => { setCurrentView('profile'); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"><User size={16} /> Profile</button>
+              <button onClick={() => { setCurrentView('my-notifications'); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"><Bell size={16} /> Notifications</button>
               <div className="h-px bg-gray-100 my-1 mx-4"></div>
-              <button
-                onClick={onLogout}
-                className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-              >
-                <LogOut size={16} className="text-red-400" />
-                Logout
-              </button>
+              <button onClick={onLogout} className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"><LogOut size={16} /> Logout</button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
-        {/* Toggle Button (Visible when closed) */}
+      {/* Main Content Area */}
+      <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden relative transition-all duration-300">
         {!isSidebarOpen && (
           <button
             onClick={() => setIsSidebarOpen(true)}
-            className="absolute top-4 left-4 z-50 p-2 bg-white/80 backdrop-blur-sm rounded-lg shadow-sm border border-gray-100 text-gray-500 hover:bg-white hover:text-indigo-600 transition-colors hidden lg:block"
+            className="fixed top-4 left-4 z-[99998] p-2 bg-white rounded-lg shadow-sm border border-gray-100 text-gray-500 hover:text-indigo-600 transition-colors hidden lg:block"
           >
             <Menu size={20} />
           </button>
         )}
 
-        {/* Global Header */}
         <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 px-8 py-4 flex justify-end items-center gap-6 sticky top-0 z-40">
           <div className="flex items-center gap-4">
-            {/* Notification Bell */}
             <div className="relative" ref={notificationRef}>
-              <button
-                onClick={() => setShowNotificationPanel(!showNotificationPanel)}
-                className={`relative p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all group ${showNotificationPanel ? 'text-indigo-600 bg-indigo-50' : ''}`}
-              >
-                <Bell size={22} />
-                <NotificationBadge unreadCount={unreadCount} />
-              </button>
-
-              {showNotificationPanel && (
-                <NotificationPanelWrapper
-                  notifications={notifications}
-                  unreadCount={unreadCount}
-                  markAsRead={markAsRead}
-                  markAllAsRead={markAllAsRead}
-                  deleteNotification={deleteNotification}
-                  clearAll={clearAll}
-                  onClose={() => setShowNotificationPanel(false)}
-                  onNavigate={(refType, refId) => {
-                    if (refType === 'ticket') {
-                      setSelectedTicketId(refId);
-                      setCurrentView('incidents');
-                    }
-                  }}
-                />
-              )}
+              <button onClick={() => setShowNotificationPanel(!showNotificationPanel)} className={`relative p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all ${showNotificationPanel ? 'text-indigo-600 bg-indigo-50' : ''}`}><Bell size={22} /><NotificationBadge unreadCount={unreadCount} /></button>
+              {showNotificationPanel && <NotificationPanelWrapper notifications={notifications} unreadCount={unreadCount} markAsRead={markAsRead} markAllAsRead={markAllAsRead} deleteNotification={deleteNotification} clearAll={clearAll} onClose={() => setShowNotificationPanel(false)} onNavigate={(refType, refId) => { if (refType === 'ticket') { setSelectedTicketId(refId); setCurrentView('incidents'); } }} />}
             </div>
-
-            {/* User Icon */}
-            <button
-              onClick={() => {
-                setPreviousViewBeforeProfile('user-dashboard');
-                setCurrentView('profile');
-              }}
-              className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all"
-            >
-              <User size={22} />
-            </button>
+            <button onClick={() => setCurrentView('profile')} className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all"><User size={22} /></button>
           </div>
         </header>
 
-        {/* Scrollable Content */}
-        <main className="flex-1 overflow-auto">
-          {renderContent()}
+        <main className="flex-1 overflow-auto z-0 relative">
+          <div key={`${currentView}-${navVersion}`} className="h-full">
+            {renderContent()}
+          </div>
           {renderDetailModal()}
         </main>
       </div>

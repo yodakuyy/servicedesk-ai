@@ -9,11 +9,13 @@ import {
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
 import RequesterCreateIncident from './RequesterCreateIncident';
+import RequesterCreateServiceRequest from './RequesterCreateServiceRequest';
 
 interface AgentTicketViewProps {
     userProfile?: any;
     initialQueueFilter?: 'assigned' | 'submitted' | 'all' | 'escalated';
     initialTicketId?: string | null;
+    ticketTypeFilter?: 'incident' | 'service_request' | 'change_request' | 'all';
 }
 
 const workflowMap: Record<string, string[]> = {
@@ -29,7 +31,12 @@ const workflowMap: Record<string, string[]> = {
     'Canceled': []  // Terminal
 };
 
-const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQueueFilter = 'assigned', initialTicketId = null }) => {
+const AgentTicketView: React.FC<AgentTicketViewProps> = ({
+    userProfile,
+    initialQueueFilter = 'assigned',
+    initialTicketId = null,
+    ticketTypeFilter = 'all'
+}) => {
     // State
     const [tickets, setTickets] = useState<any[]>([]);
     const [selectedTicketId, setSelectedTicketId] = useState<string | null>(initialTicketId);
@@ -75,6 +82,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     const [isCreating, setIsCreating] = useState(false);
     const [currentUserRoleName, setCurrentUserRoleName] = useState<string>('');
 
+    // Pagination States
+    const [page, setPage] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const PAGE_SIZE = 25;
+
     useEffect(() => {
         const fetchCurrentRole = async () => {
             if (!userProfile?.id) return;
@@ -102,6 +115,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     const [statusFilter, setStatusFilter] = useState<string>('all');
     const [priorityFilter, setPriorityFilter] = useState<string>('all');
     const [agentFilter, setAgentFilter] = useState<string>('all');
+    const [startDate, setStartDate] = useState<string>('');
+    const [endDate, setEndDate] = useState<string>('');
     const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
     const [now, setNow] = useState(new Date());
 
@@ -420,13 +435,19 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
     };
 
     useEffect(() => {
-        const fetchTickets = async () => {
+        const fetchTickets = async (isLoadMore = false) => {
             if (!userProfile?.id) {
                 setIsLoading(false);
                 return;
             }
 
-            setIsLoading(true);
+            if (isLoadMore) setIsLoadingMore(true);
+            else {
+                setIsLoading(true);
+                setPage(0);
+            }
+
+            const currentPage = isLoadMore ? page + 1 : 0;
 
             // Base query builder
             let query = supabase
@@ -444,20 +465,58 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                         group_sla_policies (sla_policy_id)
                     )
                 `)
-                .order('updated_at', { ascending: false });
+                .order('updated_at', { ascending: false })
+                .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
 
             // Apply filter based on queueFilter
             if (queueFilter === 'assigned') {
-                // Tickets assigned to me (as agent)
                 query = query.eq('assigned_to', userProfile.id);
             } else if (queueFilter === 'submitted') {
-                // Tickets I submitted (as requester)
                 query = query.eq('requester_id', userProfile.id);
             } else if (queueFilter === 'all' || queueFilter === 'escalated') {
-                // All tickets in my groups (for supervisors/admins)
                 if (agentGroups.length > 0) {
                     query = query.in('assignment_group_id', agentGroups);
                 }
+            }
+
+            // Apply search filter
+            if (searchTerm) {
+                query = query.or(`ticket_number.ilike.%${searchTerm}%,subject.ilike.%${searchTerm}%`);
+            }
+
+            // Apply status filter
+            if (statusFilter !== 'all') {
+                if (statusFilter === 'Pending') {
+                    const pendingStatusIds = availableStatuses.filter(s => s.status_name.toLowerCase().includes('pending')).map(s => s.status_id);
+                    if (pendingStatusIds.length > 0) query = query.in('status_id', pendingStatusIds);
+                } else {
+                    const statusId = availableStatuses.find(s => s.status_name === statusFilter)?.status_id;
+                    if (statusId) query = query.eq('status_id', statusId);
+                }
+            }
+
+            // Apply priority
+            if (priorityFilter !== 'all') {
+                query = query.eq('priority', priorityFilter.charAt(0).toUpperCase() + priorityFilter.slice(1));
+            }
+
+            // Apply agent
+            if (agentFilter !== 'all') {
+                if (agentFilter === 'unassigned') query = query.is('assigned_to', null);
+                else query = query.eq('assigned_to', agentFilter);
+            }
+
+            // Apply ticket type filter
+            if (ticketTypeFilter !== 'all') {
+                query = query.eq('ticket_type', ticketTypeFilter);
+            }
+
+            // Apply Date Filters
+            if (startDate) {
+                query = query.gte('created_at', `${startDate}T00:00:00`);
+            }
+            if (endDate) {
+                query = query.lte('created_at', `${endDate}T23:59:59`);
             }
 
             const { data, error } = await query;
@@ -465,55 +524,47 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
             if (error) {
                 console.error('Error fetching tickets:', error);
                 setIsLoading(false);
+                setIsLoadingMore(false);
                 return;
             }
 
             if (data) {
                 let finalData = data;
                 if (queueFilter === 'escalated') {
-                    // Client-side filter for L2 agents since deep join filtering is complex in simple queries
                     finalData = data.filter((t: any) => t.assigned_agent?.roles?.role_name?.includes('L2'));
                 }
 
-                // Sort: Active tickets first (Open, In Progress, Pending), then terminal (Closed, Canceled) at bottom
-                // Within each group, sort by updated_at descending
-                const terminalStatuses = ['closed', 'resolved', 'canceled', 'cancelled'];
-                finalData = [...finalData].sort((a, b) => {
-                    const aStatusObj = Array.isArray(a.ticket_statuses) ? a.ticket_statuses[0] : a.ticket_statuses;
-                    const bStatusObj = Array.isArray(b.ticket_statuses) ? b.ticket_statuses[0] : b.ticket_statuses;
-                    const aStatus = (aStatusObj?.status_name || '').toLowerCase();
-                    const bStatus = (bStatusObj?.status_name || '').toLowerCase();
-                    const aIsTerminal = terminalStatuses.includes(aStatus);
-                    const bIsTerminal = terminalStatuses.includes(bStatus);
-
-                    // Active tickets first
-                    if (!aIsTerminal && bIsTerminal) return -1;
-                    if (aIsTerminal && !bIsTerminal) return 1;
-
-                    // Within same group, sort by updated_at descending
-                    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-                });
-
-                setTickets(finalData);
-                // Auto-select first ticket if none selected
-                if (data.length > 0 && !selectedTicketId) {
-                    setSelectedTicketId(data[0].id);
-                } else if (data.length === 0) {
-                    setSelectedTicketId(null);
-                    setSelectedTicket(null);
+                if (isLoadMore) {
+                    setTickets(prev => [...prev, ...finalData]);
+                    setPage(currentPage);
+                } else {
+                    setTickets(finalData);
+                    if (data.length > 0 && !selectedTicketId) {
+                        setSelectedTicketId(data[0].id);
+                    } else if (data.length === 0) {
+                        setSelectedTicketId(null);
+                        setSelectedTicket(null);
+                    }
                 }
+                setHasMore(data.length === PAGE_SIZE);
             }
             setIsLoading(false);
+            setIsLoadingMore(false);
         };
 
-        // Fetch based on filter type
         if (queueFilter === 'all' && agentGroups.length === 0) {
-            // Wait for agentGroups to load for 'all' filter
             return;
         }
 
-        fetchTickets();
-    }, [queueFilter, agentGroups, userProfile?.id]);
+        fetchTickets(false);
+
+        // Exposing load more function for the Load More button
+        (window as any)._loadMoreTickets = () => fetchTickets(true);
+
+        return () => {
+            delete (window as any)._loadMoreTickets;
+        };
+    }, [queueFilter, agentGroups, userProfile?.id, ticketTypeFilter, searchTerm, statusFilter, priorityFilter, agentFilter, startDate, endDate]);
 
     useEffect(() => {
         if (!selectedTicketId) {
@@ -2120,7 +2171,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                 {/* Search & Filter Bar */}
                 <div className="p-3 border-b border-gray-100 flex flex-col gap-2 bg-white sticky top-0 z-10">
                     <div className="flex items-center justify-between mb-1">
-                        <h2 className="text-sm font-black uppercase tracking-widest text-gray-700">Incidents</h2>
+                        <h2 className="text-sm font-black uppercase tracking-widest text-gray-700">
+                            {ticketTypeFilter === 'service_request' ? 'Service Requests' : ticketTypeFilter === 'change_request' ? 'Change Requests' : ticketTypeFilter === 'incident' ? 'Incidents' : 'All Tickets'}
+                        </h2>
                         <button
                             onClick={() => {
                                 setIsCreating(true);
@@ -2128,7 +2181,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             }}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-indigo-700 shadow-md shadow-indigo-100 transition-all active:scale-95"
                         >
-                            <Plus size={14} /> New Incident
+                            <Plus size={14} />
+                            {ticketTypeFilter === 'service_request' ? 'New Request' : ticketTypeFilter === 'change_request' ? 'New Change' : ticketTypeFilter === 'incident' ? 'New Incident' : 'New Ticket'}
                         </button>
                     </div>
                     <div className="flex items-center gap-2">
@@ -2144,7 +2198,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                         </div>
                         <button
                             onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)}
-                            className={`p-1.5 rounded-md border transition-all ${isFilterMenuOpen || statusFilter !== 'all' || priorityFilter !== 'all' || agentFilter !== 'all'
+                            className={`p-1.5 rounded-md border transition-all ${isFilterMenuOpen || statusFilter !== 'all' || priorityFilter !== 'all' || agentFilter !== 'all' || startDate || endDate
                                 ? 'bg-indigo-50 border-indigo-200 text-indigo-600'
                                 : 'bg-white border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50'
                                 }`}
@@ -2186,6 +2240,26 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     <option value="urgent">Urgent</option>
                                 </select>
                             </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Start Date</label>
+                                    <input
+                                        type="date"
+                                        value={startDate}
+                                        onChange={(e) => setStartDate(e.target.value)}
+                                        className="w-full bg-white border border-gray-200 rounded px-1.5 py-1 text-[10px] font-bold text-gray-600 focus:ring-1 focus:ring-indigo-500/20 outline-none cursor-pointer"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">End Date</label>
+                                    <input
+                                        type="date"
+                                        value={endDate}
+                                        onChange={(e) => setEndDate(e.target.value)}
+                                        className="w-full bg-white border border-gray-200 rounded px-1.5 py-1 text-[10px] font-bold text-gray-600 focus:ring-1 focus:ring-indigo-500/20 outline-none cursor-pointer"
+                                    />
+                                </div>
+                            </div>
                             <div>
                                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Agent (PIC)</label>
                                 <select
@@ -2213,6 +2287,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                                     setPriorityFilter('all');
                                     setAgentFilter('all');
                                     setSearchTerm('');
+                                    setStartDate('');
+                                    setEndDate('');
                                 }}
                                 className="w-full py-1 text-[10px] font-black text-red-500 uppercase tracking-widest hover:bg-red-50 rounded transition-colors"
                             >
@@ -2444,6 +2520,29 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
                             );
                         })
                     )}
+
+                    {/* Load More Button */}
+                    {hasMore && tickets.length > 0 && (
+                        <div className="p-4 border-t border-gray-50 flex justify-center">
+                            <button
+                                onClick={() => (window as any)._loadMoreTickets?.()}
+                                disabled={isLoadingMore}
+                                className="px-6 py-2 bg-white border border-gray-200 rounded-xl text-[11px] font-black text-indigo-600 uppercase tracking-widest hover:bg-indigo-50 hover:border-indigo-200 transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
+                            >
+                                {isLoadingMore ? (
+                                    <>
+                                        <Loader2 size={14} className="animate-spin" />
+                                        Loading...
+                                    </>
+                                ) : (
+                                    <>
+                                        <RefreshCw size={14} />
+                                        Load Older Tickets
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -2451,17 +2550,28 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({ userProfile, initialQ
             {isCreating ? (
                 <div className="flex-1 bg-white overflow-y-auto custom-scrollbar">
                     <div className="max-w-4xl mx-auto py-8">
-                        <RequesterCreateIncident
-                            userProfile={userProfile}
-                            onBack={() => setIsCreating(false)}
-                            onSubmit={(data) => {
-                                setIsCreating(false);
-                                // Refresh ticket list (handled by supabase real-time usually, but good to trigger logic)
-                                setQueueFilter('all');
-                                // Optionally select the new ticket
-                                if (data.ticketId) setSelectedTicketId(data.ticketId);
-                            }}
-                        />
+                        {ticketTypeFilter === 'service_request' || ticketTypeFilter === 'change_request' ? (
+                            <RequesterCreateServiceRequest
+                                userProfile={userProfile}
+                                onBack={() => setIsCreating(false)}
+                                onSubmitSuccess={() => {
+                                    setIsCreating(false);
+                                    setQueueFilter('all');
+                                    setSelectedTicketId(null);
+                                }}
+                                ticketType={ticketTypeFilter === 'change_request' ? 'Change Request' : 'Service Request'}
+                            />
+                        ) : (
+                            <RequesterCreateIncident
+                                userProfile={userProfile}
+                                onBack={() => setIsCreating(false)}
+                                onSubmit={(data) => {
+                                    setIsCreating(false);
+                                    setQueueFilter('all');
+                                    if (data.ticketId) setSelectedTicketId(data.ticketId);
+                                }}
+                            />
+                        )}
                     </div>
                 </div>
             ) : selectedTicket ? (
