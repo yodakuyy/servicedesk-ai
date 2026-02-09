@@ -211,9 +211,7 @@ const KnowledgeBase: React.FC = () => {
 
   if (showCategoryManager) {
     return (
-      <div className="fixed inset-0 bg-white z-50 overflow-hidden">
-        <KBCategoryManagement onClose={() => { setShowCategoryManager(false); fetchData(); }} />
-      </div>
+      <KBCategoryManagement onClose={() => { setShowCategoryManager(false); fetchData(); }} />
     );
   }
 

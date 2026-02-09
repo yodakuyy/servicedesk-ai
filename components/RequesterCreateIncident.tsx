@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, HelpCircle, Paperclip, Sparkles, Send, ChevronRight, X, Info, AlertCircle, Monitor, Wifi, Box, MoreHorizontal, Clock, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, HelpCircle, Paperclip, Sparkles, Send, ChevronRight, X, Info, AlertCircle, Monitor, Wifi, Box, MoreHorizontal, Clock, CheckCircle2, Zap, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { applyAutoAssignment, getRoundRobinAgent } from '../lib/autoAssignment';
 import RichTextEditor from './RichTextEditor';
@@ -37,6 +37,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
     const [description, setDescription] = useState('');
     const [showAINotice, setShowAINotice] = useState(false);
     const [issueType, setIssueType] = useState<string>('');
+    const [categoryId, setCategoryId] = useState<string>('');
     const [attachment, setAttachment] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
@@ -48,6 +49,8 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
     const [services, setServices] = useState<any[]>([]);
     const [suggestedArticles, setSuggestedArticles] = useState<any[]>([]);
     const [viewingArticle, setViewingArticle] = useState<any | null>(null);
+    const [catSearch, setCatSearch] = useState('');
+    const [isCatDropdownOpen, setIsCatDropdownOpen] = useState(false);
 
     // Initial Data Fetch
     useEffect(() => {
@@ -66,7 +69,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 setGroupIds(mapping);
             }
 
-            const { data: catData } = await supabase.from('ticket_categories').select('id, name').eq('category_type', 'incident');
+            const { data: catData } = await supabase.from('ticket_categories').select('id, name, default_priority, assignment_strategy, default_group_id, parent_id').ilike('category_type', 'incident').eq('is_active', true);
             if (catData) setCategories(catData);
 
             const { data: svcData } = await supabase.from('services').select('id, name').eq('is_active', true);
@@ -126,6 +129,28 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
         return 'medium';
     };
 
+    const getEffectivePriority = (selectedCatId: string) => {
+        let currentPathId: string | null = selectedCatId;
+        while (currentPathId) {
+            const cat = categories.find(c => c.id === currentPathId);
+            if (cat?.default_priority) return cat.default_priority;
+            currentPathId = cat?.parent_id || null;
+        }
+        return null;
+    };
+
+    const getCategoryDisplayName = (cat: any) => {
+        const path = [];
+        let current = cat;
+        while (current) {
+            path.unshift(current.name);
+            const parentId = current.parent_id;
+            current = categories.find(c => c.id === parentId);
+            if (path.length > 5) break;
+        }
+        return path.join(' > ');
+    };
+
     // AI Insight Simulation
     useEffect(() => {
         if (description.length < 10) return;
@@ -160,7 +185,7 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
 
         if (!openStatusId) { setErrorMessage("System error: Status missing."); setIsSubmitting(false); return; }
 
-        let category_id = null;
+        let category_id = categoryId || null;
         let service_id = null;
         let calculatedPriority = 'medium';
         let assignedGroupId = null;
@@ -168,9 +193,18 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
 
         try {
             const classification = getSystemClassification(issueType, subject, description);
-            category_id = classification.category_id;
+
+            // Priority logic: Search up the category hierarchy (Sub -> Parent -> Root)
+            const hierarchicalPriority = getEffectivePriority(categoryId);
+
+            if (hierarchicalPriority) {
+                calculatedPriority = hierarchicalPriority.toLowerCase();
+            } else {
+                calculatedPriority = calculatePriority(subject, description);
+            }
+
+            category_id = categoryId || classification.category_id;
             service_id = classification.service_id;
-            calculatedPriority = calculatePriority(subject, description);
 
             const autoAssignResult = await applyAutoAssignment({ category: issueType, priority: calculatedPriority, subject, source: 'portal' });
 
@@ -292,14 +326,96 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                     )}
                 </section>
 
-                {/* Section 2: Problem */}
+                {/* Section 2: Category Selection */}
+                <section className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                    <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Box size={20} /></div>
+                        <h2 className="text-xl font-black text-gray-900">Incident Category <span className="text-red-500">*</span></h2>
+                    </div>
+                    <div className="relative">
+                        <div
+                            onClick={() => setIsCatDropdownOpen(!isCatDropdownOpen)}
+                            className="w-full p-4 bg-gray-50 border-none rounded-xl text-lg font-bold text-gray-700 cursor-pointer flex justify-between items-center hover:ring-2 hover:ring-indigo-500/20 transition-all"
+                        >
+                            <span className={categoryId ? 'text-gray-900' : 'text-gray-400'}>
+                                {categoryId ? getCategoryDisplayName(categories.find(c => c.id === categoryId)) : '-- Search & Select Category --'}
+                            </span>
+                            <Search size={24} className="text-gray-400" />
+                        </div>
+
+                        {isCatDropdownOpen && (
+                            <div className="absolute z-50 top-full mt-2 left-0 right-0 bg-white border border-gray-100 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2">
+                                <div className="p-3 border-b border-gray-50 bg-gray-50/50">
+                                    <div className="relative">
+                                        <Search className="absolute left-3 top-2.5 text-gray-400" size={14} />
+                                        <input
+                                            type="text"
+                                            autoFocus
+                                            placeholder="Type to search..."
+                                            value={catSearch}
+                                            onChange={(e) => setCatSearch(e.target.value)}
+                                            className="w-full bg-white border border-gray-200 rounded-lg py-2 pl-9 pr-4 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="max-h-[250px] overflow-y-auto custom-scrollbar">
+                                    {(() => {
+                                        const parentIds = new Set(categories.map(c => c.parent_id).filter(Boolean));
+                                        const selectableCategories = categories.filter(cat =>
+                                            !parentIds.has(cat.id) &&
+                                            cat.parent_id !== null
+                                        );
+
+                                        return selectableCategories
+                                            .map(cat => ({ ...cat, displayName: getCategoryDisplayName(cat) }))
+                                            .filter(cat => !catSearch || cat.displayName.toLowerCase().includes(catSearch.toLowerCase()))
+                                            .sort((a, b) => a.displayName.localeCompare(b.displayName))
+                                            .map(cat => (
+                                                <div
+                                                    key={cat.id}
+                                                    onClick={() => {
+                                                        setCategoryId(cat.id);
+                                                        setIsCatDropdownOpen(false);
+                                                        setCatSearch('');
+                                                    }}
+                                                    className="px-4 py-3 text-[11px] font-bold text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 cursor-pointer border-b border-gray-50 last:border-0 transition-colors"
+                                                >
+                                                    {cat.displayName}
+                                                </div>
+                                            ));
+                                    })()}
+                                    {(() => {
+                                        const parentIds = new Set(categories.map(c => c.parent_id).filter(Boolean));
+                                        const selectableCount = categories.filter(cat => !parentIds.has(cat.id) && cat.parent_id !== null)
+                                            .filter(cat => !catSearch || getCategoryDisplayName(cat).toLowerCase().includes(catSearch.toLowerCase())).length;
+                                        return selectableCount === 0 && (
+                                            <div className="p-8 text-center text-xs text-gray-400 italic">No specific sub-categories found</div>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    {categoryId && getEffectivePriority(categoryId) && (
+                        <div className="flex items-center gap-2 text-xs font-black text-indigo-600 uppercase tracking-wider bg-indigo-50 p-3 rounded-xl w-fit">
+                            <Zap size={14} /> Auto Priority: {getEffectivePriority(categoryId)}
+                        </div>
+                    )}
+                </section>
+
+                {/* Section 3: Problem */}
                 <section className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
                     <div className="flex items-center gap-3 mb-2">
                         <div className="p-2 bg-amber-50 rounded-xl text-amber-600"><Info size={20} /></div>
                         <h2 className="text-xl font-black text-gray-900">Problem Details</h2>
                     </div>
                     <div className="space-y-4">
-                        <input placeholder="Short summary of the issue..." required value={subject} onChange={e => setSubject(e.target.value)} className="w-full p-4 bg-gray-50 border-none rounded-2xl text-lg font-bold placeholder:text-gray-300 focus:ring-2 focus:ring-indigo-500" />
+                        <div className="space-y-2">
+                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-1">
+                                Subject <span className="text-red-500">*</span>
+                            </label>
+                            <input placeholder="Short summary of the issue..." required value={subject} onChange={e => setSubject(e.target.value)} className="w-full p-4 bg-gray-50 border-none rounded-2xl text-lg font-bold placeholder:text-gray-300 focus:ring-2 focus:ring-indigo-500" />
+                        </div>
 
                         {suggestedArticles.length > 0 && (
                             <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100 space-y-3">
@@ -315,66 +431,63 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                         )}
 
                         <div className="space-y-2">
-                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Full Description</label>
+                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-1">
+                                Full Description <span className="text-red-500">*</span>
+                            </label>
                             <RichTextEditor content={description} onChange={setDescription} placeholder="Tell us more about what happened..." />
                         </div>
                     </div>
                 </section>
 
-                {/* Section 3: Extra */}
-                <div className="grid grid-cols-2 gap-6">
-                    <section className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
-                        <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Issue Area</label>
-                        <div className="grid grid-cols-3 gap-2">
-                            {['software', 'hardware', 'network'].map(t => (
-                                <button key={t} type="button" onClick={() => setIssueType(t)} className={`p-3 rounded-xl border-2 capitalize font-bold text-sm transition-all ${issueType === t ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-gray-50 text-gray-400 hover:border-gray-100'}`}>
-                                    {t}
-                                </button>
-                            ))}
-                        </div>
-                    </section>
-
-                    <section className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
-                        <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Attachments</label>
-                        <div className="relative">
-                            <input type="file" onChange={e => setAttachment(e.target.files?.[0] || null)} className="absolute inset-0 opacity-0 cursor-pointer" />
-                            <div className="p-3 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200 text-center flex items-center justify-center gap-2 text-sm text-gray-500 font-medium">
-                                <Paperclip size={16} /> {attachment ? attachment.name : 'Upload Screenshots'}
-                            </div>
-                        </div>
-                    </section>
-                </div>
-
-                {errorMessage && (
-                    <div className="p-4 bg-red-50 text-red-600 rounded-2xl border border-red-100 text-sm font-bold flex items-center gap-3">
-                        <AlertCircle size={20} /> {errorMessage}
+                <section className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                    <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-gray-50 rounded-xl text-gray-600"><Paperclip size={20} /></div>
+                        <h2 className="text-xl font-black text-gray-900">Attachments</h2>
                     </div>
-                )}
+                    <div className="relative">
+                        <input type="file" onChange={e => setAttachment(e.target.files?.[0] || null)} className="absolute inset-0 opacity-0 cursor-pointer" />
+                        <div className="p-6 bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:bg-gray-100/50 transition-all cursor-pointer text-gray-500">
+                            <Box className="w-8 h-8 opacity-20 mb-2" />
+                            <div className="text-sm font-bold">{attachment ? attachment.name : 'Click or Drag Screenshots here'}</div>
+                            <div className="text-xs opacity-60">PDF, PNG, JPG (Max 5MB)</div>
+                        </div>
+                    </div>
+                </section>
 
-                <button type="submit" disabled={isSubmitting || !subject || !description} className="w-full p-5 bg-indigo-600 text-white rounded-3xl font-black text-xl shadow-2xl shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:bg-gray-400 transition-all flex items-center justify-center gap-3">
+                {
+                    errorMessage && (
+                        <div className="p-4 bg-red-50 text-red-600 rounded-2xl border border-red-100 text-sm font-bold flex items-center gap-3">
+                            <AlertCircle size={20} /> {errorMessage}
+                        </div>
+                    )
+                }
+
+                <button type="submit" disabled={isSubmitting || !subject || !description || !categoryId} className="w-full p-5 bg-indigo-600 text-white rounded-3xl font-black text-xl shadow-2xl shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:bg-gray-400 transition-all flex items-center justify-center gap-3">
                     {isSubmitting ? 'Submitting...' : 'Submit Ticket'} <Send size={24} />
                 </button>
-            </form>
+            </form >
 
             {/* KB Article Modal */}
-            {viewingArticle && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in duration-300">
-                        <div className="p-6 bg-indigo-600 text-white flex justify-between items-center">
-                            <h3 className="text-xl font-bold">{viewingArticle.title}</h3>
-                            <button onClick={() => setViewingArticle(null)} className="p-2 hover:bg-indigo-500 rounded-full transition-colors"><X size={20} /></button>
-                        </div>
-                        <div className="p-8 max-h-[60vh] overflow-y-auto prose prose-indigo max-w-none">
-                            <div dangerouslySetInnerHTML={{ __html: typeof viewingArticle.content === 'string' ? viewingArticle.content : viewingArticle.content.solution }} />
-                        </div>
-                        <div className="p-6 bg-gray-50 border-t flex justify-end gap-3">
-                            <button onClick={() => setViewingArticle(null)} className="px-6 py-2 font-bold text-gray-500 hover:text-gray-700">Close</button>
-                            <button onClick={onBack} className="px-6 py-2 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition-colors">This Solved It!</button>
+            {
+                viewingArticle && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in duration-300">
+                            <div className="p-6 bg-indigo-600 text-white flex justify-between items-center">
+                                <h3 className="text-xl font-bold">{viewingArticle.title}</h3>
+                                <button onClick={() => setViewingArticle(null)} className="p-2 hover:bg-indigo-500 rounded-full transition-colors"><X size={20} /></button>
+                            </div>
+                            <div className="p-8 max-h-[60vh] overflow-y-auto prose prose-indigo max-w-none">
+                                <div dangerouslySetInnerHTML={{ __html: typeof viewingArticle.content === 'string' ? viewingArticle.content : viewingArticle.content.solution }} />
+                            </div>
+                            <div className="p-6 bg-gray-50 border-t flex justify-end gap-3">
+                                <button onClick={() => setViewingArticle(null)} className="px-6 py-2 font-bold text-gray-500 hover:text-gray-700">Close</button>
+                                <button onClick={onBack} className="px-6 py-2 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition-colors">This Solved It!</button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 };
 

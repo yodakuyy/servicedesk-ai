@@ -395,7 +395,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                     ? 'bg-red-50 text-red-700 border-red-100'
                                     : 'bg-gray-50 text-gray-700 border-gray-100'
                                     }`}>
-                                    Priority: {ticket.priority || 'Medium'}
+                                    Priority: {ticket.priority ? (ticket.priority.charAt(0).toUpperCase() + ticket.priority.slice(1).toLowerCase()) : 'Medium'}
                                 </span>
                             </div>
                         </div>

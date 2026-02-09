@@ -1,0 +1,376 @@
+{
+  "teamPulse": [
+    {
+      "agent_id": "89c96259-5e14-4c50-af85-71c176dca5e7",
+      "full_name": "Rezza Panji Asmara",
+      "email": "rezza.asmara@modena.com",
+      "role_id": 2,
+      "active_count": 2,
+      "resolved_today_count": 0,
+      "overdue_count": 1
+    },
+    {
+      "agent_id": "a602a9f6-e144-49f5-8d21-fa0419a2b465",
+      "full_name": "Yogi Danis",
+      "email": "yogi.fermana@modena.com",
+      "role_id": 2,
+      "active_count": 0,
+      "resolved_today_count": 0,
+      "overdue_count": 0
+    },
+    {
+      "agent_id": "0d33de46-43cd-484c-a916-b15c9c40cb94",
+      "full_name": "Maria Gracia Deita Rolano",
+      "email": "maria.rolano@modena.com",
+      "role_id": 2,
+      "active_count": 0,
+      "resolved_today_count": 0,
+      "overdue_count": 0
+    },
+    {
+      "agent_id": "19d0cd62-2b08-40c0-b5df-18473224e036",
+      "full_name": "Oca Rosnalita",
+      "email": "oca.rosnalita@modena.com",
+      "role_id": 2,
+      "active_count": 0,
+      "resolved_today_count": 0,
+      "overdue_count": 0
+    },
+    {
+      "agent_id": "60ed7a95-ac20-4ee3-b133-fd5aacf1b5d5",
+      "full_name": "Meriza Putri",
+      "email": "meriza.putri@modena.com",
+      "role_id": 3,
+      "active_count": 1,
+      "resolved_today_count": 0,
+      "overdue_count": 0
+    },
+    {
+      "agent_id": "c7c4573c-d6ed-4d6d-9db8-8ba561470d4c",
+      "full_name": "Hanif Putra",
+      "email": "hanif.putra@modena.com",
+      "role_id": 3,
+      "active_count": 1,
+      "resolved_today_count": 0,
+      "overdue_count": 1
+    },
+    {
+      "agent_id": "b46ec8d1-ffa1-4f4e-8148-450a921da848",
+      "full_name": "Ade Triyanto",
+      "email": "ade.triyanto@modena.com",
+      "role_id": 3,
+      "active_count": 1,
+      "resolved_today_count": 0,
+      "overdue_count": 0
+    },
+    {
+      "agent_id": "f88fbfd4-0759-475a-970b-4be57ddfa664",
+      "full_name": "Achmad Fadil Kurnia",
+      "email": "Achmad.Kurnia@modena.com",
+      "role_id": 3,
+      "active_count": 0,
+      "resolved_today_count": 0,
+      "overdue_count": 0
+    }
+  ],
+  "investigation": [
+    {
+      "agent_name": "Rezza Panji Asmara",
+      "agent_id": "89c96259-5e14-4c50-af85-71c176dca5e7",
+      "reported_overdue": 1,
+      "tickets": [
+        {
+          "ticket_number": "INC-63753",
+          "status": "Pending - Waiting For Requester",
+          "priority": "medium",
+          "created_at": "2026-02-08T09:33:04.430702+00:00",
+          "activeHours": 16.78362027777778,
+          "limit": 48,
+          "isActive": false,
+          "isOverdue": false
+        },
+        {
+          "ticket_number": "INC-79893",
+          "status": "Pending - Waiting For Requester",
+          "priority": "high",
+          "created_at": "2026-02-07T13:27:49.400684+00:00",
+          "activeHours": 36.87112861111111,
+          "limit": 8,
+          "isActive": false,
+          "isOverdue": false
+        }
+      ]
+    },
+    {
+      "agent_name": "Hanif Putra",
+      "agent_id": "c7c4573c-d6ed-4d6d-9db8-8ba561470d4c",
+      "reported_overdue": 1,
+      "tickets": [
+        {
+          "ticket_number": "INC-81122",
+          "status": "Pending - Waiting For Requester",
+          "priority": "medium",
+          "created_at": "2026-02-07T13:59:35.214442+00:00",
+          "activeHours": 36.34178138888889,
+          "limit": 48,
+          "isActive": false,
+          "isOverdue": false
+        }
+      ]
+    }
+  ],
+  "all_statuses": [
+    {
+      "status_id": "33b44157-c5e6-4436-be25-c36ec5310a69",
+      "status_code": "NEW",
+      "status_name": "New",
+      "status_category": "system",
+      "sla_behavior": "run",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 1,
+      "created_at": "2026-01-09T09:13:38.076246+00:00",
+      "description": "Ticket newly created"
+    },
+    {
+      "status_id": "9950fb58-ba04-4e7d-a5a6-194e056f3fd1",
+      "status_code": "OPEN",
+      "status_name": "Open",
+      "status_category": "agent",
+      "sla_behavior": "run",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 2,
+      "created_at": "2026-01-09T09:13:38.076246+00:00",
+      "description": "Ticket is open and ready to work"
+    },
+    {
+      "status_id": "a1bad466-9b17-49b3-92a9-3d70980c4146",
+      "status_code": "IN_PROGRESS",
+      "status_name": "In Progress",
+      "status_category": "agent",
+      "sla_behavior": "run",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 3,
+      "created_at": "2026-01-09T09:13:38.076246+00:00",
+      "description": "Ticket is being handled"
+    },
+    {
+      "status_id": "61f0cd28-6733-4088-bc9f-e8a633f29c5f",
+      "status_code": "RESOLVED",
+      "status_name": "Resolved",
+      "status_category": "agent",
+      "sla_behavior": "stop",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 4,
+      "created_at": "2026-01-09T09:13:38.076246+00:00",
+      "description": "Solution has been provided"
+    },
+    {
+      "status_id": "f03944f6-1bb7-4b03-aec6-91682a90bacd",
+      "status_code": "CLOSED",
+      "status_name": "Closed",
+      "status_category": "system",
+      "sla_behavior": "stop",
+      "is_final": true,
+      "is_active": true,
+      "sort_order": 5,
+      "created_at": "2026-01-09T09:13:38.076246+00:00",
+      "description": "Ticket is permanently closed"
+    },
+    {
+      "status_id": "03ec27ee-1eac-4a8a-a288-ce262a589694",
+      "status_code": "PENDING_USER",
+      "status_name": "Pending - Waiting For Requester",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 6,
+      "created_at": "2026-01-09T09:57:58.26136+00:00",
+      "description": "Waiting for customer response"
+    },
+    {
+      "status_id": "51e872cf-a5f7-4acd-a709-d7f4e2ee4f97",
+      "status_code": "pending_vendor",
+      "status_name": "Pending - Vendor",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 7,
+      "created_at": "2026-01-09T09:57:58.26136+00:00",
+      "description": "Waiting for third-party or vendor response"
+    },
+    {
+      "status_id": "8494e7eb-8ed4-48bd-8f69-7e90211dfb49",
+      "status_code": "pending_approval",
+      "status_name": "Pending - Approval",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 8,
+      "created_at": "2026-01-09T09:57:58.26136+00:00",
+      "description": "Waiting for approval from authorized party"
+    },
+    {
+      "status_id": "e3e77fd2-48ab-49d1-8c6b-ea9a6b1d9575",
+      "status_code": "pending_schedule",
+      "status_name": "Pending - Schedule",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 9,
+      "created_at": "2026-01-09T09:57:58.26136+00:00",
+      "description": "Waiting for scheduled execution or time window"
+    },
+    {
+      "status_id": "3141df3b-0694-454c-a01a-fe90b351d802",
+      "status_code": "CANCELED",
+      "status_name": "Canceled",
+      "status_category": "agent",
+      "sla_behavior": "stop",
+      "is_final": true,
+      "is_active": true,
+      "sort_order": 99,
+      "created_at": "2026-01-09T09:51:35.079226+00:00",
+      "description": "Ticket was canceled and will not be processed further"
+    },
+    {
+      "status_id": "133345d1-27b6-40ac-a859-c48ebb4b417b",
+      "status_code": "rejected",
+      "status_name": "Rejected",
+      "status_category": "agent",
+      "sla_behavior": "stop",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 100,
+      "created_at": "2026-01-10T12:35:19.385058+00:00",
+      "description": ""
+    },
+    {
+      "status_id": "5cbd7e80-9126-41be-af28-314bd9bd34c6",
+      "status_code": "on_queque",
+      "status_name": "On Queque",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 101,
+      "created_at": "2026-01-15T01:36:32.419231+00:00",
+      "description": ""
+    },
+    {
+      "status_id": "8a796bb6-0f22-4a10-8e3b-056ee64d0544",
+      "status_code": "confirmation",
+      "status_name": "Confirmation",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 102,
+      "created_at": "2026-01-15T01:38:05.169041+00:00",
+      "description": ""
+    },
+    {
+      "status_id": "b3404dde-4019-4b21-990a-b2f0b21c0fa8",
+      "status_code": "approved",
+      "status_name": "Approved",
+      "status_category": "agent",
+      "sla_behavior": "stop",
+      "is_final": true,
+      "is_active": true,
+      "sort_order": 103,
+      "created_at": "2026-01-15T01:39:49.121515+00:00",
+      "description": ""
+    },
+    {
+      "status_id": "71e8ebb1-d694-4812-ae16-28e3a8fbd8e0",
+      "status_code": "running",
+      "status_name": "Running",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 104,
+      "created_at": "2026-01-15T01:42:39.596733+00:00",
+      "description": ""
+    },
+    {
+      "status_id": "f79338f9-7e8e-4369-b7ee-4ee07979866f",
+      "status_code": "return_to_requester",
+      "status_name": "Return to requester",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 105,
+      "created_at": "2026-01-15T01:44:41.068426+00:00",
+      "description": ""
+    },
+    {
+      "status_id": "0764fcf0-2315-4c5a-aef7-e36c15c59039",
+      "status_code": "review_in_progress",
+      "status_name": "Review In progress",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 106,
+      "created_at": "2026-01-15T01:46:32.0036+00:00",
+      "description": ""
+    },
+    {
+      "status_id": "a6fa2a19-b57b-47af-80ec-ed10b11c5c6e",
+      "status_code": "sign_document",
+      "status_name": "Sign Document",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 107,
+      "created_at": "2026-01-15T01:49:09.934079+00:00",
+      "description": ""
+    },
+    {
+      "status_id": "e9c819d7-2927-4ad6-999f-300da8e18732",
+      "status_code": "PENDING_DEV",
+      "status_name": "Pending - Development",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 108,
+      "created_at": "2026-02-05T02:43:49.859319+00:00",
+      "description": ""
+    },
+    {
+      "status_id": "45d9da3a-f386-403d-a466-95fa60823e44",
+      "status_code": "ESCALATED",
+      "status_name": "Escalated",
+      "status_category": "agent",
+      "sla_behavior": "run",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 109,
+      "created_at": "2026-02-05T02:47:04.517189+00:00",
+      "description": ""
+    },
+    {
+      "status_id": "654aecd4-2922-4f30-b8a7-11bbd87c4a32",
+      "status_code": "pending_internal_team",
+      "status_name": "Pending - Internal Team",
+      "status_category": "agent",
+      "sla_behavior": "pause",
+      "is_final": false,
+      "is_active": true,
+      "sort_order": 110,
+      "created_at": "2026-02-05T08:42:14.019056+00:00",
+      "description": ""
+    }
+  ]
+}

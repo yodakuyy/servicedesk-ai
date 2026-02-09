@@ -372,6 +372,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       try {
         const { supabase } = await import('../lib/supabase');
         const isAgent = userProfile?.role_id === 3 || userProfile?.role_id === '3';
+        const isSupervisor = userProfile?.role_id === 2 || userProfile?.role_id === '2';
+        const isAdmin = userProfile?.role_id === 1 || userProfile?.role_id === '1';
+
+        let myGroupIds: string[] = [];
+        // Fetch groups for Supervisors and Agents to filter dashboard
+        if (!isAdmin) {
+          const { data: groups } = await supabase.from('user_groups').select('group_id').eq('user_id', userProfile.id);
+          if (groups) myGroupIds = groups.map(g => g.group_id);
+        }
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
@@ -382,11 +391,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .in('status_name', ['Open', 'In Progress']);
         const openStatusIds = openStatusesResult?.map(s => s.status_id) || [];
 
-        // 1.5 Get Pending Status IDs
+        // 1.5 Get Pending/Waiting Status IDs
         const { data: pendingStatusesResult } = await supabase
           .from('ticket_statuses')
           .select('status_id')
-          .ilike('status_name', '%pending%');
+          .or('status_name.ilike.%pending%,status_name.ilike.%waiting%');
         const pendingStatusIds = pendingStatusesResult?.map(s => s.status_id) || [];
 
         // 2. Get All Active Status IDs (Excluding Resolved, Closed, Canceled)
@@ -413,6 +422,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           newTicketsQuery = newTicketsQuery.eq('assigned_to', userProfile.id);
         } else {
           newTicketsQuery = newTicketsQuery.gte('created_at', sevenDaysAgo.toISOString());
+          if (isSupervisor && myGroupIds.length > 0) {
+            newTicketsQuery = newTicketsQuery.in('assignment_group_id', myGroupIds);
+          }
         }
         const { data: newTickets } = await newTicketsQuery;
 
@@ -428,25 +440,53 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('created_at', { ascending: false });
 
         if (isAgent) openTicketsQuery = openTicketsQuery.eq('assigned_to', userProfile.id);
+        else if (isSupervisor && myGroupIds.length > 0) openTicketsQuery = openTicketsQuery.in('assignment_group_id', myGroupIds);
         const { data: openTicketsFullList } = await openTicketsQuery;
 
-        // 4. OVERDUE TICKETS (Simplified - tickets open > 24h)
-        const twentyFourHoursAgo = new Date();
-        twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+        // 4. OVERDUE TICKETS (Enhanced Logic with Priority-based SLA & Paused Time)
+        // We fetch active tickets created > 4 hours ago (minimum SLA is 4h for Urgent)
+        const fourHoursAgo = new Date();
+        fourHoursAgo.setHours(fourHoursAgo.getHours() - 4);
 
         let overdueQuery = supabase
           .from('tickets')
           .select(`
-            id, ticket_number, subject, priority, created_at, updated_at,
+            id, ticket_number, subject, priority, created_at, updated_at, total_paused_minutes,
             requester:profiles!fk_tickets_requester(full_name),
             assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
           `)
-          .in('status_id', activeStatusIds)
-          .lt('created_at', twentyFourHoursAgo.toISOString())
+          // Exclude Pending/Waiting tickets from Overdue
+          .in('status_id', activeStatusIds.filter(id => !pendingStatusIds.includes(id)))
+          .lt('created_at', fourHoursAgo.toISOString())
           .order('created_at', { ascending: true });
 
         if (isAgent) overdueQuery = overdueQuery.eq('assigned_to', userProfile.id);
-        const { data: overdueTicketsFullList } = await overdueQuery;
+        else if (isSupervisor && myGroupIds.length > 0) overdueQuery = overdueQuery.in('assignment_group_id', myGroupIds);
+        const { data: potentialOverdue } = await overdueQuery;
+
+        // Filter based on Priority SLA
+        const overdueTicketsFullList = (potentialOverdue || []).filter((t: any) => {
+          const created = new Date(t.created_at);
+          const now = new Date();
+
+          // Calculate active time (Elapsed - Paused)
+          const elapsedMinutes = (now.getTime() - created.getTime()) / (1000 * 60);
+          const pausedMinutes = t.total_paused_minutes || 0;
+          const activeMinutes = Math.max(0, elapsedMinutes - pausedMinutes);
+          const activeHours = activeMinutes / 60;
+
+          // SLA Map (Hours)
+          // Urgent: 4h, High: 8h, Medium: 48h (2 days), Low: 120h (5 days)
+          let limit = 24; // Default Fallback
+          const p = (t.priority || '').toLowerCase();
+
+          if (p.includes('urgent') || p.includes('critical')) limit = 4;
+          else if (p.includes('high')) limit = 8;
+          else if (p.includes('medium')) limit = 48; // 2 Days
+          else if (p.includes('low')) limit = 120; // 5 Days
+
+          return activeHours > limit;
+        });
 
         // 5. UNASSIGNED TICKETS
         let unassignedQuery = supabase
@@ -459,7 +499,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .in('status_id', activeStatusIds)
           .order('created_at', { ascending: false });
 
-        // Even for agents, unassigned is usually global within group or system
+        // Filter Unassigned by Group for Supervisor/Agent
+        if (!isAdmin && myGroupIds.length > 0) {
+          unassignedQuery = unassignedQuery.in('assignment_group_id', myGroupIds);
+        }
         const { data: unassignedTicketsFullList } = await unassignedQuery;
 
         // 5.5 PENDING TICKETS (Full List for Modal)
@@ -472,6 +515,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           `)
           .in('status_id', pendingStatusIds);
         if (isAgent) pendingQuery = pendingQuery.eq('assigned_to', userProfile.id);
+        else if (isSupervisor && myGroupIds.length > 0) pendingQuery = pendingQuery.in('assignment_group_id', myGroupIds);
         const { data: pendingTicketsFullList } = await pendingQuery;
         const pendingCount = pendingTicketsFullList?.length || 0;
 
@@ -491,10 +535,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('updated_at', { ascending: false });
 
         if (isAgent) resolvedQuery = resolvedQuery.eq('assigned_to', userProfile.id);
+        else if (isSupervisor && myGroupIds.length > 0) resolvedQuery = resolvedQuery.in('assignment_group_id', myGroupIds);
         const { data: resolvedTicketsFullList } = await resolvedQuery;
 
         // 7. SATISFACTION REVIEWS
-        const { data: satisfactionData } = await supabase
+        let satisfactionQuery = supabase
           .from('tickets')
           .select(`
             id, ticket_number, satisfaction_rating, user_feedback, updated_at,
@@ -503,16 +548,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .not('satisfaction_rating', 'is', null)
           .order('updated_at', { ascending: false });
 
+        if (isAgent) satisfactionQuery = satisfactionQuery.eq('assigned_to', userProfile.id);
+        else if (isSupervisor && myGroupIds.length > 0) satisfactionQuery = satisfactionQuery.in('assignment_group_id', myGroupIds);
+
+        const { data: satisfactionData } = await satisfactionQuery;
+
         const satisfactionReviewsList = satisfactionData || [];
         const avgSatisfaction = satisfactionReviewsList.length
           ? (satisfactionReviewsList.reduce((acc, curr) => acc + (curr.satisfaction_rating || 0), 0) / satisfactionReviewsList.length).toFixed(1)
           : "0.0";
 
-        // 8. TOP CATEGORIES (Existing logic)
-        const { data: incidentCategories } = await supabase
+        // 8. TOP CATEGORIES
+        let incidentQuery = supabase
           .from('tickets')
           .select('category_id, ticket_categories(name)')
           .eq('ticket_type', 'Incident');
+
+        if (isAgent) incidentQuery = incidentQuery.eq('assigned_to', userProfile.id);
+        else if (isSupervisor && myGroupIds.length > 0) incidentQuery = incidentQuery.in('assignment_group_id', myGroupIds);
+
+        const { data: incidentCategories } = await incidentQuery;
 
         const categoryCount: Record<string, number> = {};
         incidentCategories?.forEach(t => {
@@ -526,10 +581,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .slice(0, 5)
           .map(([name, count], i) => ({ name, count, fill: colors[i] || '#9ca3af' }));
 
-        const { data: srCategories } = await supabase
+        let srQuery = supabase
           .from('tickets')
           .select('category_id, ticket_categories(name)')
           .eq('ticket_type', 'Service Request');
+
+        if (isAgent) srQuery = srQuery.eq('assigned_to', userProfile.id);
+        else if (isSupervisor && myGroupIds.length > 0) srQuery = srQuery.in('assignment_group_id', myGroupIds);
+
+        const { data: srCategories } = await srQuery;
 
         const srCategoryCount: Record<string, number> = {};
         srCategories?.forEach(t => {
@@ -546,10 +606,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         // 9. WEEKLY TREND
         const sevenDaysAgoDate = new Date();
         sevenDaysAgoDate.setDate(sevenDaysAgoDate.getDate() - 6);
-        const { data: trendTickets } = await supabase
+        let trendQuery = supabase
           .from('tickets')
           .select('created_at, ticket_type')
           .gte('created_at', sevenDaysAgoDate.toISOString().split('T')[0]);
+
+        if (isAgent) trendQuery = trendQuery.eq('assigned_to', userProfile.id);
+        else if (isSupervisor && myGroupIds.length > 0) trendQuery = trendQuery.in('assignment_group_id', myGroupIds);
+
+        const { data: trendTickets } = await trendQuery;
 
         const weeklyTrendMap: Record<string, { incidents: number; requests: number }> = {};
         const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -630,16 +695,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
               const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
 
-              const { count: countA } = await supabase
+              let queryA = supabase
                 .from('tickets')
                 .select('*', { count: 'exact', head: true })
                 .gte('created_at', twentyFourHoursAgo.toISOString());
 
-              const { count: countB } = await supabase
+              if (isAgent) queryA = queryA.eq('assigned_to', userProfile.id);
+              else if (isSupervisor && myGroupIds.length > 0) queryA = queryA.in('assignment_group_id', myGroupIds);
+
+              const { count: countA } = await queryA;
+
+              let queryB = supabase
                 .from('tickets')
                 .select('*', { count: 'exact', head: true })
                 .gte('created_at', fortyEightHoursAgo.toISOString())
                 .lt('created_at', twentyFourHoursAgo.toISOString());
+
+              if (isAgent) queryB = queryB.eq('assigned_to', userProfile.id);
+              else if (isSupervisor && myGroupIds.length > 0) queryB = queryB.in('assignment_group_id', myGroupIds);
+
+              const { count: countB } = await queryB;
 
               const valA = countA || 0;
               const valB = countB || 0;

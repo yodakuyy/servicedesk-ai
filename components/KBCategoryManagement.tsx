@@ -18,8 +18,7 @@ import {
     ArrowLeft,
     Loader2
 } from 'lucide-react';
-// @ts-ignore
-import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
+import Swal from 'sweetalert2';
 
 interface KBCategoryNode {
     id: string;

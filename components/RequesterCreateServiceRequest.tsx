@@ -51,6 +51,7 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
     const [categories, setCategories] = useState<CategoryNode[]>([]);
     const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
     const [selectedCategoryName, setSelectedCategoryName] = useState('');
+    const [selectedCategoryDescription, setSelectedCategoryDescription] = useState<string | undefined>('');
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoadingCategories, setIsLoadingCategories] = useState(true);
     const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
@@ -178,6 +179,7 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
 
         setSelectedCategoryId(node.id);
         setSelectedCategoryName(node.name);
+        setSelectedCategoryDescription(node.description);
         fetchFields(node.id);
         setStep(2);
     };
@@ -585,7 +587,16 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                             </div>
                             <div>
                                 <h2 className="text-xl font-black text-gray-900">{selectedCategoryName}</h2>
-                                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">New {ticketType}</p>
+                                <div className="flex flex-col gap-1 mt-1">
+                                    <p className="text-[10px] font-black text-white bg-indigo-600 px-2 py-0.5 rounded-full w-fit uppercase tracking-wider">
+                                        New {ticketType}
+                                    </p>
+                                    {selectedCategoryDescription && (
+                                        <p className="text-xs font-medium text-gray-500 leading-relaxed italic">
+                                            {selectedCategoryDescription}
+                                        </p>
+                                    )}
+                                </div>
                             </div>
                         </div>
 

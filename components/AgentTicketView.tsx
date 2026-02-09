@@ -2463,7 +2463,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     <div className="flex justify-between items-start mb-1">
                                         <div className="flex items-center gap-2">
                                             <div className="flex items-center gap-1.5">
-                                                <div className={`w-2 h-2 rounded-full ${ticket.priority === 'High' ? 'bg-red-500' : 'bg-green-500'}`} />
+                                                <div className={`w-2 h-2 rounded-full ${ticket.priority?.toLowerCase() === 'high' ? 'bg-red-500' : ticket.priority?.toLowerCase() === 'urgent' ? 'bg-orange-500' : 'bg-green-500'}`} />
                                                 <span className="font-bold text-xs text-blue-600">{ticket.ticket_number}</span>
                                             </div>
                                             {ticket.is_category_verified ? (

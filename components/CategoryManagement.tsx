@@ -34,6 +34,7 @@ interface CategoryNode {
     parent_id?: string | null;
     default_group_id?: string | null;
     assignment_strategy?: 'manual' | 'round_robin';
+    default_priority?: 'Urgent' | 'High' | 'Medium' | 'Low' | null;
 }
 
 // No mock data needed anymore
@@ -58,7 +59,8 @@ const CategoryManagement: React.FC = () => {
         level: 1,
         type: 'Incident' as 'Incident' | 'Service Request' | 'Change Request',
         default_group_id: null as string | null,
-        assignment_strategy: 'manual' as 'manual' | 'round_robin'
+        assignment_strategy: 'manual' as 'manual' | 'round_robin',
+        default_priority: null as string | null
     });
 
     useEffect(() => {
@@ -96,6 +98,7 @@ const CategoryManagement: React.FC = () => {
                     parent_id: item.parent_id ? String(item.parent_id) : null,
                     default_group_id: item.default_group_id ? String(item.default_group_id) : null,
                     assignment_strategy: item.assignment_strategy || 'manual',
+                    default_priority: item.default_priority || null,
                     visible_to: Array.isArray(item.visible_to) ? item.visible_to : []
                 }));
 
@@ -123,7 +126,8 @@ const CategoryManagement: React.FC = () => {
                     is_active: node.isActive,
                     visible_to: node.visible_to,
                     default_group_id: node.default_group_id,
-                    assignment_strategy: node.assignment_strategy || 'manual'
+                    assignment_strategy: node.assignment_strategy || 'manual',
+                    default_priority: node.default_priority
                 })
                 .eq('id', node.id);
 
@@ -377,7 +381,8 @@ const CategoryManagement: React.FC = () => {
             level: parentNode ? parentNode.level + 1 : 1,
             type: parentNode ? parentNode.type : ticketType,
             default_group_id: parentNode ? parentNode.default_group_id : null,
-            assignment_strategy: parentNode ? parentNode.assignment_strategy : 'manual'
+            assignment_strategy: parentNode ? parentNode.assignment_strategy : 'manual',
+            default_priority: parentNode ? parentNode.default_priority : null
         });
         setIsAddModalOpen(true);
     };
@@ -409,7 +414,8 @@ const CategoryManagement: React.FC = () => {
                     is_active: newCategoryData.isActive,
                     visible_to: newCategoryData.visible_to,
                     default_group_id: newCategoryData.default_group_id,
-                    assignment_strategy: newCategoryData.assignment_strategy
+                    assignment_strategy: newCategoryData.assignment_strategy,
+                    default_priority: newCategoryData.default_priority
                 }])
                 .select()
                 .single();
@@ -686,6 +692,34 @@ const CategoryManagement: React.FC = () => {
                                     </select>
                                     <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide ml-1">Tickets in this category will auto-route to this group</span>
                                 </div>
+                                <div className="flex flex-col gap-2 flex-grow">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Default Priority (Urgency)</label>
+                                    <select
+                                        disabled={!isEditing}
+                                        value={selectedNode.default_priority || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value || null;
+                                            setCategories(prev => {
+                                                const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
+                                                    return nodes.map(n => {
+                                                        if (n.id === selectedNode.id) return { ...n, default_priority: val as any };
+                                                        if (n.children) return { ...n, children: updateInTree(n.children) };
+                                                        return n;
+                                                    });
+                                                };
+                                                return updateInTree(prev);
+                                            });
+                                        }}
+                                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 disabled:bg-gray-100/50 disabled:cursor-not-allowed transition-all"
+                                    >
+                                        <option value="">System Default</option>
+                                        <option value="urgent">Urgent</option>
+                                        <option value="high">High</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="low">Low</option>
+                                    </select>
+                                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide ml-1">Automate urgency based on category</span>
+                                </div>
                             </div>
 
                             {/* Assignment Strategy */}
@@ -955,41 +989,55 @@ const CategoryManagement: React.FC = () => {
                                                 <span className="block text-[10px] text-gray-500 leading-tight">Auto-assign agents</span>
                                             </button>
                                         </div>
+                                        <div className="space-y-3 col-span-2 pt-2">
+                                            <label className="text-xs font-bold text-gray-700">Default Priority (Urgency)</label>
+                                            <select
+                                                value={newCategoryData.default_priority || ''}
+                                                onChange={(e) => setNewCategoryData(prev => ({ ...prev, default_priority: e.target.value || null }))}
+                                                className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all"
+                                            >
+                                                <option value="">System Default</option>
+                                                <option value="urgent">Urgent</option>
+                                                <option value="high">High</option>
+                                                <option value="medium">Medium</option>
+                                                <option value="low">Low</option>
+                                            </select>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
 
-                            {/* Footer */}
-                            <div className="px-8 py-5 border-t border-gray-100 bg-gray-50/50 flex items-center justify-end gap-3">
-                                <button
-                                    onClick={() => setIsAddModalOpen(false)}
-                                    className="px-5 py-2.5 bg-white border border-gray-200 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={handleCreateCategory}
-                                    disabled={isCreating}
-                                    className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 disabled:opacity-70 disabled:cursor-not-allowed flex items-center gap-2"
-                                >
-                                    {isCreating ? (
-                                        <>
-                                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                            Creating...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Plus size={18} />
-                                            {newCategoryData.parent_id ? 'Create Subcategory' : 'Create Category'}
-                                        </>
-                                    )}
-                                </button>
+                                {/* Footer */}
+                                <div className="px-8 py-5 border-t border-gray-100 bg-gray-50/50 flex items-center justify-end gap-3">
+                                    <button
+                                        onClick={() => setIsAddModalOpen(false)}
+                                        className="px-5 py-2.5 bg-white border border-gray-200 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={handleCreateCategory}
+                                        disabled={isCreating}
+                                        className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 disabled:opacity-70 disabled:cursor-not-allowed flex items-center gap-2"
+                                    >
+                                        {isCreating ? (
+                                            <>
+                                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                                Creating...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Plus size={18} />
+                                                {newCategoryData.parent_id ? 'Create Subcategory' : 'Create Category'}
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 )
             }
-        </div >
+        </div>
     );
 };
 
