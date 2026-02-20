@@ -170,15 +170,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
             if (announceData && announceData.length > 0) {
                 setAnnouncements(announceData);
             } else {
-                setAnnouncements([
-                    {
-                        id: '1',
-                        title: 'Scheduled Maintenance Tonight',
-                        content: 'Save your work before 10PM to avoid data loss during the update.',
-                        type: 'info',
-                        created_at: new Date().toISOString()
-                    }
-                ]);
+                setAnnouncements([]);
             }
         };
         fetchData();
@@ -534,7 +526,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                 )}
 
                 {/* Top Knowledge Articles */}
-                <div className="lg:col-span-2 flex flex-col gap-4">
+                <div className={`${announcements.length > 0 ? 'lg:col-span-2' : 'lg:col-span-3'} flex flex-col gap-4`}>
                     <div className="flex justify-between items-end mb-1">
                         <div>
                             <h2 className="text-xl font-black text-gray-800">Knowledge Base</h2>

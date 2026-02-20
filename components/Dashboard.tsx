@@ -70,6 +70,7 @@ import UserNotificationPreferences from './UserNotificationPreferences';
 import ReportsView from './ReportsView';
 import ServiceRequestFields from './ServiceRequestFields';
 import AnnouncementManagement from './AnnouncementManagement';
+import PortalHighlights from './PortalHighlights';
 import { useNotifications } from '../hooks/useNotifications';
 import { useRealtimeToast } from '../hooks/useRealtimeToast';
 
@@ -1298,15 +1299,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     }
 
     if (currentView === 'portal-highlights') {
-      return (
-        <div className="p-8 flex flex-col items-center justify-center h-full text-center">
-          <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
-            <Globe size={32} className="text-indigo-400" />
-          </div>
-          <h3 className="text-lg font-bold text-gray-800 mb-2">Portal Highlights</h3>
-          <p className="text-gray-500 max-w-md">This settings module is currently under development.</p>
-        </div>
-      );
+      return <PortalHighlights />;
     }
 
     if (currentView === 'announcement-management') {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, ResponsiveContainer, Tooltip } from 'recharts';
 import { Twitter, Instagram, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 const data = [
   { name: 'Apr', value: 120000 },
@@ -18,15 +19,15 @@ const OriginalSlide: React.FC = () => {
       {/* Decorative Background Shapes */}
       <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-bl-full pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-96 h-96 pointer-events-none">
-         {/* Staircase effect */}
-         <div className="absolute bottom-0 right-0 w-32 h-32 bg-white/5" />
-         <div className="absolute bottom-32 right-32 w-32 h-32 bg-white/5" />
-         <div className="absolute bottom-64 right-64 w-32 h-32 bg-white/5" />
+        {/* Staircase effect */}
+        <div className="absolute bottom-0 right-0 w-32 h-32 bg-white/5" />
+        <div className="absolute bottom-32 right-32 w-32 h-32 bg-white/5" />
+        <div className="absolute bottom-64 right-64 w-32 h-32 bg-white/5" />
       </div>
 
       {/* Content Container - Relative for z-index */}
       <div className="relative w-full max-w-lg aspect-square">
-        
+
         {/* Floating Icon: Twitter */}
         <div className="absolute top-20 left-10 bg-white p-3 rounded-full shadow-lg animate-bounce duration-[3000ms]">
           <Twitter className="w-6 h-6 text-[#1DA1F2]" fill="currentColor" />
@@ -34,14 +35,14 @@ const OriginalSlide: React.FC = () => {
 
         {/* Floating Icon: Instagram */}
         <div className="absolute top-10 right-1/3 bg-white p-3 rounded-full shadow-lg animate-bounce duration-[4000ms] delay-75">
-           <Instagram className="w-6 h-6 text-[#E1306C]" />
+          <Instagram className="w-6 h-6 text-[#E1306C]" />
         </div>
 
         {/* Floating Icon: Messenger */}
         <div className="absolute bottom-40 right-0 bg-white p-3 rounded-full shadow-lg animate-bounce duration-[3500ms] delay-150">
-           <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-blue-500 to-pink-500 flex items-center justify-center">
-             <MessageCircle className="w-4 h-4 text-white" fill="currentColor"/>
-           </div>
+          <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-blue-500 to-pink-500 flex items-center justify-center">
+            <MessageCircle className="w-4 h-4 text-white" fill="currentColor" />
+          </div>
         </div>
 
         {/* Card 1: Rewards (Top Right) */}
@@ -74,34 +75,34 @@ const OriginalSlide: React.FC = () => {
               +14%
             </div>
           </div>
-          
+
           {/* Recharts Area Chart */}
           <div className="h-32 w-full mt-2 relative">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={data}>
                 <defs>
                   <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#4c40e6" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#4c40e6" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#4c40e6" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#4c40e6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Tooltip 
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-                    itemStyle={{ color: '#4c40e6', fontWeight: 600 }}
-                    cursor={{ stroke: '#4c40e6', strokeWidth: 1, strokeDasharray: '4 4' }}
+                <Tooltip
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                  itemStyle={{ color: '#4c40e6', fontWeight: 600 }}
+                  cursor={{ stroke: '#4c40e6', strokeWidth: 1, strokeDasharray: '4 4' }}
                 />
-                <Area 
-                  type="monotone" 
-                  dataKey="value" 
-                  stroke="#4c40e6" 
+                <Area
+                  type="monotone"
+                  dataKey="value"
+                  stroke="#4c40e6"
                   strokeWidth={2}
-                  fillOpacity={1} 
-                  fill="url(#colorValue)" 
+                  fillOpacity={1}
+                  fill="url(#colorValue)"
                 />
               </AreaChart>
             </ResponsiveContainer>
           </div>
-          
+
           <div className="flex justify-between mt-2 text-xs text-gray-400 uppercase tracking-wide">
             <span>Apr</span>
             <span>May</span>
@@ -137,17 +138,17 @@ const ImageSlide: React.FC<ImageSlideProps> = ({ src, title, subtitle }) => (
   <div className="w-full h-full relative">
     {/* Fallback color */}
     <div className="absolute inset-0 bg-brand-primary" />
-    
+
     {/* Image with object-cover for auto-resizing */}
-    <img 
-      src={src} 
-      alt={title} 
+    <img
+      src={src}
+      alt={title}
       className="w-full h-full object-cover opacity-90"
     />
-    
+
     {/* Gradient Overlay for text readability */}
     <div className="absolute inset-0 bg-gradient-to-t from-brand-900/95 via-brand-900/20 to-transparent" />
-    
+
     {/* Text Content */}
     <div className="absolute bottom-20 left-0 right-0 text-center text-white space-y-3 max-w-lg mx-auto px-8 z-10">
       <h2 className="text-3xl font-bold tracking-tight drop-shadow-md">{title}</h2>
@@ -158,33 +159,63 @@ const ImageSlide: React.FC<ImageSlideProps> = ({ src, title, subtitle }) => (
   </div>
 );
 
+// Hardcoded fallback slides (used when database is empty or unavailable)
+const fallbackSlides = [
+  { type: 'component', title: '', subtitle: '', image_url: '' },
+  {
+    type: 'image',
+    title: 'New Legal Service Desk',
+    subtitle: 'We are excited to announce a dedicated support channel for the Legal Department. Submit contract reviews and risk assessments directly via the new portal.',
+    image_url: 'https://images.unsplash.com/photo-1497215728101-856f4ea42174?ixlib=rb-4.0.3&auto=format&fit=crop&w=1080&q=80',
+  },
+  {
+    type: 'image',
+    title: 'System Maintenance Update',
+    subtitle: 'Scheduled maintenance will occur this Saturday from 10 PM to 2 AM. Please save your work as services will be briefly unavailable.',
+    image_url: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?ixlib=rb-4.0.3&auto=format&fit=crop&w=1080&q=80',
+  }
+];
+
 const VisualSection: React.FC = () => {
   const [currentSlide, setCurrentSlide] = useState(0);
+  const [slides, setSlides] = useState(fallbackSlides);
 
-  const slides = [
-    { type: 'component' },
-    { 
-      type: 'image', 
-      src: 'https://images.unsplash.com/photo-1497215728101-856f4ea42174?ixlib=rb-4.0.3&auto=format&fit=crop&w=1080&q=80',
-      title: 'New Legal Service Desk',
-      subtitle: 'We are excited to announce a dedicated support channel for the Legal Department. Submit contract reviews and risk assessments directly via the new portal.'
-    },
-    { 
-      type: 'image', 
-      src: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?ixlib=rb-4.0.3&auto=format&fit=crop&w=1080&q=80',
-      title: 'System Maintenance Update',
-      subtitle: 'Scheduled maintenance will occur this Saturday from 10 PM to 2 AM. Please save your work as services will be briefly unavailable.'
-    }
-  ];
+  // Fetch slides from portal_highlights table
+  useEffect(() => {
+    const fetchSlides = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('portal_highlights')
+          .select('*')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true });
+
+        if (!error && data && data.length > 0) {
+          const dbSlides = data.map(h => ({
+            type: h.slide_type,
+            title: h.title,
+            subtitle: h.subtitle || '',
+            image_url: h.image_url || '',
+          }));
+          setSlides(dbSlides);
+        }
+        // If error or no data, keep fallback slides
+      } catch (err) {
+        console.log('Portal highlights not available, using fallback slides');
+      }
+    };
+    fetchSlides();
+  }, []);
 
   // Auto-rotate slides
   useEffect(() => {
+    if (slides.length <= 1) return;
     const timer = setInterval(() => {
       setCurrentSlide((prev) => (prev + 1) % slides.length);
-    }, 5000); // 5 seconds per slide
+    }, 5000);
 
     return () => clearInterval(timer);
-  }, [currentSlide, slides.length]); // Add currentSlide dependency to reset timer on manual change
+  }, [currentSlide, slides.length]);
 
   const nextSlide = () => {
     setCurrentSlide((prev) => (prev + 1) % slides.length);
@@ -198,56 +229,60 @@ const VisualSection: React.FC = () => {
     <div className="w-full h-full relative overflow-hidden group">
       {/* Slides Container */}
       {slides.map((slide, index) => (
-        <div 
+        <div
           key={index}
-          className={`absolute inset-0 w-full h-full transition-opacity duration-1000 ease-in-out ${
-            index === currentSlide ? 'opacity-100 z-10' : 'opacity-0 z-0'
-          }`}
+          className={`absolute inset-0 w-full h-full transition-opacity duration-1000 ease-in-out ${index === currentSlide ? 'opacity-100 z-10' : 'opacity-0 z-0'
+            }`}
         >
           {slide.type === 'component' ? (
             <OriginalSlide />
           ) : (
-            <ImageSlide 
-              src={slide.src!} 
-              title={slide.title!} 
-              subtitle={slide.subtitle!} 
+            <ImageSlide
+              src={slide.image_url!}
+              title={slide.title!}
+              subtitle={slide.subtitle!}
             />
           )}
         </div>
       ))}
 
       {/* Manual Navigation Arrows */}
-      <button 
-        onClick={prevSlide}
-        className="absolute left-4 top-1/2 -translate-y-1/2 z-30 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all duration-300 transform hover:scale-110"
-        aria-label="Previous slide"
-      >
-        <ChevronLeft size={24} />
-      </button>
+      {slides.length > 1 && (
+        <>
+          <button
+            onClick={prevSlide}
+            className="absolute left-4 top-1/2 -translate-y-1/2 z-30 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all duration-300 transform hover:scale-110"
+            aria-label="Previous slide"
+          >
+            <ChevronLeft size={24} />
+          </button>
 
-      <button 
-        onClick={nextSlide}
-        className="absolute right-4 top-1/2 -translate-y-1/2 z-30 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all duration-300 transform hover:scale-110"
-        aria-label="Next slide"
-      >
-        <ChevronRight size={24} />
-      </button>
+          <button
+            onClick={nextSlide}
+            className="absolute right-4 top-1/2 -translate-y-1/2 z-30 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all duration-300 transform hover:scale-110"
+            aria-label="Next slide"
+          >
+            <ChevronRight size={24} />
+          </button>
+        </>
+      )}
 
       {/* Navigation Dots */}
-      <div className="absolute bottom-8 left-0 right-0 z-20 flex justify-center gap-2">
-        {slides.map((_, idx) => (
-          <button 
-            key={idx}
-            onClick={() => setCurrentSlide(idx)}
-            className={`h-1.5 rounded-full transition-all duration-300 ${
-              currentSlide === idx 
-                ? 'w-8 bg-white opacity-100 shadow-sm' 
-                : 'w-1.5 bg-white opacity-40 hover:opacity-70 hover:w-3'
-            }`}
-            aria-label={`Go to slide ${idx + 1}`}
-          />
-        ))}
-      </div>
+      {slides.length > 1 && (
+        <div className="absolute bottom-8 left-0 right-0 z-20 flex justify-center gap-2">
+          {slides.map((_, idx) => (
+            <button
+              key={idx}
+              onClick={() => setCurrentSlide(idx)}
+              className={`h-1.5 rounded-full transition-all duration-300 ${currentSlide === idx
+                  ? 'w-8 bg-white opacity-100 shadow-sm'
+                  : 'w-1.5 bg-white opacity-40 hover:opacity-70 hover:w-3'
+                }`}
+              aria-label={`Go to slide ${idx + 1}`}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 };
