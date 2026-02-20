@@ -46,6 +46,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                         *,
                         ticket_statuses!fk_tickets_status (status_name),
                         agent:profiles!fk_tickets_assigned_agent (full_name),
+                        group:groups!assignment_group_id (name),
                         ticket_attachments (*)
                     `)
                     .eq('id', ticketId)
@@ -134,7 +135,8 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                 .select(`
                     *,
                     ticket_statuses!fk_tickets_status (status_name),
-                    agent:profiles!fk_tickets_assigned_agent (full_name)
+                    agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (name)
                 `)
                 .eq('id', ticketId)
                 .single();
@@ -436,7 +438,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                             <div className="px-6 pb-6 pt-2 border-t border-gray-100 grid md:grid-cols-2 gap-4">
                                 <InfoItem label="Ticket Number" value={ticket.ticket_number} />
                                 <InfoItem label="Created At" value={new Date(ticket.created_at).toLocaleString()} />
-                                <InfoItem label="Type" value={ticket.ticket_type ? ticket.ticket_type.charAt(0).toUpperCase() + ticket.ticket_type.slice(1) : '-'} />
+                                <InfoItem label="Type" value={ticket.ticket_type ? ticket.ticket_type.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : '-'} />
                                 <InfoItem label="Assignment Group" value={ticket.assignment_group_id ? (ticket.group?.name || 'Assigned') : 'Queueing'} />
                                 <InfoItem label="PIC / Handled By" value={ticket.agent?.full_name || 'Waiting for Agent...'} />
                             </div>

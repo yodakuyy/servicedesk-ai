@@ -123,11 +123,13 @@ const ReportsView: React.FC = () => {
     useEffect(() => { setExportPage(1); setSlaPage(1); }, [activeTab]);
 
     const checkTicketSla = (t: any, policies: any[] = [], targets: any[] = []) => {
-        const sName = (t.ticket_statuses?.status_name || (Array.isArray(t.ticket_statuses) ? t.ticket_statuses[0]?.status_name : null))?.toLowerCase();
-        const isCanceled = sName === 'canceled' || sName === 'cancelled';
-        const isTerminal = ['resolved', 'closed', 'canceled', 'cancelled'].includes(sName);
+        const statusNameRaw = t.ticket_statuses?.status_name || (Array.isArray(t.ticket_statuses) ? t.ticket_statuses[0]?.status_name : null) || '';
+        const sNameLower = statusNameRaw.toLowerCase();
+        const isCanceled = sNameLower === 'canceled' || sNameLower === 'cancelled';
+        const isTerminal = ['resolved', 'closed', 'canceled', 'cancelled'].includes(sNameLower);
+        const isPaused = sNameLower.includes('pending');
 
-        // 1. Find Matching Policy
+        // Find Matching Policy
         const matchingPolicy = policies.find(policy => {
             if (!policy.conditions || !Array.isArray(policy.conditions)) return false;
             return policy.conditions.every((cond: any) => {
@@ -138,10 +140,20 @@ const ReportsView: React.FC = () => {
                     default: return true;
                 }
                 if (!ticketVal) return false;
-                const valLower = String(cond.value).toLowerCase();
-                const ticketValLower = String(ticketVal).toLowerCase();
-                if (cond.operator === 'equals' || !cond.operator) return ticketValLower === valLower;
-                return true;
+                // Normalize for comparison
+                const valNormalized = String(cond.value).toLowerCase().replace(/\s+/g, '_');
+                const ticketValNormalized = String(ticketVal).toLowerCase().replace(/\s+/g, '_');
+
+                if (cond.operator === 'equals' || !cond.operator) return ticketValNormalized === valNormalized;
+                if (cond.operator === 'not_equals') return ticketValNormalized !== valNormalized;
+                if (cond.operator === 'in') {
+                    const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                    return values.includes(ticketValNormalized);
+                }
+                if (cond.operator === 'not_in') {
+                    const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                    return !values.includes(ticketValNormalized);
+                }
             });
         });
 
@@ -152,7 +164,24 @@ const ReportsView: React.FC = () => {
         const respTarget = respTargetObj?.target_minutes || baseTarget / 4;
 
         const startTime = new Date(t.created_at);
-        const schedule = t.group?.business_hours?.weekly_schedule || [];
+        const rawGroup = t.group;
+        const groupObj = Array.isArray(rawGroup) ? rawGroup[0] : rawGroup;
+        const rawBH = groupObj?.business_hours;
+        const bhObj = Array.isArray(rawBH) ? rawBH[0] : rawBH;
+        const schedule = bhObj?.weekly_schedule || [];
+
+        const pausedAt = t.paused_at;
+        const totalPausedMinutes = t.total_paused_minutes || 0;
+
+        const getActiveBusinessElapsed = (start: Date, end: Date) => {
+            let elapsed = calculateBusinessElapsed(start, end, schedule);
+            elapsed = Math.max(0, elapsed - totalPausedMinutes);
+            if (isPaused && pausedAt && end > new Date(pausedAt)) {
+                const currentPauseElapsed = calculateBusinessElapsed(new Date(pausedAt), end, schedule);
+                elapsed = Math.max(0, elapsed - currentPauseElapsed);
+            }
+            return elapsed;
+        };
 
         // 2. Response SLA
         const hasResponded = !!t.first_response_at;
@@ -160,9 +189,8 @@ const ReportsView: React.FC = () => {
         if (hasResponded) {
             respElapsed = calculateBusinessElapsed(startTime, new Date(t.first_response_at), schedule);
         } else {
-            respElapsed = calculateBusinessElapsed(startTime, new Date(), schedule);
+            respElapsed = getActiveBusinessElapsed(startTime, new Date());
         }
-        respElapsed = Math.max(0, respElapsed - (t.total_paused_minutes || 0));
 
         const isResponseOverdue = !isCanceled && respElapsed > respTarget;
 
@@ -179,8 +207,7 @@ const ReportsView: React.FC = () => {
         const effectiveStopTime = stopLog?.created_at || (isTerminal ? t.updated_at : null);
         const resolutionTime = effectiveStopTime ? new Date(effectiveStopTime) : new Date();
 
-        let resolveElapsed = calculateBusinessElapsed(startTime, resolutionTime, schedule);
-        const netResolve = Math.max(0, resolveElapsed - (t.total_paused_minutes || 0));
+        const netResolve = getActiveBusinessElapsed(startTime, resolutionTime);
 
         const isResolveOverdue = !isCanceled && netResolve > baseTarget;
 
@@ -239,7 +266,7 @@ const ReportsView: React.FC = () => {
                 .from('tickets')
                 .select(`
                     id, ticket_number, subject, priority, created_at, updated_at, ticket_type, 
-                    total_paused_minutes, status_id, category_id, assignment_group_id,
+                    total_paused_minutes, paused_at, status_id, category_id, assignment_group_id,
                     ticket_statuses!fk_tickets_status (status_name),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id),
                     group:groups!assignment_group_id (
@@ -315,9 +342,18 @@ const ReportsView: React.FC = () => {
                     return sName !== 'canceled';
                 });
 
-                const incidents = validTickets.filter((t: any) => t.ticket_type?.toLowerCase() === 'incident');
-                const serviceRequests = validTickets.filter((t: any) => t.ticket_type?.toLowerCase() === 'service request' || t.ticket_type?.toLowerCase() === 'request');
-                const changeRequests = validTickets.filter((t: any) => t.ticket_type?.toLowerCase() === 'change request' || t.ticket_type?.toLowerCase() === 'change');
+                const incidents = validTickets.filter((t: any) => {
+                    const type = (t.ticket_type || '').toLowerCase();
+                    return type === 'incident';
+                });
+                const serviceRequests = validTickets.filter((t: any) => {
+                    const type = (t.ticket_type || '').toLowerCase().replace(/_/g, ' ');
+                    return type === 'service request' || type === 'request';
+                });
+                const changeRequests = validTickets.filter((t: any) => {
+                    const type = (t.ticket_type || '').toLowerCase().replace(/_/g, ' ');
+                    return type === 'change request' || type === 'change';
+                });
                 const resolvedTickets = validTickets.filter((t: any) => ['resolved', 'closed'].includes((t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase()));
 
                 // Calculate Avg Resolve Time
@@ -386,7 +422,7 @@ const ReportsView: React.FC = () => {
                     const name = t.assigned_agent?.full_name || t.assigned_agent?.[0]?.full_name || 'Unassigned';
                     if (!agentMap[name]) agentMap[name] = { incident: 0, request: 0, change: 0, total: 0 };
 
-                    const type = t.ticket_type?.toLowerCase();
+                    const type = (t.ticket_type || '').toLowerCase().replace(/_/g, ' ');
                     if (type === 'incident') agentMap[name].incident++;
                     else if (type === 'service request' || type === 'request') agentMap[name].request++;
                     else if (type === 'change request' || type === 'change') agentMap[name].change++;
@@ -451,10 +487,12 @@ const ReportsView: React.FC = () => {
 
         const matchesStatus = exportStatus === 'All' || sName.toLowerCase() === exportStatus.toLowerCase();
 
+        const ticketTypeNorm = (t.ticket_type || '').toLowerCase().replace(/_/g, ' ');
+
         const matchesTicketType = exportTicketType === 'all' ||
-            (exportTicketType === 'incident' && ticketType === 'incident') ||
-            (exportTicketType === 'service' && (ticketType === 'service request' || ticketType === 'request')) ||
-            (exportTicketType === 'change' && (ticketType === 'change request' || ticketType === 'change'));
+            (exportTicketType === 'incident' && ticketTypeNorm === 'incident') ||
+            (exportTicketType === 'service' && (ticketTypeNorm === 'service request' || ticketTypeNorm === 'request')) ||
+            (exportTicketType === 'change' && (ticketTypeNorm === 'change request' || ticketTypeNorm === 'change'));
 
         return matchesSearch && matchesStatus && matchesTicketType;
     }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -572,13 +610,16 @@ const ReportsView: React.FC = () => {
                 .from('tickets')
                 .select(`
                     id, ticket_number, subject, description, priority, created_at, updated_at, ticket_type, 
-                    total_paused_minutes, status_id, category_id, is_category_verified, tags, requester_id,
+                    total_paused_minutes, paused_at, status_id, category_id, is_category_verified, tags, requester_id,
                     ticket_statuses!fk_tickets_status (status_name),
                     requester:profiles!fk_tickets_requester (full_name, email),
                     reporter:profiles!fk_tickets_created_by (full_name),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id),
                     services (name),
-                    group:groups!assignment_group_id (name)
+                    group:groups!assignment_group_id (
+                        id, name,
+                        business_hours (weekly_schedule)
+                    )
                 `)
                 .gte('created_at', dateRange.start + 'T00:00:00')
                 .lte('created_at', dateRange.end + 'T23:59:59');
@@ -729,12 +770,10 @@ const ReportsView: React.FC = () => {
 
                 if (escalatorProfile && isRealHuman(escalatorProfile)) {
                     l1Name = escalatorProfile.full_name;
+                } else if (agent && l1Roles.includes(agent.role_id) && isRealHuman(agent)) {
+                    l1Name = agent.full_name || 'L1 Agent';
                 } else if (l1LogFound) {
                     l1Name = actorMap.get(l1LogFound.actor_id)?.full_name || 'L1 Agent';
-                } else {
-                    if (l1Roles.includes(agent?.role_id) && isRealHuman(agent)) {
-                        l1Name = agent.full_name || 'L1 Agent';
-                    }
                 }
 
                 // L2 Calculation: find LATEST log by L2 roles (excluding creation, must be real human)
@@ -788,9 +827,10 @@ const ReportsView: React.FC = () => {
                 const firstAgentMessage = ticketMessages.find((m: any) =>
                     m.sender_id !== requesterId && m.sender_role === 'agent'
                 );
-                const firstResponseTime = firstAgentMessage ? new Date(firstAgentMessage.created_at).getTime() : null;
-                // Use Math.floor to match UI behavior (truncate, not round)
-                const responseMins = firstResponseTime ? Math.floor((firstResponseTime - creationTime) / 60000) : 0;
+                const schedule = ticket.group?.business_hours?.weekly_schedule || [];
+                const firstResponseTimeTime = firstAgentMessage ? new Date(firstAgentMessage.created_at).getTime() : null;
+                // Use business hours for response time
+                const responseMins = firstResponseTimeTime ? calculateBusinessElapsed(new Date(ticket.created_at), new Date(firstResponseTimeTime), schedule) : 0;
 
                 // Find escalation time and terminal time
                 const escalationTime = escalationLog ? new Date(escalationLog.created_at).getTime() : null;
@@ -804,16 +844,31 @@ const ReportsView: React.FC = () => {
                 let l2Mins = 0;
                 let totalResMins = 0;
 
-                // Total resolution = terminal - creation - paused (calculate directly, not from L1+L2)
-                totalResMins = Math.max(0, Math.floor((actualTerminalTime - creationTime) / 60000) - totalPausedMins);
+                const isPaused = sName.toLowerCase().includes('pending');
+                const pausedAt = ticket.paused_at;
+
+                // Total resolution = business hours between creation and terminal - paused
+                const totalElapsed = calculateBusinessElapsed(new Date(ticket.created_at), new Date(actualTerminalTime), schedule);
+                let netTotalMins = totalElapsed - totalPausedMins;
+                if (isPaused && pausedAt && actualTerminalTime > new Date(pausedAt).getTime()) {
+                    const currentPause = calculateBusinessElapsed(new Date(pausedAt), new Date(actualTerminalTime), schedule);
+                    netTotalMins -= currentPause;
+                }
+                totalResMins = Math.max(0, netTotalMins);
 
                 if (escalationTime && escalationTime > creationTime) {
-                    const rawL1 = Math.floor((escalationTime - creationTime) / 60000);
-                    const rawL2 = Math.floor((actualTerminalTime - escalationTime) / 60000);
+                    const rawL1 = calculateBusinessElapsed(new Date(ticket.created_at), new Date(escalationTime), schedule);
+                    const rawL2 = calculateBusinessElapsed(new Date(escalationTime), new Date(actualTerminalTime), schedule);
 
                     // Match SLA Widget: L1 is clock time, L2 absorbs total pause
                     l1Mins = rawL1;
-                    l2Mins = Math.max(0, rawL2 - totalPausedMins);
+
+                    let netL2Mins = rawL2 - totalPausedMins;
+                    if (isPaused && pausedAt && actualTerminalTime > new Date(pausedAt).getTime()) {
+                        const currentPause = calculateBusinessElapsed(new Date(pausedAt), new Date(actualTerminalTime), schedule);
+                        netL2Mins -= currentPause;
+                    }
+                    l2Mins = Math.max(0, netL2Mins);
                 } else {
                     l1Mins = totalResMins;
                     l2Mins = 0;
@@ -964,7 +1019,7 @@ const ReportsView: React.FC = () => {
                             icon={<Package className="text-indigo-600" />}
                             bg="bg-indigo-50"
                             onClick={() => {
-                                const list = recentTickets.filter((t: any) => t.ticket_type?.toLowerCase() === 'incident');
+                                const list = recentTickets.filter((t: any) => (t.ticket_type || '').toLowerCase().replace(/_/g, ' ') === 'incident');
                                 setDrillDown({ title: 'Incident Tickets', tickets: list });
                             }}
                         />
@@ -976,7 +1031,10 @@ const ReportsView: React.FC = () => {
                             icon={<FileText className="text-emerald-600" />}
                             bg="bg-emerald-50"
                             onClick={() => {
-                                const list = recentTickets.filter((t: any) => t.ticket_type?.toLowerCase()?.includes('request'));
+                                const list = recentTickets.filter((t: any) => {
+                                    const type = (t.ticket_type || '').toLowerCase().replace(/_/g, ' ');
+                                    return type === 'service request' || type === 'request';
+                                });
                                 setDrillDown({ title: 'Service Request Tickets', tickets: list });
                             }}
                         />
@@ -988,7 +1046,10 @@ const ReportsView: React.FC = () => {
                             icon={<GitBranch className="text-blue-600" />}
                             bg="bg-blue-50"
                             onClick={() => {
-                                const list = recentTickets.filter((t: any) => t.ticket_type?.toLowerCase()?.includes('change'));
+                                const list = recentTickets.filter((t: any) => {
+                                    const type = (t.ticket_type || '').toLowerCase().replace(/_/g, ' ');
+                                    return type === 'change request' || type === 'change';
+                                });
                                 setDrillDown({ title: 'Change Request Tickets', tickets: list });
                             }}
                         />
@@ -1285,6 +1346,7 @@ const ReportsView: React.FC = () => {
                                             // L1/L2 Smart Processing (L1: 2, 3 | L2: 5)
                                             const logs = (t as any).activity_logs || [];
                                             const creationTime = new Date(t.created_at).getTime();
+                                            const schedule = (t as any).group?.business_hours?.weekly_schedule || [];
 
                                             const l1Roles = [1, 2, 3]; // Include Admin (1)
                                             const l2Roles = [5];
@@ -1315,12 +1377,10 @@ const ReportsView: React.FC = () => {
                                             const l1LogFound = [...logs].reverse().find((l: any) => l1Roles.includes(l.actor?.role_id) && isRealHuman(l.actor));
                                             if (escalatorProfile && isRealHuman(escalatorProfile)) {
                                                 l1Name = escalatorProfile.full_name;
+                                            } else if (currAgent && l1Roles.includes(currAgent.role_id) && isRealHuman(currAgent)) {
+                                                l1Name = currAgent.full_name || 'L1 Agent';
                                             } else if (l1LogFound) {
                                                 l1Name = (l1LogFound.actor as any)?.full_name || 'L1 Agent';
-                                            } else {
-                                                if (l1Roles.includes(currAgent?.role_id) && isRealHuman(currAgent)) {
-                                                    l1Name = currAgent?.full_name || 'L1 Agent';
-                                                }
                                             }
 
                                             const l2LogFound = [...logs].reverse().find((l: any) =>
@@ -1364,21 +1424,45 @@ const ReportsView: React.FC = () => {
                                             const sortedLogs = [...logs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
                                             const firstReplyLog = sortedLogs.find((l: any) => (l.action || '').toLowerCase().includes('agent replied'));
                                             const firstReplyTime = firstReplyLog ? new Date(firstReplyLog.created_at).getTime() : null;
-                                            const responseTimeMs = firstReplyTime ? (firstReplyTime - creationTime) : 0;
-                                            const responseTimeMins = Math.floor(responseTimeMs / 60000);
+                                            const responseTimeMins = firstReplyTime ?
+                                                calculateBusinessElapsed(new Date(t.created_at), new Date(firstReplyTime), schedule) : 0;
                                             const responseTimeH = responseTimeMins / 60;
                                             const totalPausedMins = (t as any).total_paused_minutes || 0;
                                             const escalationTime = escalationLog ? new Date(escalationLog.created_at).getTime() : null;
+                                            const isPaused = sName.toLowerCase().includes('pending');
+                                            const pausedAt = (t as any).paused_at;
+                                            const now = new Date();
+
+                                            const getActiveBusinessElapsed = (start: Date, end: Date) => {
+                                                let elapsed = calculateBusinessElapsed(start, end, schedule);
+                                                elapsed = Math.max(0, elapsed - totalPausedMins);
+                                                if (isPaused && pausedAt && end.getTime() > new Date(pausedAt).getTime()) {
+                                                    const currentPauseElapsed = calculateBusinessElapsed(new Date(pausedAt), end, schedule);
+                                                    elapsed = Math.max(0, elapsed - currentPauseElapsed);
+                                                }
+                                                return elapsed;
+                                            };
+
                                             let finalL1H = 0;
                                             let finalL2H = 0;
+
                                             if (escalationTime && escalationTime > creationTime) {
-                                                const rawL1Mins = Math.floor((escalationTime - creationTime) / 60000);
-                                                const rawL2Mins = Math.floor((terminalTime - escalationTime) / 60000);
+                                                const rawL1Mins = calculateBusinessElapsed(new Date(t.created_at), new Date(escalationTime), schedule);
+                                                const rawL2Mins = calculateBusinessElapsed(new Date(escalationTime), new Date(terminalTime), schedule);
+
+                                                // L1 is recorded as clock time until escalation
                                                 finalL1H = rawL1Mins / 60;
-                                                finalL2H = Math.max(0, rawL2Mins - totalPausedMins) / 60;
+                                                // L2 absorbs total pause (including current if any)
+                                                const l2Elapsed = calculateBusinessElapsed(new Date(escalationTime), new Date(terminalTime), schedule);
+                                                let l2NetMins = l2Elapsed - totalPausedMins;
+                                                if (isPaused && pausedAt && terminalTime > new Date(pausedAt).getTime()) {
+                                                    const currentPause = calculateBusinessElapsed(new Date(pausedAt), new Date(terminalTime), schedule);
+                                                    l2NetMins -= currentPause;
+                                                }
+                                                finalL2H = Math.max(0, l2NetMins) / 60;
                                             } else {
-                                                const rawTotalMins = Math.floor((terminalTime - creationTime) / 60000);
-                                                finalL1H = Math.max(0, rawTotalMins - totalPausedMins) / 60;
+                                                const totalNetMins = getActiveBusinessElapsed(new Date(t.created_at), new Date(terminalTime));
+                                                finalL1H = totalNetMins / 60;
                                             }
                                             const sla = checkTicketSla(t, slaPolicies, slaTargets);
 
@@ -1696,12 +1780,12 @@ const ReportsView: React.FC = () => {
                                             recentTickets
                                                 .filter((t: any) => {
                                                     const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase();
-                                                    const ticketType = (t.ticket_type || '').toLowerCase();
+                                                    const ticketTypeNorm = (t.ticket_type || '').toLowerCase().replace(/_/g, ' ');
 
                                                     const matchesType = slaTicketType === 'all' ||
-                                                        (slaTicketType === 'incident' && ticketType === 'incident') ||
-                                                        (slaTicketType === 'service' && (ticketType === 'service request' || ticketType === 'request')) ||
-                                                        (slaTicketType === 'change' && (ticketType === 'change request' || ticketType === 'change'));
+                                                        (slaTicketType === 'incident' && ticketTypeNorm === 'incident') ||
+                                                        (slaTicketType === 'service' && (ticketTypeNorm === 'service request' || ticketTypeNorm === 'request')) ||
+                                                        (slaTicketType === 'change' && (ticketTypeNorm === 'change request' || ticketTypeNorm === 'change'));
 
                                                     return sName !== 'canceled' && matchesType;
                                                 })
@@ -1709,6 +1793,11 @@ const ReportsView: React.FC = () => {
                                                 .slice((slaPage - 1) * itemsPerPage, slaPage * itemsPerPage)
                                                 .map((t: any) => {
                                                     const sla = checkTicketSla(t, slaPolicies, slaTargets);
+
+                                                    const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase();
+                                                    const isTerminal = ['resolved', 'closed'].includes(sName);
+                                                    const hasResponse = !!t.first_response_at;
+                                                    const isPaused = sName?.includes('pending');
 
                                                     // Check if ticket was escalated to L2 (strict detection)
                                                     const logs = t.activity_logs || [];
@@ -1729,8 +1818,6 @@ const ReportsView: React.FC = () => {
                                                     let l2Status = 'n/a';
                                                     if (isEscalated) {
                                                         const escalationTime = new Date(escalationLog.created_at).getTime();
-                                                        const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase();
-                                                        const isTerminal = ['resolved', 'closed'].includes(sName);
 
                                                         const terminalLog = logs.find((l: any) => {
                                                             const actionLower = (l.action || '').toLowerCase();
@@ -1743,7 +1830,7 @@ const ReportsView: React.FC = () => {
                                                         const l2ElapsedMins = Math.max(0, (endTime - escalationTime) / 60000 - (t.total_paused_minutes || 0));
                                                         const l2TargetMins = sla.baseTarget || 480;
 
-                                                        l2Status = l2ElapsedMins > l2TargetMins ? 'overdue' : 'within';
+                                                        l2Status = l2ElapsedMins > l2TargetMins ? 'overdue' : (isTerminal ? 'within' : 'on track');
                                                     }
 
                                                     return (
@@ -1764,18 +1851,18 @@ const ReportsView: React.FC = () => {
                                                             </td>
                                                             <td className="px-8 py-4 text-center">
                                                                 <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-lg ${sla.isResponseOverdue ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                                                                    {sla.isResponseOverdue ? 'Overdue' : 'Within SLA'}
+                                                                    {sla.isResponseOverdue ? 'Overdue' : (hasResponse ? 'Within SLA' : 'On Track')}
                                                                 </span>
                                                             </td>
                                                             <td className="px-8 py-4 text-center">
                                                                 <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-lg ${sla.isResolveOverdue ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                                                                    {sla.isResolveOverdue ? 'Overdue' : 'Within SLA'}
+                                                                    {sla.isResolveOverdue ? 'Overdue' : (isTerminal ? 'Within SLA' : 'On Track')}
                                                                 </span>
                                                             </td>
                                                             <td className="px-8 py-4 text-center">
                                                                 {isEscalated ? (
                                                                     <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-lg ${l2Status === 'overdue' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                                                                        {l2Status === 'overdue' ? 'Overdue' : 'Within SLA'}
+                                                                        {l2Status === 'overdue' ? 'Overdue' : (l2Status === 'within' ? 'Within SLA' : 'On Track')}
                                                                     </span>
                                                                 ) : (
                                                                     <span className="text-[10px] font-bold text-slate-400 uppercase bg-slate-50 px-3 py-1 rounded-lg">L1 Only</span>
@@ -1783,7 +1870,7 @@ const ReportsView: React.FC = () => {
                                                             </td>
                                                             <td className="px-8 py-4 text-right">
                                                                 <span className="text-xs font-black text-slate-700">
-                                                                    {formatHandleTime(sla.netResolve / 60)}
+                                                                    {(isTerminal || (sla.isResolveOverdue && !isPaused)) ? formatHandleTime(sla.netResolve / 60) : '-'}
                                                                 </span>
                                                             </td>
                                                         </tr>

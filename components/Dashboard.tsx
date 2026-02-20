@@ -69,6 +69,7 @@ import NotificationSettings from './NotificationSettings';
 import UserNotificationPreferences from './UserNotificationPreferences';
 import ReportsView from './ReportsView';
 import ServiceRequestFields from './ServiceRequestFields';
+import AnnouncementManagement from './AnnouncementManagement';
 import { useNotifications } from '../hooks/useNotifications';
 import { useRealtimeToast } from '../hooks/useRealtimeToast';
 
@@ -162,7 +163,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     notifications: false
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'change-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'my-notifications' | 'access-policy' | 'create-incident' | 'reports'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'change-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'announcement-management' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'my-notifications' | 'access-policy' | 'create-incident' | 'reports'>('dashboard');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile' | 'user-dashboard'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
@@ -384,26 +385,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
+        // 0. Fetch All Statuses for filtering
+        const { data: allStatuses } = await supabase.from('ticket_statuses').select('status_id, status_name');
+
         // 1. Get Status IDs for "Open" definition (Open + In Progress only)
-        const { data: openStatusesResult } = await supabase
-          .from('ticket_statuses')
-          .select('status_id')
-          .in('status_name', ['Open', 'In Progress']);
-        const openStatusIds = openStatusesResult?.map(s => s.status_id) || [];
+        const openStatusIds = allStatuses
+          ?.filter(s => ['open', 'in progress'].includes(s.status_name.toLowerCase()))
+          .map(s => s.status_id) || [];
 
         // 1.5 Get Pending/Waiting Status IDs
-        const { data: pendingStatusesResult } = await supabase
-          .from('ticket_statuses')
-          .select('status_id')
-          .or('status_name.ilike.%pending%,status_name.ilike.%waiting%');
-        const pendingStatusIds = pendingStatusesResult?.map(s => s.status_id) || [];
+        const pendingStatusIds = allStatuses
+          ?.filter(s => s.status_name.toLowerCase().includes('pending') || s.status_name.toLowerCase().includes('waiting'))
+          .map(s => s.status_id) || [];
 
-        // 2. Get All Active Status IDs (Excluding Resolved, Closed, Canceled)
-        const { data: activeStatusesResult } = await supabase
-          .from('ticket_statuses')
-          .select('status_id')
-          .not('status_name', 'in', '("Resolved", "Closed", "Canceled")');
-        const activeStatusIds = activeStatusesResult?.map(s => s.status_id) || [];
+        // 2. Get All Active Status IDs (Excluding Resolved, Closed, Canceled, Cancelled)
+        const terminalStatusNames = ['resolved', 'closed', 'canceled', 'cancelled'];
+        const activeStatusIds = allStatuses
+          ?.filter(s => !terminalStatusNames.includes(s.status_name.toLowerCase()))
+          .map(s => s.status_id) || [];
 
         // 2. NEW TICKETS (Last 7 days)
         let newTicketsQuery = supabase
@@ -562,7 +561,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         let incidentQuery = supabase
           .from('tickets')
           .select('category_id, ticket_categories(name)')
-          .eq('ticket_type', 'Incident');
+          .eq('ticket_type', 'incident');
 
         if (isAgent) incidentQuery = incidentQuery.eq('assigned_to', userProfile.id);
         else if (isSupervisor && myGroupIds.length > 0) incidentQuery = incidentQuery.in('assignment_group_id', myGroupIds);
@@ -584,7 +583,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         let srQuery = supabase
           .from('tickets')
           .select('category_id, ticket_categories(name)')
-          .eq('ticket_type', 'Service Request');
+          .eq('ticket_type', 'service_request');
 
         if (isAgent) srQuery = srQuery.eq('assigned_to', userProfile.id);
         else if (isSupervisor && myGroupIds.length > 0) srQuery = srQuery.in('assignment_group_id', myGroupIds);
@@ -628,7 +627,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           const d = new Date(t.created_at);
           const dayName = days[d.getDay()];
           if (weeklyTrendMap[dayName]) {
-            if (t.ticket_type === 'Incident') weeklyTrendMap[dayName].incidents++;
+            if (t.ticket_type === 'incident') weeklyTrendMap[dayName].incidents++;
             else weeklyTrendMap[dayName].requests++;
           }
         });
@@ -675,7 +674,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
         setDashboardData({
           newTickets: newTickets || [],
-          overdueTickets: overdueTicketsFullList?.slice(0, 4) || [],
+          overdueTickets: overdueTicketsFullList || [],
           openTicketsList: openTicketsFullList || [],
           unassignedTicketsList: unassignedTicketsFullList || [],
           resolvedTicketsList: resolvedTicketsFullList || [],
@@ -1308,6 +1307,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           <p className="text-gray-500 max-w-md">This settings module is currently under development.</p>
         </div>
       );
+    }
+
+    if (currentView === 'announcement-management') {
+      return <AnnouncementManagement />;
     }
 
     if (currentView === 'reports') {
@@ -1984,6 +1987,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   {settingsSubOpen.portal && (
                     <div className="bg-gray-100/30 pb-1">
                       <div onClick={() => setCurrentView('portal-highlights')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'portal-highlights' ? 'text-indigo-600' : 'text-gray-500'}`}>Portal Highlights</div>
+                      <div onClick={() => setCurrentView('announcement-management')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'announcement-management' ? 'text-indigo-600' : 'text-gray-500'}`}>Announcement</div>
                     </div>
                   )}
 

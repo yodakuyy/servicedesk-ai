@@ -5,7 +5,7 @@ import {
     List, Paperclip, Info, AlertCircle
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { applyAutoAssignment } from '../lib/autoAssignment';
+import { applyAutoAssignment, getRoundRobinAgent } from '../lib/autoAssignment';
 // @ts-ignore
 import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
 
@@ -24,6 +24,9 @@ interface CategoryNode {
     level: number;
     children?: CategoryNode[];
     parent_id?: string | null;
+    default_group_id?: string | null;
+    assignment_strategy?: string | null;
+    default_priority?: string | null;
 }
 
 interface CustomField {
@@ -115,6 +118,9 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                     type: item.category_type,
                     level: item.level,
                     parent_id: item.parent_id ? String(item.parent_id) : null,
+                    default_group_id: item.default_group_id,
+                    assignment_strategy: item.assignment_strategy,
+                    default_priority: item.default_priority,
                     children: []
                 }));
 
@@ -348,26 +354,75 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
             const autoAssignResult = await applyAutoAssignment({
                 category: selectedCategoryName?.toLowerCase(), // Use category name
                 priority: 'medium', // Default priority
-                subject: `${ticketType}: ${selectedCategoryName}`,
-                source: 'portal'
+                subject: selectedCategoryName,
+                source: 'portal',
+                ticket_type: ticketType === 'Service Request' ? 'service_request' : 'change_request'
             });
 
-            let assignedGroupId = null;
-            let assignedAgentId = null;
+            let assignedGroupId: string | null = null;
+            let assignedAgentId: string | null = null;
+            let finalPriority = 'medium';
+
+            // Helper to get category by ID from flat list if needed (though we only have tree)
+            // But we can fetch it again or store flat list. Since we have supabase here, let's fetch fallback.
 
             if (autoAssignResult.assigned) {
                 console.log(`Auto-assignment applied: Rule "${autoAssignResult.ruleName}"`);
                 assignedGroupId = autoAssignResult.groupId;
                 assignedAgentId = autoAssignResult.agentId;
+            } else {
+                // Fallback to Category default group and assignment strategy
+                let targetGroupId = null;
+                let strategy = 'manual';
+                let currentCatId: string | null = selectedCategoryId;
+                let depth = 0;
+
+                while (currentCatId && !targetGroupId && depth < 5) {
+                    const { data: catData } = await supabase
+                        .from('ticket_categories')
+                        .select('default_group_id, parent_id, assignment_strategy, default_priority')
+                        .eq('id', currentCatId)
+                        .single();
+
+                    if (catData?.default_group_id) {
+                        targetGroupId = catData.default_group_id;
+                        strategy = catData.assignment_strategy || 'manual';
+                        if (catData.default_priority) finalPriority = catData.default_priority.toLowerCase();
+                    } else {
+                        if (catData?.default_priority && finalPriority === 'medium') {
+                            finalPriority = catData.default_priority.toLowerCase();
+                        }
+                        currentCatId = catData?.parent_id || null;
+                        depth++;
+                    }
+                }
+
+                if (targetGroupId) {
+                    assignedGroupId = targetGroupId;
+                    if (strategy === 'round_robin') {
+                        assignedAgentId = await getRoundRobinAgent(targetGroupId);
+                    } else {
+                        // Check if group has "assign_tasks_first" setting
+                        const { data: groupData } = await supabase
+                            .from('groups')
+                            .select('assign_tasks_first, supervisor_id')
+                            .eq('id', targetGroupId)
+                            .single();
+
+                        if (groupData?.assign_tasks_first && groupData.supervisor_id) {
+                            assignedAgentId = groupData.supervisor_id;
+                        }
+                    }
+                }
             }
 
             // 3. Insert Ticket with assignment
             const ticketPayload = {
-                subject: `${ticketType}: ${selectedCategoryName}`, // Subject is Category Name or maybe a field?
+                subject: selectedCategoryName, // Subject is Category Name or maybe a field?
                 description: descriptionHtml,
                 status_id: openStatusId,
-                ticket_number: `SR-${Math.floor(Math.random() * 100000)}`, // Simple random number for now
-                priority: 'medium', // Default
+                ticket_number: `REQ-${Math.floor(Math.random() * 100000)}`, // Simple random number for now
+                priority: finalPriority,
                 requester_id: userProfile?.id,
                 created_by: userProfile?.id,
                 ticket_type: ticketType === 'Service Request' ? 'service_request' : 'change_request',

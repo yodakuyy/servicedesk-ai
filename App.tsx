@@ -6,6 +6,7 @@ import VisualSection from './components/VisualSection';
 import DepartmentSelection from './components/DepartmentSelection';
 import Dashboard from './components/Dashboard';
 import RequesterKBPortal from './components/RequesterKBPortal';
+import PresentationView from './components/PresentationView';
 import { ToastProvider } from './components/ToastProvider';
 
 // Toast animation styles
@@ -42,7 +43,7 @@ toastStyles.textContent = `
 document.head.appendChild(toastStyles);
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<'login' | 'departments' | 'dashboard' | 'kb-portal'>('login');
+  const [currentView, setCurrentView] = useState<'login' | 'departments' | 'dashboard' | 'kb-portal' | 'presentation'>('login');
   const [dashboardInitialView, setDashboardInitialView] = useState<string | undefined>(undefined);
 
   // Check URL hash for direct portal access and deep linking
@@ -54,6 +55,8 @@ const App: React.FC = () => {
       } else if (hash === '#dashboard/tickets') {
         setDashboardInitialView('user-dashboard');
         setCurrentView('dashboard');
+      } else if (hash === '#presentation') {
+        setCurrentView('presentation');
       }
     };
 
@@ -68,6 +71,15 @@ const App: React.FC = () => {
       <ToastProvider>
         <RequesterKBPortal />
       </ToastProvider>
+    );
+  }
+
+  if (currentView === 'presentation') {
+    return (
+      <PresentationView onExit={() => {
+        window.location.hash = '';
+        setCurrentView('login');
+      }} />
     );
   }
 

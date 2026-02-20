@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, FileText, Book, BookOpen, HelpCircle, Eye, Info, X, AlertCircle, Package, Bot, Send, MessageSquare, Sparkles, Clock, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Plus, FileText, Book, BookOpen, HelpCircle, Eye, Info, X, AlertCircle, Package, Bot, Send, MessageSquare, Sparkles, Clock, CheckCircle2, ArrowRight, GitBranch } from 'lucide-react';
 
 import { supabase } from '../lib/supabase';
 
@@ -432,9 +432,9 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
             {/* Quick Actions */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {[
-                    { icon: Plus, label: 'Create Ticket', sub: 'Submit a new request', color: 'indigo', action: () => setSelectionType('create') },
                     { icon: AlertCircle, label: 'Incident List', sub: 'My ticket history', color: 'rose', action: () => onNavigate?.('my-tickets') },
                     { icon: Package, label: 'Service Request', sub: 'Browse IT services', color: 'amber', action: () => onNavigate?.('service-requests') },
+                    { icon: GitBranch, label: 'Change Request', sub: 'Track change requests', color: 'violet', action: () => onNavigate?.('escalated-tickets') },
                     { icon: HelpCircle, label: 'Help Center', sub: 'Guides & Support', color: 'teal', action: () => onNavigate?.('help-center') },
                 ].map((action, index) => (
                     <button

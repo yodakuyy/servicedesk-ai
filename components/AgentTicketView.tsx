@@ -461,6 +461,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id, roles:role_id(role_name)),
                     group:groups!assignment_group_id (
                         id, name, company_id,
+                        company:company_id(company_name),
                         business_hours (weekly_schedule),
                         group_sla_policies (sla_policy_id)
                     )
@@ -949,12 +950,20 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                     default: return false;
                 }
                 if (!ticketVal) return false;
-                const valLower = String(cond.value).toLowerCase();
-                const ticketValLower = String(ticketVal).toLowerCase();
-                if (cond.operator === 'equals') return ticketValLower === valLower;
-                if (cond.operator === 'not_equals') return ticketValLower !== valLower;
-                if (cond.operator === 'in') return valLower.split(',').map(s => s.trim()).includes(ticketValLower);
-                if (cond.operator === 'not_in') return !valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+                // Normalize for comparison (handle spaces vs underscores)
+                const valNormalized = String(cond.value).toLowerCase().replace(/\s+/g, '_');
+                const ticketValNormalized = String(ticketVal).toLowerCase().replace(/\s+/g, '_');
+
+                if (cond.operator === 'equals') return ticketValNormalized === valNormalized;
+                if (cond.operator === 'not_equals') return ticketValNormalized !== valNormalized;
+                if (cond.operator === 'in') {
+                    const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                    return values.includes(ticketValNormalized);
+                }
+                if (cond.operator === 'not_in') {
+                    const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                    return !values.includes(ticketValNormalized);
+                }
                 return false;
             });
         });
@@ -1011,7 +1020,11 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
             activeElapsed = Math.max(0, activeElapsed - currentPauseElapsed);
         }
 
-        const targetMins = activeTarget?.target_minutes || (activeSlaType === 'response' ? 240 : 480);
+        const targetMins = activeTarget?.target_minutes;
+        if (!targetMins) {
+            setSlaRisk({ percentage: 0, timeElapsed: '0h 0m', timeRemaining: '0h 0m', hasResponse: false });
+            return;
+        }
         const usedPercentage = Math.floor((activeElapsed / targetMins) * 100);
         const remMins = Math.max(0, targetMins - activeElapsed);
 
@@ -2422,7 +2435,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     if (cond.field === 'ticket_type') val = ticket.ticket_type;
                                     else if (cond.field === 'priority') val = ticket.priority;
                                     else return true; // Skip complex conditions for list
-                                    return String(val).toLowerCase() === String(cond.value).toLowerCase();
+                                    const valNormalized = String(val).toLowerCase().replace(/\s+/g, '_');
+                                    const condValNormalized = String(cond.value).toLowerCase().replace(/\s+/g, '_');
+                                    return valNormalized === condValNormalized;
                                 });
                             });
 
@@ -2444,7 +2459,40 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 elapsed = Math.max(0, elapsed - currentPauseElapsed);
                             }
 
-                            const targetMins = target?.target_minutes || (activeSlaType === 'response' ? 240 : 480);
+                            const targetMins = target?.target_minutes;
+                            if (!targetMins) return (
+                                <div
+                                    key={ticket.id}
+                                    onClick={() => {
+                                        setSelectedTicketId(ticket.id);
+                                        setIsCreating(false);
+                                    }}
+                                    className={`px-4 py-3 border-b border-gray-100 cursor-pointer transition-colors ${selectedTicketId === ticket.id ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}
+                                >
+                                    {/* Line 1: ID & Time */}
+                                    <div className="flex justify-between items-start mb-1">
+                                        <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-1.5">
+                                                <div className={`w-2 h-2 rounded-full ${ticket.priority?.toLowerCase() === 'high' ? 'bg-red-500' : ticket.priority?.toLowerCase() === 'urgent' ? 'bg-orange-500' : 'bg-green-500'}`} />
+                                                <span className="font-bold text-xs text-blue-600">{ticket.ticket_number}</span>
+                                            </div>
+                                            {ticket.is_category_verified ? (
+                                                <CheckCircle2 size={10} className="text-green-500" />
+                                            ) : (
+                                                <Sparkles size={10} className="text-amber-500" />
+                                            )}
+                                        </div>
+                                        <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">{timeAgo}</span>
+                                    </div>
+                                    <h4 className="text-[13px] font-semibold text-gray-700 line-clamp-1 mb-1 leading-snug">
+                                        {ticket.subject}
+                                    </h4>
+                                    <div className="flex justify-between items-center text-[11px] font-medium">
+                                        <span className="text-gray-400 truncate max-w-[150px]">{ticket.requester?.full_name || 'Anonymous'}</span>
+                                        <span className="text-gray-300 italic">No SLA applied</span>
+                                    </div>
+                                </div>
+                            );
                             const remaining = Math.max(0, targetMins - elapsed);
                             const remH = Math.floor(remaining / 60);
                             const remM = remaining % 60;
@@ -2806,12 +2854,20 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                         default: return false;
                                     }
                                     if (!ticketVal) return false;
-                                    const valLower = String(cond.value).toLowerCase();
-                                    const ticketValLower = String(ticketVal).toLowerCase();
-                                    if (cond.operator === 'equals') return ticketValLower === valLower;
-                                    if (cond.operator === 'not_equals') return ticketValLower !== valLower;
-                                    if (cond.operator === 'in') return valLower.split(',').map(s => s.trim()).includes(ticketValLower);
-                                    if (cond.operator === 'not_in') return !valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+                                    // Normalize for comparison (handle spaces vs underscores)
+                                    const valNormalized = String(cond.value).toLowerCase().replace(/\s+/g, '_');
+                                    const ticketValNormalized = String(ticketVal).toLowerCase().replace(/\s+/g, '_');
+
+                                    if (cond.operator === 'equals') return ticketValNormalized === valNormalized;
+                                    if (cond.operator === 'not_equals') return ticketValNormalized !== valNormalized;
+                                    if (cond.operator === 'in') {
+                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                                        return values.includes(ticketValNormalized);
+                                    }
+                                    if (cond.operator === 'not_in') {
+                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                                        return !values.includes(ticketValNormalized);
+                                    }
                                     return false;
                                 });
                             });
@@ -2854,7 +2910,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 activeElapsed = Math.max(0, activeElapsed - currentPauseElapsed);
                             }
 
-                            const targetMins = activeTarget?.target_minutes || 60;
+                            const targetMins = activeTarget?.target_minutes;
+                            if (!targetMins) return null; // Only follow DB policies
+
                             const percentage = Math.min(100, (activeElapsed / targetMins) * 100);
                             const isBreached = activeElapsed > targetMins;
                             const displayPercentage = isTerminal ? (isBreached ? 100 : (activeElapsed / targetMins) * 100) : percentage;
@@ -3267,13 +3325,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                                             if (escalatorProfile && isRealHuman(escalatorProfile)) {
                                                 l1Name = escalatorProfile.full_name;
+                                            } else if (selectedTicket.assigned_agent && l1Roles.includes(selectedTicket.assigned_agent.role_id) && isRealHuman(selectedTicket.assigned_agent)) {
+                                                l1Name = selectedTicket.assigned_agent.full_name;
                                             } else if (l1LogFound) {
                                                 l1Name = getProfile(l1LogFound).full_name;
-                                            } else {
-                                                const currAgent = selectedTicket.assigned_agent;
-                                                if (l1Roles.includes(currAgent?.role_id) && isRealHuman(currAgent)) {
-                                                    l1Name = currAgent.full_name;
-                                                }
                                             }
 
                                             const l2LogFound = activityLogs.find(l => {
@@ -3389,12 +3444,20 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                         default: return false;
                                     }
                                     if (!ticketValue) return false;
-                                    const valLower = String(cond.value).toLowerCase();
-                                    const ticketValLower = String(ticketValue).toLowerCase();
-                                    if (cond.operator === 'equals') return ticketValLower === valLower;
-                                    if (cond.operator === 'not_equals') return ticketValLower !== valLower;
-                                    if (cond.operator === 'in') return valLower.split(',').map(s => s.trim()).includes(ticketValLower);
-                                    if (cond.operator === 'not_in') return !valLower.split(',').map(s => s.trim()).includes(ticketValLower);
+                                    // Normalize for comparison (handle spaces vs underscores)
+                                    const valNormalized = String(cond.value).toLowerCase().replace(/\s+/g, '_');
+                                    const ticketValNormalized = String(ticketValue).toLowerCase().replace(/\s+/g, '_');
+
+                                    if (cond.operator === 'equals') return ticketValNormalized === valNormalized;
+                                    if (cond.operator === 'not_equals') return ticketValNormalized !== valNormalized;
+                                    if (cond.operator === 'in') {
+                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                                        return values.includes(ticketValNormalized);
+                                    }
+                                    if (cond.operator === 'not_in') {
+                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                                        return !values.includes(ticketValNormalized);
+                                    }
                                     return false;
                                 });
                             });
