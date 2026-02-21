@@ -421,7 +421,7 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                 subject: selectedCategoryName, // Subject is Category Name or maybe a field?
                 description: descriptionHtml,
                 status_id: openStatusId,
-                ticket_number: `REQ-${Math.floor(Math.random() * 100000)}`, // Simple random number for now
+                ticket_number: `${ticketType === 'Change Request' ? 'CR' : 'REQ'}-${Math.floor(Math.random() * 90000) + 10000}`, // CR-XXXXX or REQ-XXXXX
                 priority: finalPriority,
                 requester_id: userProfile?.id,
                 created_by: userProfile?.id,
