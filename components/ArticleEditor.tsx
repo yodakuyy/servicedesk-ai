@@ -46,6 +46,7 @@ interface ArticleData {
     tags: string[];
     is_ai_enabled: boolean;
     reviewer_feedback?: string;
+    company_id?: number | null;
 }
 
 const initialArticle: ArticleData = {
@@ -62,6 +63,7 @@ const initialArticle: ArticleData = {
     tags: [],
     is_ai_enabled: true,
     reviewer_feedback: '',
+    company_id: null,
 };
 
 const ARTICLE_TYPES = [
@@ -91,11 +93,36 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
     };
 
     useEffect(() => {
+        fetchUserCompany();
         fetchCategories();
         if (articleId) {
             fetchArticle(articleId);
         }
     }, [articleId]);
+
+    const fetchUserCompany = async () => {
+        if (article.company_id) return;
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('groups!user_groups(company_id)')
+                    .eq('id', user.id)
+                    .single();
+
+                if (profile) {
+                    // @ts-ignore
+                    const companyId = profile.groups?.[0]?.company_id;
+                    if (companyId) {
+                        setArticle(prev => ({ ...prev, company_id: companyId }));
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching user company:', error);
+        }
+    };
 
     const fetchCategories = async () => {
         try {
@@ -172,6 +199,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                     is_ai_enabled: articleData.is_ai_enabled ?? true,
                     reviewer_feedback: articleData.reviewer_feedback || '',
                     article_type: articleData.article_type || 'troubleshooting',
+                    company_id: articleData.company_id || null,
                 });
             }
         } catch (error) {
@@ -243,6 +271,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                 content: contentJson,
                 is_ai_enabled: article.is_ai_enabled,
                 article_type: article.article_type,
+                company_id: article.company_id,
                 updated_at: new Date().toISOString(),
             };
 

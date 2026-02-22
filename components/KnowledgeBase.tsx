@@ -46,6 +46,8 @@ const KnowledgeBase: React.FC = () => {
   // Editor state
   const [showEditor, setShowEditor] = useState(false);
   const [editingArticleId, setEditingArticleId] = useState<string | null>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [currentCompanyId, setCurrentCompanyId] = useState<number | null>(null);
 
   // Review state
   const [showReview, setShowReview] = useState(false);
@@ -64,20 +66,50 @@ const KnowledgeBase: React.FC = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // Fetch categories
-      const { data: categoriesData } = await supabase
+      // 0. Fetch User Profile & Company
+      let companyId = currentCompanyId;
+      if (!userProfile) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*, groups!user_groups(company_id)')
+            .eq('id', user.id)
+            .single();
+
+          if (profile) {
+            setUserProfile(profile);
+            // Get company_id from the first group if available
+            // @ts-ignore
+            companyId = profile.groups?.[0]?.company_id || null;
+            setCurrentCompanyId(companyId);
+          }
+        }
+      }
+
+      // 1. Fetch categories
+      let catQuery = supabase
         .from('kb_categories')
         .select('id, name')
-        .eq('is_active', true)
-        .order('name');
+        .eq('is_active', true);
 
+      if (companyId) {
+        catQuery = catQuery.eq('company_id', companyId);
+      }
+
+      const { data: categoriesData } = await catQuery.order('name');
       setCategories(categoriesData || []);
 
-      // Fetch articles
-      const { data: articlesData } = await supabase
+      // 2. Fetch articles
+      let artQuery = supabase
         .from('kb_articles')
-        .select('*')
-        .order('updated_at', { ascending: false });
+        .select('*');
+
+      if (companyId) {
+        artQuery = artQuery.eq('company_id', companyId);
+      }
+
+      const { data: articlesData } = await artQuery.order('updated_at', { ascending: false });
 
       if (articlesData) {
         // Map with category names

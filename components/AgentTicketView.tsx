@@ -287,7 +287,20 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
         return matchesSearch && matchesStatus && matchesPriority && matchesAgent;
     }).sort((a, b) => {
-        // Purely sort by updated_at DESC (newest activity first) as requested
+        // Priority Sorting: Non-Terminal tickets (Running SLA) come first
+        const terminalStatuses = ['Resolved', 'Closed', 'Canceled', 'Cancelled'];
+
+        const statusA = a.ticket_statuses?.status_name || '';
+        const statusB = b.ticket_statuses?.status_name || '';
+
+        const isTerminalA = terminalStatuses.includes(statusA);
+        const isTerminalB = terminalStatuses.includes(statusB);
+
+        // If one is terminal and other is not, the non-terminal one stays on top
+        if (isTerminalA && !isTerminalB) return 1;
+        if (!isTerminalA && isTerminalB) return -1;
+
+        // If both are same "terminal-ness", sort by update date (newest first)
         const timeA = new Date(a.updated_at || a.created_at).getTime();
         const timeB = new Date(b.updated_at || b.created_at).getTime();
         return timeB - timeA;
@@ -677,9 +690,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                     const kbQuery = allSearchTerms.slice(0, 5).map(w => `title.ilike.%${w}%,summary.ilike.%${w}%`).join(',');
                     const { data: kbData } = await supabase
                         .from('kb_articles')
-                        .select('id, title, summary, visibility')
+                        .select('id, title, summary, visibility, content, article_type')
                         .eq('status', 'published')
                         .or(kbQuery)
+                        .eq('company_id', selectedTicket.group?.company_id)
                         .limit(10);
 
                     if (kbData && kbData.length > 0) {
@@ -733,6 +747,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         .from('tickets')
                         .select('id, subject, status_id, created_at, tags, ticket_statuses!fk_tickets_status(status_name)')
                         .neq('id', selectedTicket.id)
+                        .eq('ticket_type', selectedTicket.ticket_type)
+                        .eq('assignment_group_id', selectedTicket.assignment_group_id)
                         .overlaps('tags', ticketTags)
                         .order('created_at', { ascending: false })
                         .limit(5);
@@ -747,6 +763,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         .from('tickets')
                         .select('id, subject, status_id, created_at, tags, ticket_statuses!fk_tickets_status(status_name)')
                         .neq('id', selectedTicket.id)
+                        .eq('ticket_type', selectedTicket.ticket_type)
+                        .eq('assignment_group_id', selectedTicket.assignment_group_id)
                         .or(subjectQuery)
                         .order('created_at', { ascending: false })
                         .limit(5);
@@ -858,29 +876,29 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 // Template Categorization with Variations
                 const templates = {
                     success: [
-                        `Halo ${requesterName}, senang mendengarnya jika kendala tersebut sudah teratasi. Apakah ada hal lain yang bisa kami bantu sebelum tiket ini kami tutup?`,
-                        `Alhamdulillah sudah normal kembali ya ${requesterName}. Baik, saya standby dulu sebentar, jika tidak ada kendala lain tiket ini akan saya selesaikan. Terimakasih!`,
-                        `Sama-sama ${requesterName}, senang bisa membantu. Silakan dicoba kembali secara menyeluruh. Ada lagi yang bisa saya bantu sebelum sesi ini berakhir?`
+                        `Hi ${requesterName}, glad to hear that the issue is resolved. Is there anything else I can help you with before I close this ticket?`,
+                        `Everything is back to normal now, ${requesterName}. I'll stay on standby for a moment. If there's nothing else, I'll complete this ticket. Thank you!`,
+                        `You're welcome ${requesterName}, happy to help. Please try it thoroughly. Anything else I can assist with before we end this session?`
                     ],
                     access: [
-                        `Halo ${requesterName}, terkait kendala akses tersebut, kami sedang melakukan pengecekan pada akun Anda di sistem. Mohon dicoba kembali dalam 5 menit ya.`,
-                        `Baik ${requesterName}, akses Anda sedang kami reset. Bisa diinfokan apakah Anda menggunakan koneksi VPN atau jaringan kantor saat mencoba login?`,
-                        `Halo ${requesterName}, kami sedang memvalidasi permission user Anda. Mohon tunggu sebentar, kami akan segera menginfokan jika sudah bisa dicoba lagi.`
+                        `Hi ${requesterName}, regarding the access issue, we are currently checking your account in the system. Please try again in about 5 minutes.`,
+                        `Alright ${requesterName}, we are resetting your access. Could you let us know if you're using a VPN or the office network to login?`,
+                        `Hi ${requesterName}, we are validating your user permissions. Please wait a moment, we'll let you know once it's ready to try again.`
                     ],
                     error: [
-                        `Halo ${requesterName}, mohon maaf atas ketidaknyamanannya. Terkait error tersebut, boleh dibantu screenshot pesan error lengkapnya? Kami akan cek ke tim terkait.`,
-                        `Baik ${requesterName}, laporan error Anda sudah kami terima. Kami sedang melakukan investigasi pada log sistem. Apakah ini baru saja terjadi atau sudah dari tadi?`,
-                        `Halo ${requesterName}, kami sedang meninjau laporan kendala Anda. Bisa diinfokan langkah-langkah detail sebelum muncul error tersebut untuk memudahkan kami mereplikasi masalahnya?`
+                        `Hi ${requesterName}, we apologize for the inconvenience. Regarding that error, could you provide a full screenshot of the error message? We'll check with the relevant team.`,
+                        `Alright ${requesterName}, we've received your error report. We are investigating the system logs. Did this just happen or has it been ongoing?`,
+                        `Hi ${requesterName}, we are reviewing your report. Could you provide detailed steps taken before the error appeared so we can replicate the issue?`
                     ],
                     performance: [
-                        `Halo ${requesterName}, kami memahami kendala performa tersebut memang cukup menghambat. Kami sedang mengecek utilisasi server saat ini. Apakah user lain juga merasakannya?`,
-                        `Mohon maaf atas keterlambatan sistemnya ${requesterName}. Kami sedang melakukan pembersihan cache server. Mohon dicoba kembali secara berkala ya.`,
-                        `Baik ${requesterName}, kendala slowness sudah kami eskalasi ke tim infrastruktur. Kami akan memberikan update segera setelah ada perbaikan jalur koneksi.`
+                        `Hi ${requesterName}, we understand that the performance issue is quite disruptive. We are currently checking the server utilization. Are other users experiencing this too?`,
+                        `We apologize for the system delay ${requesterName}. We are clearing the server cache. Please try again periodically.`,
+                        `Alright ${requesterName}, the slowness issue has been escalated to our infrastructure team. We'll provide an update as soon as the connection path is fixed.`
                     ],
                     general: [
-                        `Halo ${requesterName}, baik kami mengerti. Laporan Anda sedang kami proses lebih lanjut oleh tim terkait. Kami akan segera memberikan update kembali.`,
-                        `Siap ${requesterName}, pesan sudah kami terima. Sedang ditangani oleh tim PIC terkait. Mohon ditunggu ya update selanjutnya.`,
-                        `Terima kasih laporannya ${requesterName}. Kami akan segera menindaklanjuti hal tersebut. Estimasi pengecekan sekitar 15-30 menit ke depan.`
+                        `Hi ${requesterName}, understood. Your report is being processed further by the relevant team. we'll get back to you with an update shortly.`,
+                        `Noted ${requesterName}, your message has been received and is being handled by the assigned team. Please wait for the next update.`,
+                        `Thank you for the report ${requesterName}. We will follow up on this immediately. Estimated check time is around 15-30 minutes.`
                     ]
                 };
 
@@ -1040,13 +1058,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
         }
 
         let rec = "";
-        if (isTerminal) rec = "SLA Berhenti: Tiket sudah diproses hingga tahap akhir.";
+        if (isTerminal) rec = "SLA Stopped: Ticket has been processed to terminal state.";
         else if (usedPercentage >= 100) {
-            rec = "OVERDUE: Target waktu telah terlampaui. Mohon segera selesaikan tiket dan komunikasikan kendala dengan user.";
+            rec = "OVERDUE: Time target has been exceeded. Please resolve the ticket immediately and communicate the delay to the user.";
         } else if (!firstResponseTime) {
-            rec = usedPercentage > 50 ? "URGENT: Segera kirim respon pertama untuk mengamankan Response SLA!" : "Saran: Berikan respon awal agar user tahu tiket sedang ditangani.";
+            rec = usedPercentage > 50 ? "URGENT: Send a first response soon to secure the Response SLA!" : "Recommendation: Provide an initial response so the user knows the ticket is being handled.";
         } else {
-            rec = usedPercentage > 75 ? "KRITIS: Resolusi sudah mendekati batas. Mohon fokus penyelesaian atau koordinasi tim." : "Aman: Fokus pada progres pengerjaan sesuai alur kerja.";
+            rec = usedPercentage > 75 ? "CRITICAL: Resolution is nearing the limit. Please focus on fulfillment or coordinate with your team." : "Safe: Focus on progress according to the established workflow.";
         }
 
         setSlaRisk({
@@ -3844,16 +3862,17 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     // Replace 'Customer' with 'Requester' in action text
                                     const actionText = (log.action || '').replace(/Customer/gi, 'Requester');
 
-                                    // Determine if this is a requester action (replied, reopened, etc.)
+                                    // Determine if this is a requester action (replied, reopened, canceled, etc.)
                                     const isRequesterAction = actionText.toLowerCase().includes('requester replied') ||
                                         actionText.toLowerCase().includes('ticket reopened') ||
-                                        actionText.toLowerCase().includes('requester submitted');
+                                        actionText.toLowerCase().includes('requester submitted') ||
+                                        actionText.toLowerCase().includes('canceled by user');
 
                                     // Determine performer name
                                     let performerName = 'System';
                                     if (log.action?.toLowerCase().startsWith('system')) {
                                         performerName = 'System';
-                                    } else if (isRequesterAction) {
+                                    } else if (isRequesterAction || log.actor_id === selectedTicket?.requester_id) {
                                         performerName = selectedTicket?.requester?.full_name || 'Requester';
                                     } else if (log.actor_id === userProfile?.id) {
                                         performerName = 'You';
@@ -3864,7 +3883,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     }
 
                                     // Get initial for avatar
-                                    const initial = isRequesterAction
+                                    const initial = (isRequesterAction || log.actor_id === selectedTicket?.requester_id)
                                         ? (selectedTicket?.requester?.full_name?.charAt(0) || 'R')
                                         : (log.actor_id === userProfile?.id ? 'Y' : (log.actor_id ? 'A' : 'S'));
 
@@ -4183,7 +4202,45 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     <div className="space-y-3">
                                         {suggestedKB.length > 0 ? (
                                             suggestedKB.map(kb => (
-                                                <button key={kb.id} onClick={() => alert(`View Article: ${kb.title}`)} className="w-full text-left p-3 rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/20 text-indigo-600 transition-all flex items-center justify-between group">
+                                                <button key={kb.id} onClick={async () => {
+                                                    const Swal = (await import('sweetalert2')).default;
+                                                    const content = kb.content || {};
+                                                    const problem = content.problem || '';
+                                                    const solution = content.solution || '';
+
+                                                    Swal.fire({
+                                                        title: `<div class="text-left"><div class="text-[10px] text-indigo-500 uppercase font-black mb-1">${kb.article_type || 'Article'}</div><div class="text-lg font-black text-slate-800">${kb.title}</div></div>`,
+                                                        html: `
+                                                            <div class="text-left space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                                                                ${problem ? `
+                                                                    <div>
+                                                                        <h4 class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Problem</h4>
+                                                                        <div class="prose prose-sm max-w-none text-slate-600 font-medium bg-slate-50 p-3 rounded-lg border border-slate-100">${problem}</div>
+                                                                    </div>
+                                                                ` : ''}
+                                                                ${solution ? `
+                                                                    <div>
+                                                                        <h4 class="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Solution</h4>
+                                                                        <div class="prose prose-sm max-w-none text-slate-700 font-semibold bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">${solution}</div>
+                                                                    </div>
+                                                                ` : ''}
+                                                                ${!problem && !solution ? `<p class="text-sm text-gray-500 italic">No detailed content available for this article.</p>` : ''}
+                                                            </div>
+                                                        `,
+                                                        width: '600px',
+                                                        showCloseButton: true,
+                                                        showConfirmButton: true,
+                                                        confirmButtonText: 'Got it',
+                                                        confirmButtonColor: '#4f46e5',
+                                                        scrollbarPadding: false,
+                                                        customClass: {
+                                                            popup: 'rounded-3xl border-none shadow-2xl',
+                                                            title: 'p-6 border-b border-slate-50',
+                                                            htmlContainer: 'p-6',
+                                                            confirmButton: 'rounded-xl px-8 py-3 font-black uppercase tracking-widest text-[10px]'
+                                                        }
+                                                    });
+                                                }} className="w-full text-left p-3 rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/20 text-indigo-600 transition-all flex items-center justify-between group">
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center gap-2">
                                                             <span className="text-xs font-black truncate block">{kb.title}</span>

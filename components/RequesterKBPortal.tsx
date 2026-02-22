@@ -45,10 +45,31 @@ const RequesterKBPortal: React.FC = () => {
     const [searchLoading, setSearchLoading] = useState(false);
     const [feedbackGiven, setFeedbackGiven] = useState<{ [key: string]: boolean | null }>({});
     const [popularArticles, setPopularArticles] = useState<Article[]>([]);
+    const [currentCompanyId, setCurrentCompanyId] = useState<number | null>(null);
 
     useEffect(() => {
-        fetchCategories();
-        fetchPopularArticles();
+        const initialize = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('groups!user_groups(company_id)')
+                    .eq('id', user.id)
+                    .single();
+
+                if (profile) {
+                    // @ts-ignore
+                    const companyId = profile.groups?.[0]?.company_id;
+                    setCurrentCompanyId(companyId);
+                    fetchCategories(companyId);
+                    fetchPopularArticles(companyId);
+                }
+            } else {
+                fetchCategories();
+                fetchPopularArticles();
+            }
+        };
+        initialize();
     }, []);
 
     useEffect(() => {
@@ -58,13 +79,13 @@ const RequesterKBPortal: React.FC = () => {
             }, 300);
             return () => clearTimeout(debounce);
         } else if (selectedCategory) {
-            fetchArticlesByCategory(selectedCategory);
+            fetchArticlesByCategory(selectedCategory, currentCompanyId);
         } else {
             setArticles([]);
         }
-    }, [searchQuery, selectedCategory]);
+    }, [searchQuery, selectedCategory, currentCompanyId]);
 
-    const fetchCategories = async () => {
+    const fetchCategories = async (companyId?: number | null) => {
         try {
             // Fetch categories with article count
             const { data: categoriesData } = await supabase
@@ -78,7 +99,8 @@ const RequesterKBPortal: React.FC = () => {
                     .from('kb_articles')
                     .select('category_id')
                     .eq('visibility', 'public')
-                    .eq('status', 'published');
+                    .eq('status', 'published')
+                    .eq('company_id', companyId);
 
                 const countMap: { [key: string]: number } = {};
                 articleCounts?.forEach(a => {
@@ -110,7 +132,7 @@ const RequesterKBPortal: React.FC = () => {
         }
     };
 
-    const fetchPopularArticles = async () => {
+    const fetchPopularArticles = async (companyId?: number | null) => {
         try {
             // For now, just get the 5 most recent published public articles
             // In future, could use kb_article_feedback or view count
@@ -122,6 +144,7 @@ const RequesterKBPortal: React.FC = () => {
                 `)
                 .eq('visibility', 'public')
                 .eq('status', 'published')
+                .eq('company_id', companyId)
                 .order('updated_at', { ascending: false })
                 .limit(5);
 
@@ -148,6 +171,7 @@ const RequesterKBPortal: React.FC = () => {
                 `)
                 .eq('visibility', 'public')
                 .eq('status', 'published')
+                .eq('company_id', currentCompanyId)
                 .or(`title.ilike.%${query}%,summary.ilike.%${query}%`)
                 .order('updated_at', { ascending: false })
                 .limit(20);
@@ -177,6 +201,7 @@ const RequesterKBPortal: React.FC = () => {
                 `)
                 .eq('visibility', 'public')
                 .eq('status', 'published')
+                .eq('company_id', currentCompanyId)
                 .eq('article_type', type)
                 .order('title', { ascending: true });
 
@@ -196,7 +221,7 @@ const RequesterKBPortal: React.FC = () => {
         }
     };
 
-    const fetchArticlesByCategory = async (categoryId: string) => {
+    const fetchArticlesByCategory = async (categoryId: string, companyId?: number | null) => {
         setSearchLoading(true);
         try {
             // Get articles from this category and its children
@@ -215,6 +240,7 @@ const RequesterKBPortal: React.FC = () => {
                 `)
                 .eq('visibility', 'public')
                 .eq('status', 'published')
+                .eq('company_id', currentCompanyId)
                 .in('category_id', categoryIds)
                 .order('updated_at', { ascending: false });
 

@@ -43,6 +43,7 @@ const KBCategoryManagement: React.FC<KBCategoryManagementProps> = ({ onClose }) 
     const [isEditing, setIsEditing] = useState(false);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
+    const [currentCompanyId, setCurrentCompanyId] = useState<number | null>(null);
 
     // Form state
     const [formData, setFormData] = useState({
@@ -54,16 +55,40 @@ const KBCategoryManagement: React.FC<KBCategoryManagementProps> = ({ onClose }) 
     });
 
     useEffect(() => {
-        fetchCategories();
+        const initialize = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('groups!user_groups(company_id)')
+                    .eq('id', user.id)
+                    .single();
+
+                if (profile) {
+                    // @ts-ignore
+                    const companyId = profile.groups?.[0]?.company_id;
+                    setCurrentCompanyId(companyId);
+                    fetchCategories(companyId);
+                }
+            } else {
+                fetchCategories();
+            }
+        };
+        initialize();
     }, []);
 
-    const fetchCategories = async () => {
+    const fetchCategories = async (companyId?: number | null) => {
         try {
             setIsLoading(true);
-            const { data, error } = await supabase
+            let query = supabase
                 .from('kb_categories')
-                .select('*')
-                .order('name', { ascending: true });
+                .select('*');
+
+            if (companyId || currentCompanyId) {
+                query = query.eq('company_id', companyId || currentCompanyId);
+            }
+
+            const { data, error } = await query.order('name', { ascending: true });
 
             if (error) throw error;
 
@@ -271,7 +296,8 @@ const KBCategoryManagement: React.FC<KBCategoryManagementProps> = ({ onClose }) 
                     name: formData.name.trim(),
                     description: formData.description,
                     parent_id: formData.parent_id,
-                    is_active: formData.isActive
+                    is_active: formData.isActive,
+                    company_id: currentCompanyId
                 }])
                 .select()
                 .single();

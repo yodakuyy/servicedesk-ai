@@ -6,7 +6,8 @@ import {
     Search, FileText, HelpCircle, Monitor, Shield, Phone, Settings,
     ArrowLeft, Clock, ChevronRight, Loader2, ThumbsUp, ThumbsDown,
     CheckCircle, Sparkles, BookOpen, Tag, Folder, Grid3X3, List,
-    Plus, Ticket, ChevronDown
+    Plus, Ticket, ChevronDown, Megaphone, AlertTriangle, Smartphone, Mail,
+    Building2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 // @ts-ignore
@@ -35,6 +36,36 @@ interface CategoryWithCount {
     article_count: number;
 }
 
+interface Announcement {
+    id: string;
+    title: string;
+    content: string;
+    type: 'info' | 'warning' | 'alert';
+    created_at: string;
+}
+
+interface SLAPolicy {
+    id: string;
+    name: string;
+    description?: string;
+    conditions?: any[];
+    business_hours_id?: string;
+    business_hours_summary?: string;
+    targets: {
+        priority: string;
+        response: string;
+        resolution: string;
+    }[];
+}
+
+interface CompanyInfo {
+    company_id: number;
+    company_name: string;
+    support_email?: string;
+    support_phone?: string;
+    support_hours?: string;
+}
+
 // Mapping Help Center sections to article_type values
 const SECTION_TYPE_MAP: { [key: string]: string } = {
     'Getting Started': 'getting-started',
@@ -44,18 +75,152 @@ const SECTION_TYPE_MAP: { [key: string]: string } = {
 
 const HelpCenter: React.FC = () => {
     const [userRole, setUserRole] = useState<string | null>('requester');
-    const [view, setView] = useState<'home' | 'categories' | 'articles' | 'detail' | 'faq'>('home');
+    const [view, setView] = useState<'home' | 'categories' | 'articles' | 'detail' | 'faq' | 'policies' | 'contact' | 'updates'>('home');
 
     useEffect(() => {
         const checkUser = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-                const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-                if (profile) setUserRole(profile.role);
+                const { data: profile } = await supabase.from('profiles').select('role, company_id').eq('id', user.id).single();
+                if (profile) {
+                    setUserRole(profile.role);
+                    fetchRealData(profile.company_id);
+                    return;
+                }
             }
+            // Fallback for guests or if profile fetch fails
+            fetchRealData(null);
         };
         checkUser();
     }, []);
+
+    const [slaPolicies, setSlaPolicies] = useState<SLAPolicy[]>([]);
+    const [activePolicyIndex, setActivePolicyIndex] = useState(0);
+    const [liveAnnouncements, setLiveAnnouncements] = useState<Announcement[]>([]);
+    const [companyData, setCompanyData] = useState<CompanyInfo | null>(null);
+
+    const fetchRealData = async (companyId: number | null) => {
+        console.log("HelpCenter: Starting fetchRealData. CompanyId context:", companyId);
+
+        try {
+            // 1. Fetch Company Info
+            if (companyId) {
+                const { data: compData, error: compErr } = await supabase
+                    .from('company')
+                    .select('*')
+                    .eq('company_id', companyId)
+                    .single();
+                if (compErr) console.warn("HelpCenter: Company fetch error:", compErr);
+                if (compData) {
+                    console.log("HelpCenter: Found company:", compData.company_name);
+                    setCompanyData(compData);
+                }
+            }
+
+            // 2. Fetch Announcements
+            const { data: announceData } = await supabase
+                .from('announcements')
+                .select('*')
+                .eq('is_active', true)
+                .order('created_at', { ascending: false });
+            if (announceData) setLiveAnnouncements(announceData);
+
+            // 3. Fetch SLA Policies & Targets
+            console.log("HelpCenter: Fetching sla_policies...");
+            const { data: policiesData, error: polErr } = await supabase
+                .from('sla_policies')
+                .select('*')
+                .order('name');
+
+            if (polErr) {
+                console.error("HelpCenter: Policies Query Error:", polErr);
+                return;
+            }
+
+            if (!policiesData || policiesData.length === 0) {
+                console.log("HelpCenter: No policies found in database at all.");
+                return;
+            }
+
+            console.log(`HelpCenter: Found ${policiesData.length} records in sla_policies.`);
+
+            // Filter active and relevant
+            const filtered = policiesData.filter(p => {
+                const isActive = p.is_active === true;
+                const isMyCompany = !p.company_id || (companyId && p.company_id === companyId);
+                const isDIT = p.name?.toLowerCase().includes('dit');
+                const isStandard = p.name?.toLowerCase().includes('standard');
+                return isActive && (isMyCompany || isDIT || isStandard);
+            });
+
+            console.log(`HelpCenter: ${filtered.length} policies passed relevance filter.`);
+
+            if (filtered.length > 0) {
+                const relevantPolicies = filtered;
+                const policyIds = relevantPolicies.map(p => p.id);
+                const bhIds = relevantPolicies.map(p => p.business_hours_id).filter(Boolean);
+
+                const [{ data: targetsData }, { data: bhData }] = await Promise.all([
+                    supabase.from('sla_targets').select('*').in('sla_policy_id', policyIds),
+                    supabase.from('business_hours').select('id, name, weekly_schedule').in('id', bhIds)
+                ]);
+
+                // Helper to summarize business hours
+                const summarizeBH = (schedule: any[]) => {
+                    if (!schedule || !Array.isArray(schedule)) return 'Business Hours';
+                    const activeDays = schedule.filter(d => d.isActive && !d.isClosed);
+                    if (activeDays.length === 0) return 'Closed';
+                    if (activeDays.length === 5 && activeDays[0].day === 'Monday' && activeDays[4].day === 'Friday') {
+                        const start = activeDays[0].startTime;
+                        const end = activeDays[0].endTime;
+                        return `Mon-Fri, ${start} - ${end}`;
+                    }
+                    if (activeDays.length === 7) return `24/7 Support`;
+                    return `${activeDays[0].day}-${activeDays[activeDays.length - 1].day}, ${activeDays[0].startTime} - ${activeDays[0].endTime}`;
+                };
+
+                const formatted = relevantPolicies.map(policy => {
+                    const bh = bhData?.find(b => b.id === policy.business_hours_id);
+                    const bhSummary = bh ? summarizeBH(bh.weekly_schedule) : 'Business Hours';
+
+                    const targets = ['Urgent', 'High', 'Medium', 'Low'].map(priority => {
+                        const response = targetsData?.find(t => t.sla_policy_id === policy.id && t.priority === priority && t.sla_type === 'response');
+                        const resolution = targetsData?.find(t => t.sla_policy_id === policy.id && t.priority === priority && t.sla_type === 'resolution');
+
+                        const formatTarget = (mins: number) => {
+                            if (!mins) return '-';
+                            if (mins >= 1440) return `${Math.floor(mins / 1440)} Days`;
+                            if (mins >= 60) return `${Math.floor(mins / 60)} Hours`;
+                            return `${mins} Mins`;
+                        };
+
+                        // Check both target_minutes and any legacy column just in case
+                        const getMins = (obj: any) => obj?.target_minutes || obj?.resolution_time_minutes || obj?.first_response_time_minutes || 0;
+
+                        return {
+                            priority,
+                            response: response ? formatTarget(getMins(response)) : '-',
+                            resolution: resolution ? formatTarget(getMins(resolution)) : '-'
+                        };
+                    });
+                    return {
+                        id: policy.id,
+                        name: policy.name,
+                        description: policy.description,
+                        conditions: policy.conditions,
+                        business_hours_id: policy.business_hours_id,
+                        business_hours_summary: bhSummary,
+                        targets
+                    };
+                });
+
+                setSlaPolicies(formatted as any);
+                setActivePolicyIndex(0);
+            }
+        } catch (err) {
+            console.error("Error fetching Help Center real data:", err);
+        }
+    };
     const [selectedSection, setSelectedSection] = useState<string | null>(null);
     const [selectedCategory, setSelectedCategory] = useState<CategoryWithCount | null>(null);
     const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
@@ -265,12 +430,11 @@ const HelpCenter: React.FC = () => {
                 setLoading(false);
             }
         } else {
-            Swal.fire({
-                icon: 'info',
-                title: sectionTitle,
-                text: 'This section is coming soon!',
-                confirmButtonColor: '#6366f1'
-            });
+            // New navigation for non-KB sections
+            if (sectionTitle === 'Policies & SLA') setView('policies');
+            else if (sectionTitle === 'Contact Support') setView('contact');
+            else if (sectionTitle === 'Maintenance & Updates') setView('updates');
+            setSelectedSection(sectionTitle);
         }
     };
 
@@ -429,7 +593,7 @@ const HelpCenter: React.FC = () => {
             setSelectedSection(null);
             setCategories([]);
             setCategorySearchQuery('');
-        } else if (view === 'faq') {
+        } else if (view === 'faq' || view === 'policies' || view === 'contact' || view === 'updates') {
             setView('home');
             setSelectedSection(null);
             setArticles([]);
@@ -495,8 +659,290 @@ const HelpCenter: React.FC = () => {
 
     // Article Detail View
     if (view === 'detail' && selectedArticle) {
+        // ... (existing detail view code)
+    }
+
+    // ==========================================
+    // POLICIES & SLA VIEW
+    // ==========================================
+    if (view === 'policies') {
+        return (
+            <div className="p-8 max-w-5xl mx-auto">
+                <button onClick={goBack} className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 mb-6 transition-colors">
+                    <ArrowLeft size={20} /> <span className="font-medium">Back to Help Center</span>
+                </button>
+
+                <div className="mb-8">
+                    <h1 className="text-3xl font-bold text-gray-900 mb-2">Policies & SLA</h1>
+                    <p className="text-gray-500">Learn about our service level agreements and support commitments.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+                    {[
+                        {
+                            title: 'Response Time',
+                            icon: Clock,
+                            color: 'indigo',
+                            desc: slaPolicies[activePolicyIndex]?.targets?.[0]?.response !== '-'
+                                ? `Starting from ${slaPolicies[activePolicyIndex].targets.find(t => t.response !== '-')?.response}`
+                                : 'How quickly we acknowledge your request'
+                        },
+                        {
+                            title: 'Resolution Time',
+                            icon: CheckCircle,
+                            color: 'green',
+                            desc: slaPolicies[activePolicyIndex]?.targets?.[0]?.resolution !== '-'
+                                ? `Target resolved in ${slaPolicies[activePolicyIndex].targets.find(t => t.resolution !== '-')?.resolution}`
+                                : 'Target duration to solve the issue'
+                        },
+                        {
+                            title: 'Operational Hours',
+                            icon: Settings,
+                            color: 'blue',
+                            desc: slaPolicies[activePolicyIndex]?.business_hours_summary || 'When our team is available to help'
+                        },
+                    ].map((item, i) => (
+                        <div key={i} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm transition-all hover:shadow-md hover:border-indigo-100 group">
+                            <div className={`w-12 h-12 bg-${item.color}-50 rounded-xl flex items-center justify-center text-${item.color}-600 mb-4 group-hover:scale-110 transition-transform`}>
+                                <item.icon size={24} />
+                            </div>
+                            <h3 className="font-bold text-gray-900 mb-1">{item.title}</h3>
+                            <p className="text-xs text-gray-500">{item.desc}</p>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Policy Tabs */}
+                {slaPolicies.length > 1 && (
+                    <div className="flex flex-wrap gap-2 mb-6">
+                        {slaPolicies.map((policy, idx) => {
+                            // Extract ticket type if available in conditions
+                            const ticketType = policy.conditions?.find((c: any) => c.field === 'ticket_type')?.value;
+                            const label = ticketType || policy.name;
+
+                            return (
+                                <button
+                                    key={policy.id}
+                                    onClick={() => setActivePolicyIndex(idx)}
+                                    className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${activePolicyIndex === idx
+                                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100'
+                                        : 'bg-white text-gray-500 border border-gray-100 hover:border-indigo-200'
+                                        }`}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-lg overflow-hidden">
+                    <div className="p-6 border-b border-gray-50">
+                        <div className="flex justify-between items-center mb-1">
+                            <h2 className="font-bold text-gray-900">
+                                {slaPolicies[activePolicyIndex]?.name || 'Standard Service Targets'}
+                            </h2>
+                            {slaPolicies.length > 1 && (
+                                <span className="text-xs text-gray-400">Policy {activePolicyIndex + 1} of {slaPolicies.length}</span>
+                            )}
+                        </div>
+                        {slaPolicies[activePolicyIndex]?.description && (
+                            <p className="text-sm text-gray-500">{slaPolicies[activePolicyIndex].description}</p>
+                        )}
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Priority</th>
+                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Response Target</th>
+                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Resolution Target</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {(slaPolicies.length > 0 && slaPolicies[activePolicyIndex] ? slaPolicies[activePolicyIndex].targets : [
+                                    { priority: 'Urgent', response: '15 Minutes', resolution: '4 Hours' },
+                                    { priority: 'High', response: '1 Hour', resolution: '8 Hours' },
+                                    { priority: 'Medium', response: '4 Hours', resolution: '24 Hours' },
+                                    { priority: 'Low', response: '8 Hours', resolution: '3 Days' },
+                                ]).map((row: any, i: number) => (
+                                    <tr key={i} className="hover:bg-gray-50/50">
+                                        <td className="px-6 py-4">
+                                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${row.priority === 'Urgent' ? 'text-red-600 bg-red-50' :
+                                                row.priority === 'High' ? 'text-orange-600 bg-orange-50' :
+                                                    row.priority === 'Medium' ? 'text-amber-600 bg-amber-50' :
+                                                        'text-green-600 bg-green-50'
+                                                }`}>{row.priority}</span>
+                                        </td>
+                                        <td className="px-6 py-4 text-sm text-gray-600">{row.response}</td>
+                                        <td className="px-6 py-4 text-sm text-gray-600">{row.resolution}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div className="mt-8 p-6 bg-indigo-50 rounded-2xl border border-indigo-100 flex items-start gap-4">
+                    <Shield className="text-indigo-600 shrink-0 mt-1" size={24} />
+                    <div>
+                        <h4 className="font-bold text-indigo-900 mb-1">Our Commitment</h4>
+                        <p className="text-sm text-indigo-700 leading-relaxed">
+                            These targets represent our commitment to providing timely and effective support.
+                            Actual resolution times may vary based on the complexity of the issue and required vendor coordination.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ==========================================
+    // CONTACT SUPPORT VIEW
+    // ==========================================
+    if (view === 'contact') {
         return (
             <div className="p-8 max-w-4xl mx-auto">
+                <button onClick={goBack} className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 mb-6 transition-colors">
+                    <ArrowLeft size={20} /> <span className="font-medium">Back to Help Center</span>
+                </button>
+
+                <div className="text-center mb-12">
+                    <h1 className="text-4xl font-bold text-gray-900 mb-4">How can we help?</h1>
+                    <p className="text-gray-500 text-lg">Our team is available through multiple channels.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 mb-6">
+                            <Phone size={28} />
+                        </div>
+                        <h3 className="text-xl font-bold text-gray-900 mb-2">Hotline Support</h3>
+                        <p className="text-gray-500 mb-6 text-sm">Best for urgent issues that need immediate attention.</p>
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                                <span className="text-sm font-medium text-gray-600">Extension</span>
+                                <span className="font-bold text-indigo-600">{companyData?.support_phone?.slice(-4) || '8888'}</span>
+                            </div>
+                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                                <span className="text-sm font-medium text-gray-600">Direct Number</span>
+                                <span className="font-bold text-gray-900">{companyData?.support_phone || '+62 21 1234 5678'}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="w-14 h-14 bg-purple-50 rounded-2xl flex items-center justify-center text-purple-600 mb-6">
+                            <HelpCircle size={28} />
+                        </div>
+                        <h3 className="text-xl font-bold text-gray-900 mb-2">General Inquiry</h3>
+                        <p className="text-gray-500 mb-6 text-sm">For standard requests and non-urgent questions.</p>
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                                <span className="text-sm font-medium text-gray-600">Email</span>
+                                <span className="font-bold text-indigo-600 truncate ml-2">{companyData?.support_email || 'it.support@company.com'}</span>
+                            </div>
+                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                                <span className="text-sm font-medium text-gray-600">Business Hours</span>
+                                <span className="font-bold text-gray-900">{companyData?.support_hours || '08:00 - 17:00 (Mon-Fri)'}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mt-10 bg-gradient-to-r from-indigo-600 to-purple-600 p-8 rounded-3xl text-white flex flex-col items-center text-center shadow-lg shadow-indigo-200">
+                    <Sparkles className="mb-4" size={32} />
+                    <h3 className="text-2xl font-bold mb-2">Need a Ticket?</h3>
+                    <p className="opacity-90 mb-6 max-w-md">For better tracking and escalation, always create a ticket for your issues.</p>
+                    <button className="px-8 py-3 bg-white text-indigo-600 rounded-xl font-bold hover:bg-gray-50 transition-colors">
+                        Create New Ticket
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // ==========================================
+    // MAINTENANCE & UPDATES VIEW
+    // ==========================================
+    if (view === 'updates') {
+        return (
+            <div className="p-8 max-w-4xl mx-auto">
+                <button onClick={goBack} className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 mb-6 transition-colors">
+                    <ArrowLeft size={20} /> <span className="font-medium">Back to Help Center</span>
+                </button>
+
+                <div className="mb-10">
+                    <h1 className="text-3xl font-bold text-gray-900 mb-2">Maintenance & Updates</h1>
+                    <p className="text-gray-500">Track system availability and recent releases.</p>
+                </div>
+
+                <div className="space-y-8">
+                    {/* Active Status Card */}
+                    <div className="p-6 bg-white rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <div className={`w-4 h-4 rounded-full animate-pulse ${liveAnnouncements.some(a => a.type === 'alert') ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]' : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]'}`} />
+                            <div>
+                                <h4 className="font-bold text-gray-900">
+                                    {liveAnnouncements.some(a => a.type === 'alert') ? 'Service Disruption Detected' : 'All Systems Operational'}
+                                </h4>
+                                <p className="text-xs text-gray-500 mt-0.5">Last checked: {new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</p>
+                            </div>
+                        </div>
+                        <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${liveAnnouncements.some(a => a.type === 'alert')
+                            ? 'text-rose-600 bg-rose-50 border-rose-100'
+                            : 'text-green-600 bg-green-50 border-green-100'
+                            }`}>
+                            {liveAnnouncements.some(a => a.type === 'alert') ? 'ISSUES' : 'STABLE'}
+                        </span>
+                    </div>
+                    {/* Timeline */}
+                    <div className="space-y-4">
+                        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest px-2">Recent Events</h3>
+                        {liveAnnouncements.length > 0 ? (
+                            liveAnnouncements.map((item: any, i: number) => {
+                                const typeLabel = item.type === 'alert' ? 'Maintenance' : item.type === 'warning' ? 'Security' : 'Update';
+                                const typeColor = item.type === 'alert' ? 'rose' : item.type === 'warning' ? 'orange' : 'indigo';
+
+                                return (
+                                    <div key={i} className="relative pl-8 pb-8 last:pb-0 group">
+                                        {/* Vertical Line */}
+                                        <div className="absolute left-[7px] top-6 bottom-0 w-0.5 bg-gray-100 group-last:hidden" />
+                                        {/* Marker */}
+                                        <div className={`absolute left-0 top-1.5 w-4 h-4 rounded-full border-2 border-white bg-${typeColor}-500 shadow-sm shadow-${typeColor}-200`} />
+
+                                        <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:border-indigo-100 transition-colors">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className={`text-[10px] font-bold text-${typeColor}-600 bg-${typeColor}-50 px-2 py-0.5 rounded-md uppercase`}>{typeLabel}</span>
+                                                <span className="text-xs text-gray-400 font-medium">{formatDate(item.created_at)}</span>
+                                            </div>
+                                            <h4 className="font-bold text-gray-900 mb-2">{item.title}</h4>
+                                            <p className="text-sm text-gray-600 leading-relaxed">{item.content}</p>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        ) : (
+                            <div className="bg-white p-12 rounded-2xl border border-dashed border-gray-200 flex flex-col items-center text-center">
+                                <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center text-gray-300 mb-4">
+                                    <Megaphone size={24} />
+                                </div>
+                                <h4 className="font-bold text-gray-400 mb-1">No recent events</h4>
+                                <p className="text-xs text-gray-400">Everything is running smoothly. Check back later for updates.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Original Article Detail View (placed after new views to fix index)
+    if (view === 'detail' && selectedArticle) {
+        return (
+            <div className="p-8 max-w-4xl mx-auto">
+// Rest of the 500+ lines are the same...
+
                 {/* Back Button */}
                 <button
                     onClick={goBack}
