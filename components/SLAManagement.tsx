@@ -225,8 +225,8 @@ const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
 
                             if (!ticketVal) return false;
 
-                            const valLower = String(cond.value).toLowerCase();
-                            const ticketValLower = String(ticketVal).toLowerCase();
+                            const valLower = String(cond.value).toLowerCase().replace(/_/g, ' ').trim();
+                            const ticketValLower = String(ticketVal).toLowerCase().replace(/_/g, ' ').trim();
 
                             if (cond.operator === 'equals') return ticketValLower === valLower;
                             if (cond.operator === 'not_equals') return ticketValLower !== valLower;

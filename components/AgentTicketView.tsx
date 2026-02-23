@@ -802,33 +802,33 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                 // Extract key information
                 if (selectedTicket.requester?.full_name) {
-                    summaryPoints.push(`Reported by ${selectedTicket.requester.full_name}`);
+                    summaryPoints.push(`Dilaporkan oleh ${selectedTicket.requester.full_name}`);
                 }
 
                 // Detect issue type
                 if (descLower.includes('login') || descLower.includes('password') || descLower.includes('akses')) {
-                    summaryPoints.push('Issue involves login/access problem');
+                    summaryPoints.push('Masalah terkait login/akses');
                 } else if (descLower.includes('error') || descLower.includes('gagal')) {
-                    summaryPoints.push('User experiencing error/failure');
+                    summaryPoints.push('User mengalami error/gangguan');
                 } else if (descLower.includes('slow') || descLower.includes('lambat')) {
-                    summaryPoints.push('Performance/slowness issue reported');
+                    summaryPoints.push('Laporan masalah performa/lambat');
                 }
 
                 // Extract system mentions
                 const systems = ['sap', 'finance', 'more', 'vms', 'email', 'outlook', 'excel', 'word'];
                 const mentionedSystems = systems.filter(s => descLower.includes(s));
                 if (mentionedSystems.length > 0) {
-                    summaryPoints.push(`Affected system(s): ${mentionedSystems.map(s => s.toUpperCase()).join(', ')}`);
+                    summaryPoints.push(`Sistem terdampak: ${mentionedSystems.map(s => s.toUpperCase()).join(', ')}`);
                 }
 
                 // Time detection
                 const timeMatch = text.match(/\b(\d{1,2}[:.]\d{2}|\d{1,2}\s*(am|pm)|sejak\s+\w+|since\s+\w+)/i);
                 if (timeMatch) {
-                    summaryPoints.push(`Issue started around: ${timeMatch[0]}`);
+                    summaryPoints.push(`Masalah dimulai sekitar: ${timeMatch[0]}`);
                 }
 
                 if (summaryPoints.length === 0) {
-                    summaryPoints.push('User reported a general issue');
+                    summaryPoints.push('User melaporkan masalah umum');
                 }
 
                 setAiSummary(summaryPoints);
@@ -876,29 +876,29 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 // Template Categorization with Variations
                 const templates = {
                     success: [
-                        `Hi ${requesterName}, glad to hear that the issue is resolved. Is there anything else I can help you with before I close this ticket?`,
-                        `Everything is back to normal now, ${requesterName}. I'll stay on standby for a moment. If there's nothing else, I'll complete this ticket. Thank you!`,
-                        `You're welcome ${requesterName}, happy to help. Please try it thoroughly. Anything else I can assist with before we end this session?`
+                        `Halo ${requesterName}, senang mendengar masalahnya sudah selesai. Apakah ada hal lain yang bisa saya bantu sebelum saya menutup tiket ini?`,
+                        `Semuanya sudah kembali normal, ${requesterName}. Saya akan standby sebentar. Jika tidak ada hal lain, saya akan menyelesaikan tiket ini. Terima kasih!`,
+                        `Sama-sama ${requesterName}, senang bisa membantu. Silakan dicoba kembali secara menyeluruh. Ada lagi yang bisa saya bantu sebelum sesi ini berakhir?`
                     ],
                     access: [
-                        `Hi ${requesterName}, regarding the access issue, we are currently checking your account in the system. Please try again in about 5 minutes.`,
-                        `Alright ${requesterName}, we are resetting your access. Could you let us know if you're using a VPN or the office network to login?`,
-                        `Hi ${requesterName}, we are validating your user permissions. Please wait a moment, we'll let you know once it's ready to try again.`
+                        `Halo ${requesterName}, terkait masalah akses tersebut, kami sedang mengecek akun Anda di sistem. Silakan coba lagi dalam waktu sekitar 5 menit.`,
+                        `Baik ${requesterName}, kami sedang mereset akses Anda. Boleh tahu apakah Anda menggunakan VPN atau jaringan kantor untuk login?`,
+                        `Halo ${requesterName}, kami sedang memvalidasi izin (permission) user Anda. Mohon tunggu sebentar, kami akan menginfokan jika sudah siap untuk dicoba kembali.`
                     ],
                     error: [
-                        `Hi ${requesterName}, we apologize for the inconvenience. Regarding that error, could you provide a full screenshot of the error message? We'll check with the relevant team.`,
-                        `Alright ${requesterName}, we've received your error report. We are investigating the system logs. Did this just happen or has it been ongoing?`,
-                        `Hi ${requesterName}, we are reviewing your report. Could you provide detailed steps taken before the error appeared so we can replicate the issue?`
+                        `Halo ${requesterName}, kami mohon maaf atas ketidaknyamanannya. Terkait error tersebut, boleh minta screenshot lengkap pesan errornya? Kami akan cek dengan tim terkait.`,
+                        `Baik ${requesterName}, laporan error Anda sudah kami terima. Kami sedang menginvestigasi log sistem. Apakah ini baru saja terjadi atau sudah berlangsung lama?`,
+                        `Halo ${requesterName}, kami sedang meninjau laporan Anda. Bisa berikan langkah-hal detail sebelum error muncul agar kami bisa mencoba mereplikasi masalahnya?`
                     ],
                     performance: [
-                        `Hi ${requesterName}, we understand that the performance issue is quite disruptive. We are currently checking the server utilization. Are other users experiencing this too?`,
-                        `We apologize for the system delay ${requesterName}. We are clearing the server cache. Please try again periodically.`,
-                        `Alright ${requesterName}, the slowness issue has been escalated to our infrastructure team. We'll provide an update as soon as the connection path is fixed.`
+                        `Halo ${requesterName}, kami mengerti masalah performa ini cukup mengganggu. Kami sedang mengecek utilisasi server. Apakah user lain juga mengalami hal yang sama?`,
+                        `Kami mohon maaf atas keterlambatan sistem ${requesterName}. Kami sedang membersihkan cache server. Silakan dicoba lagi secara berkala.`,
+                        `Baik ${requesterName}, masalah lambat ini sudah kami eskalasi ke tim infrastruktur. Kami akan berikan update segera setelah jalur koneksi diperbaiki.`
                     ],
                     general: [
-                        `Hi ${requesterName}, understood. Your report is being processed further by the relevant team. we'll get back to you with an update shortly.`,
-                        `Noted ${requesterName}, your message has been received and is being handled by the assigned team. Please wait for the next update.`,
-                        `Thank you for the report ${requesterName}. We will follow up on this immediately. Estimated check time is around 15-30 minutes.`
+                        `Halo ${requesterName}, dimengerti. Laporan Anda sedang diproses lebih lanjut oleh tim terkait. Kami akan segera kembali dengan update terbaru.`,
+                        `Dicatat ${requesterName}, pesan Anda sudah diterima dan sedang ditangani oleh tim yang ditugaskan. Mohon tunggu update selanjutnya.`,
+                        `Terima kasih atas laporannya ${requesterName}. Kami akan segera menindaklanjuti hal ini. Estimasi waktu pengecekan sekitar 15-30 menit.`
                     ]
                 };
 
@@ -1058,13 +1058,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
         }
 
         let rec = "";
-        if (isTerminal) rec = "SLA Stopped: Ticket has been processed to terminal state.";
+        if (isTerminal) rec = "SLA Berhenti: Tiket telah diproses ke status terminal.";
         else if (usedPercentage >= 100) {
-            rec = "OVERDUE: Time target has been exceeded. Please resolve the ticket immediately and communicate the delay to the user.";
+            rec = "TERLEWATI: Target waktu telah terlampaui. Mohon segera selesaikan tiket dan komunikasikan keterlambatan kepada pengguna.";
         } else if (!firstResponseTime) {
-            rec = usedPercentage > 50 ? "URGENT: Send a first response soon to secure the Response SLA!" : "Recommendation: Provide an initial response so the user knows the ticket is being handled.";
+            rec = usedPercentage > 50 ? "URGENT: Segera kirim respon pertama untuk mengamankan Response SLA!" : "Rekomendasi: Berikan respon awal agar pengguna tahu tiket sedang ditangani.";
         } else {
-            rec = usedPercentage > 75 ? "CRITICAL: Resolution is nearing the limit. Please focus on fulfillment or coordinate with your team." : "Safe: Focus on progress according to the established workflow.";
+            rec = usedPercentage > 75 ? "KRITIS: Resolusi mendekati batas waktu. Mohon fokus pada penyelesaian atau koordinasi dengan tim Anda." : "Aman: Fokus pada progres sesuai dengan alur kerja yang ditetapkan.";
         }
 
         setSlaRisk({
@@ -1103,8 +1103,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
             const Swal = (await import('sweetalert2')).default;
             Swal.fire({
                 icon: 'success',
-                title: 'Summary Inserted',
-                text: 'AI Summary has been inserted into the Internal Note composer.',
+                title: 'Ringkasan Dimasukkan',
+                text: 'Ringkasan AI telah dimasukkan ke dalam komposer Catatan Internal.',
                 toast: true,
                 position: 'top-end',
                 showConfirmButton: false,
@@ -4054,7 +4054,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                 disabled={!aiSuggestedReply}
                                                 className="flex items-center gap-2 text-indigo-600 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
-                                                <Sparkles size={14} fill="currentColor" /> Insert AI Suggestion
+                                                <Sparkles size={14} fill="currentColor" /> Masukkan Saran AI
                                             </button>
                                             <button
                                                 onClick={handleSendMessage}
@@ -4109,7 +4109,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         <div className="flex items-center gap-2 text-indigo-600">
                             <Sparkles size={18} fill="currentColor" />
                             <h2 className="font-black text-xs uppercase tracking-widest">AI Copilot</h2>
-                            <span className="text-[9px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded border border-green-100 font-black">Active</span>
+                            <span className="text-[9px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded border border-green-100 font-black">Aktif</span>
                         </div>
                     )}
                     <button onClick={() => setIsRightPanelOpen(!isRightPanelOpen)} className="p-2 text-gray-300 hover:text-indigo-600 transition-colors">
@@ -4124,7 +4124,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 <Sparkles size={48} className="text-gray-300" />
                                 <div className="space-y-1">
                                     <p className="text-xs font-black uppercase tracking-widest text-gray-400">AI Copilot Standby</p>
-                                    <p className="text-[10px] font-bold text-gray-400 px-6">Select a ticket to activate diagnostic engine</p>
+                                    <p className="text-[10px] font-bold text-gray-400 px-6">Pilih tiket untuk mengaktifkan mesin diagnostik</p>
                                 </div>
                             </div>
                         ) : (
@@ -4132,7 +4132,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 <div className="flex justify-between items-center text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">
                                     <span>Diagnostic Engine</span>
                                     {isAiLoading ? (
-                                        <span className="text-amber-500 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Analyzing...</span>
+                                        <span className="text-amber-500 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Menganalisis...</span>
                                     ) : (
                                         <span className={`${aiConfidence === 'high' ? 'text-green-500' :
                                             aiConfidence === 'medium' ? 'text-blue-500' :
@@ -4153,7 +4153,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                 ))}
                                             </ul>
                                         ) : (
-                                            <p className="text-xs text-gray-400 italic">Analyzing ticket content...</p>
+                                            <p className="text-xs text-gray-400 italic">Menganalisis konten tiket...</p>
                                         )}
                                         <button
                                             onClick={handleApplySummary}
@@ -4161,9 +4161,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                             className="mt-4 w-full text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                         >
                                             {isApplyingSummary ? (
-                                                <><Loader2 size={12} className="animate-spin" /> Applying...</>
+                                                <><Loader2 size={12} className="animate-spin" /> Menerapkan...</>
                                             ) : (
-                                                <>Add as Internal Note</>
+                                                <>Tambah ke Catatan Internal</>
                                             )}
                                         </button>
                                     </div>
@@ -4175,7 +4175,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 <AICard title="Suggested Reply" icon={Zap}>
                                     <div className="bg-green-50/30 p-4 rounded-xl border border-green-100 space-y-3">
                                         <p className="text-[12px] text-gray-700 italic font-medium leading-relaxed">
-                                            "{aiSuggestedReply || 'Generating suggested reply...'}"
+                                            "{aiSuggestedReply || 'Membuat saran balasan...'}"
                                         </p>
                                         <div className="flex gap-2">
                                             <button
@@ -4185,13 +4185,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                 }}
                                                 className="flex-1 py-2 bg-white text-green-700 text-[10px] font-black uppercase tracking-widest rounded-lg border border-green-200 flex items-center justify-center gap-2 shadow-sm hover:bg-green-50 transition-colors"
                                             >
-                                                <Copy size={12} /> Insert
+                                                <Copy size={12} /> Masukkan
                                             </button>
                                             <button
                                                 onClick={() => setAiReplyIndex(prev => prev + 1)}
                                                 className="flex-1 py-2 bg-white text-gray-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-gray-100 flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
                                             >
-                                                <RefreshCw size={12} /> Rewrite
+                                                <RefreshCw size={12} /> Tulis Ulang
                                             </button>
                                         </div>
                                     </div>
@@ -4209,28 +4209,28 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                     const solution = content.solution || '';
 
                                                     Swal.fire({
-                                                        title: `<div class="text-left"><div class="text-[10px] text-indigo-500 uppercase font-black mb-1">${kb.article_type || 'Article'}</div><div class="text-lg font-black text-slate-800">${kb.title}</div></div>`,
+                                                        title: `<div class="text-left"><div class="text-[10px] text-indigo-500 uppercase font-black mb-1">${kb.article_type || 'Artikel'}</div><div class="text-lg font-black text-slate-800">${kb.title}</div></div>`,
                                                         html: `
                                                             <div class="text-left space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
                                                                 ${problem ? `
                                                                     <div>
-                                                                        <h4 class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Problem</h4>
+                                                                        <h4 class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Masalah</h4>
                                                                         <div class="prose prose-sm max-w-none text-slate-600 font-medium bg-slate-50 p-3 rounded-lg border border-slate-100">${problem}</div>
                                                                     </div>
                                                                 ` : ''}
                                                                 ${solution ? `
                                                                     <div>
-                                                                        <h4 class="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Solution</h4>
+                                                                        <h4 class="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Solusi</h4>
                                                                         <div class="prose prose-sm max-w-none text-slate-700 font-semibold bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">${solution}</div>
                                                                     </div>
                                                                 ` : ''}
-                                                                ${!problem && !solution ? `<p class="text-sm text-gray-500 italic">No detailed content available for this article.</p>` : ''}
+                                                                ${!problem && !solution ? `<p class="text-sm text-gray-500 italic">Tidak ada konten detail yang tersedia untuk artikel ini.</p>` : ''}
                                                             </div>
                                                         `,
                                                         width: '600px',
                                                         showCloseButton: true,
                                                         showConfirmButton: true,
-                                                        confirmButtonText: 'Got it',
+                                                        confirmButtonText: 'Mengerti',
                                                         confirmButtonColor: '#4f46e5',
                                                         scrollbarPadding: false,
                                                         customClass: {
@@ -4255,7 +4255,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                             ))
                                         ) : (
                                             <div className="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded text-center">
-                                                No relevant articles found.
+                                                Tidak ada artikel relevan ditemukan.
                                             </div>
                                         )}
                                     </div>
@@ -4285,7 +4285,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                             })
                                         ) : (
                                             <div className="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded text-center">
-                                                No similar cases found.
+                                                Tidak ada kasus serupa ditemukan.
                                             </div>
                                         )}
                                     </div>
@@ -4299,12 +4299,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                 'bg-green-50/30 border-green-100'
                                         }`}>
                                         <div className="flex justify-between items-center font-black">
-                                            <span className="text-[10px] text-gray-400 uppercase tracking-widest">{slaRisk.hasResponse ? 'Resolution' : 'Response'} SLA Used</span>
+                                            <span className="text-[10px] text-gray-400 uppercase tracking-widest">{slaRisk.hasResponse ? 'Resolusi' : 'Respon'} SLA Terpakai</span>
                                             <span className={`text-xs tracking-tighter ${slaRisk.percentage >= 75 ? 'text-red-500' :
                                                 slaRisk.percentage >= 50 ? 'text-amber-500' :
                                                     'text-green-500'
                                                 }`}>
-                                                {slaRisk.percentage}% {slaRisk.percentage >= 100 ? '- OVERDUE' : slaRisk.percentage >= 90 ? '- CRITICAL' : slaRisk.percentage >= 75 ? '- NEAR OVERDUE' : slaRisk.percentage >= 50 ? '- WARNING' : '- OK'}
+                                                {slaRisk.percentage}% {slaRisk.percentage >= 100 ? '- TERLEWATI' : slaRisk.percentage >= 90 ? '- KRITIS' : slaRisk.percentage >= 75 ? '- MENDEKATI BATAS' : slaRisk.percentage >= 50 ? '- PERINGATAN' : '- OK'}
                                             </span>
                                         </div>
 
@@ -4322,18 +4322,18 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                                         <div className="grid grid-cols-2 gap-3 mt-2">
                                             <div className="bg-white/60 p-2 rounded-lg border border-white/50">
-                                                <span className="text-[8px] text-gray-400 uppercase font-black block mb-0.5">Predicted Overdue</span>
+                                                <span className="text-[8px] text-gray-400 uppercase font-black block mb-0.5">Prediksi Terlewati</span>
                                                 <span className="text-xs font-black text-gray-800">{slaRisk.breachTime || '-'}</span>
                                             </div>
                                             <div className="bg-white/60 p-2 rounded-lg border border-white/50">
-                                                <span className="text-[8px] text-gray-400 uppercase font-black block mb-0.5">Timer Pause</span>
-                                                <span className="text-xs font-black text-indigo-600">{slaRisk.pauseAt ? `${slaRisk.pauseAt} WIB` : 'Active 24/7'}</span>
+                                                <span className="text-[8px] text-gray-400 uppercase font-black block mb-0.5">Jeda Timer</span>
+                                                <span className="text-xs font-black text-indigo-600">{slaRisk.pauseAt ? `${slaRisk.pauseAt} WIB` : 'Aktif 24/7'}</span>
                                             </div>
                                         </div>
 
                                         <div className="p-3 bg-white/40 rounded-lg border border-white/60">
                                             <div className="flex items-center gap-1.5 mb-1.5 text-[9px] font-black uppercase tracking-widest text-gray-400">
-                                                <Info size={10} /> Smart Recommendation
+                                                <span className="flex items-center gap-1"><Info size={10} /> Smart Recommendation</span>
                                             </div>
                                             <p className={`text-[11px] font-bold leading-relaxed ${slaRisk.percentage >= 75 ? 'text-red-700' : 'text-slate-700'
                                                 }`}>
@@ -4342,8 +4342,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                         </div>
 
                                         <ul className="text-[9px] text-gray-400 font-bold space-y-1 pt-2 border-t border-gray-100/50">
-                                            <li className="flex justify-between"><span>Time elapsed</span> <span className="text-gray-600">{slaRisk.timeElapsed}</span></li>
-                                            <li className="flex justify-between"><span>Time remaining</span> <span className="text-indigo-600 font-black">{slaRisk.timeRemaining}</span></li>
+                                            <li className="flex justify-between"><span>Waktu berjalan</span> <span className="text-gray-600">{slaRisk.timeElapsed}</span></li>
+                                            <li className="flex justify-between"><span>Sisa waktu</span> <span className="text-indigo-600 font-black">{slaRisk.timeRemaining}</span></li>
                                         </ul>
                                     </div>
                                 </AICard>
@@ -4353,7 +4353,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     <AICard title={selectedTicket.is_category_verified ? "Incident Classification" : "Suggested Classification"} icon={Shield}>
                                         <div className={`p-4 rounded-xl border space-y-3 transition-all ${selectedTicket.is_category_verified ? 'bg-green-50/50 border-green-100' : 'bg-slate-50/50 border-slate-100'}`}>
                                             <div className="flex justify-between text-xs">
-                                                <span className="text-gray-400 font-bold uppercase tracking-tighter">{selectedTicket.is_category_verified ? 'Current Category' : 'Category'}</span>
+                                                <span className="text-gray-400 font-bold uppercase tracking-tighter">{selectedTicket.is_category_verified ? 'Kategori Saat Ini' : 'Kategori'}</span>
                                                 <span className="text-gray-800 font-black text-right pl-4">
                                                     {selectedTicket.is_category_verified
                                                         ? (selectedTicket.ticket_categories?.name || 'Uncategorized')
@@ -4361,7 +4361,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                 </span>
                                             </div>
                                             <div className="flex justify-between text-xs">
-                                                <span className="text-gray-400 font-bold uppercase tracking-tighter">{selectedTicket.is_category_verified ? 'Current Priority' : 'Priority'}</span>
+                                                <span className="text-gray-400 font-bold uppercase tracking-tighter">{selectedTicket.is_category_verified ? 'Prioritas Saat Ini' : 'Prioritas'}</span>
                                                 <span className={`font-black ${(selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'urgent' ? 'text-red-500' :
                                                     (selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'high' ? 'text-orange-500' :
                                                         (selectedTicket.is_category_verified ? selectedTicket.priority : aiClassification?.priority)?.toLowerCase() === 'medium' ? 'text-amber-500' : 'text-green-500'
@@ -4383,7 +4383,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                         disabled={!aiClassification}
                                                         className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                                     >
-                                                        Apply & Verify
+                                                        Terapkan & Verifikasi
                                                     </button>
                                                     <button
                                                         onClick={() => {
