@@ -35,6 +35,7 @@ interface CategoryNode {
     default_group_id?: string | null;
     assignment_strategy?: 'manual' | 'round_robin';
     default_priority?: 'Urgent' | 'High' | 'Medium' | 'Low' | null;
+    company_id?: number | null;
 }
 
 // No mock data needed anymore
@@ -60,25 +61,72 @@ const CategoryManagement: React.FC = () => {
         type: 'Incident' as 'Incident' | 'Service Request' | 'Change Request',
         default_group_id: null as string | null,
         assignment_strategy: 'manual' as 'manual' | 'round_robin',
-        default_priority: null as string | null
+        default_priority: null as string | null,
+        company_id: null as number | null
     });
+
+    const [availableDepartments, setAvailableDepartments] = useState<{ company_id: number, company_name: string }[]>([]);
+    const [selectedDeptFilter, setSelectedDeptFilter] = useState<number | 'all'>('all');
 
     useEffect(() => {
         fetchCategories();
         fetchGroups();
+        fetchDepartments();
     }, []);
 
+    const fetchDepartments = async () => {
+        const profileStr = localStorage.getItem('profile');
+        const currentUser = profileStr ? JSON.parse(profileStr) : null;
+        const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+        const isDeptAdmin = currentUser?.is_department_admin === true;
+        const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+        let query = supabase.from('company').select('company_id, company_name');
+        if (currentUser && !isSuperAdmin) {
+            query = query.eq('company_id', currentUser.company_id);
+            setSelectedDeptFilter(currentUser.company_id);
+        }
+
+        const { data } = await query.order('company_name');
+        if (data) setAvailableDepartments(data);
+    };
+
     const fetchGroups = async () => {
-        const { data } = await supabase.from('groups').select('id, name').eq('is_active', true).order('name');
+        const profileStr = localStorage.getItem('profile');
+        const currentUser = profileStr ? JSON.parse(profileStr) : null;
+        const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+        const isDeptAdmin = currentUser?.is_department_admin === true;
+        const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+        let query = supabase.from('groups').select('id, name').eq('is_active', true);
+        if (currentUser && !isSuperAdmin) {
+            query = query.eq('company_id', currentUser.company_id);
+        }
+
+        const { data } = await query.order('name');
         if (data) setAvailableGroups(data);
     };
 
     const fetchCategories = async () => {
         try {
             setIsLoading(true);
-            const { data, error } = await supabase
+
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+            const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+            let query = supabase
                 .from('ticket_categories')
-                .select('*')
+                .select('*');
+
+            if (currentUser && !isSuperAdmin) {
+                // Return categories for user's company or global (null)
+                query = query.or(`company_id.is.null,company_id.eq.${currentUser.company_id}`);
+            }
+
+            const { data, error } = await query
                 .order('level', { ascending: true })
                 .order('name', { ascending: true });
 
@@ -99,7 +147,8 @@ const CategoryManagement: React.FC = () => {
                     default_group_id: item.default_group_id ? String(item.default_group_id) : null,
                     assignment_strategy: item.assignment_strategy || 'manual',
                     default_priority: item.default_priority || null,
-                    visible_to: Array.isArray(item.visible_to) ? item.visible_to : []
+                    visible_to: Array.isArray(item.visible_to) ? item.visible_to : [],
+                    company_id: item.company_id || null
                 }));
 
                 console.log('Mapped nodes:', nodes); // Debug log
@@ -127,7 +176,8 @@ const CategoryManagement: React.FC = () => {
                     visible_to: node.visible_to,
                     default_group_id: node.default_group_id,
                     assignment_strategy: node.assignment_strategy || 'manual',
-                    default_priority: node.default_priority
+                    default_priority: node.default_priority,
+                    company_id: node.company_id
                 })
                 .eq('id', node.id);
 
@@ -303,7 +353,9 @@ const CategoryManagement: React.FC = () => {
         const filtered = nodes
             .filter(n => {
                 const nodeType = n.type || '';
-                return nodeType.toLowerCase() === ticketType.toLowerCase();
+                const matchesType = nodeType.toLowerCase() === ticketType.toLowerCase();
+                const matchesDept = selectedDeptFilter === 'all' || n.company_id === selectedDeptFilter;
+                return matchesType && matchesDept;
             })
             .filter(n => !searchQuery || n.name.toLowerCase().includes(searchQuery.toLowerCase()) || n.children?.some(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())));
 
@@ -382,7 +434,8 @@ const CategoryManagement: React.FC = () => {
             type: parentNode ? parentNode.type : ticketType,
             default_group_id: parentNode ? parentNode.default_group_id : null,
             assignment_strategy: parentNode ? parentNode.assignment_strategy : 'manual',
-            default_priority: parentNode ? parentNode.default_priority : null
+            default_priority: parentNode ? parentNode.default_priority : null,
+            company_id: parentNode ? parentNode.company_id : (selectedDeptFilter === 'all' ? null : selectedDeptFilter as number)
         });
         setIsAddModalOpen(true);
     };
@@ -415,7 +468,8 @@ const CategoryManagement: React.FC = () => {
                     visible_to: newCategoryData.visible_to,
                     default_group_id: newCategoryData.default_group_id,
                     assignment_strategy: newCategoryData.assignment_strategy,
-                    default_priority: newCategoryData.default_priority
+                    default_priority: newCategoryData.default_priority,
+                    company_id: newCategoryData.company_id
                 }])
                 .select()
                 .single();
@@ -494,6 +548,21 @@ const CategoryManagement: React.FC = () => {
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 transition-all shadow-sm"
                             />
+                        </div>
+
+                        {/* Department Filter */}
+                        <div className="pt-2">
+                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Department</label>
+                            <select
+                                value={selectedDeptFilter}
+                                onChange={(e) => setSelectedDeptFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                                className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all shadow-sm group-hover:border-indigo-300"
+                            >
+                                <option value="all">All Departments</option>
+                                {availableDepartments.map(dept => (
+                                    <option key={dept.company_id} value={dept.company_id}>{dept.company_name}</option>
+                                ))}
+                            </select>
                         </div>
                     </div>
                 </div>
@@ -719,6 +788,33 @@ const CategoryManagement: React.FC = () => {
                                         <option value="low">Low</option>
                                     </select>
                                     <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide ml-1">Automate urgency based on category</span>
+                                </div>
+                                <div className="flex flex-col gap-2 flex-grow">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Primary Department</label>
+                                    <select
+                                        disabled={!isEditing}
+                                        value={selectedNode.company_id || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value ? Number(e.target.value) : null;
+                                            setCategories(prev => {
+                                                const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
+                                                    return nodes.map(n => {
+                                                        if (n.id === selectedNode.id) return { ...n, company_id: val };
+                                                        if (n.children) return { ...n, children: updateInTree(n.children) };
+                                                        return n;
+                                                    });
+                                                };
+                                                return updateInTree(prev);
+                                            });
+                                        }}
+                                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 disabled:bg-gray-100/50 disabled:cursor-not-allowed transition-all"
+                                    >
+                                        <option value="">Global (All Departments)</option>
+                                        {availableDepartments.map(dept => (
+                                            <option key={dept.company_id} value={dept.company_id}>{dept.company_name}</option>
+                                        ))}
+                                    </select>
+                                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide ml-1">Limit this category to a specific department</span>
                                 </div>
                             </div>
 
@@ -1001,6 +1097,19 @@ const CategoryManagement: React.FC = () => {
                                                 <option value="high">High</option>
                                                 <option value="medium">Medium</option>
                                                 <option value="low">Low</option>
+                                            </select>
+                                        </div>
+                                        <div className="space-y-3 col-span-2 pt-2">
+                                            <label className="text-xs font-bold text-gray-700">Department Ownership</label>
+                                            <select
+                                                value={newCategoryData.company_id || ''}
+                                                onChange={(e) => setNewCategoryData(prev => ({ ...prev, company_id: e.target.value ? Number(e.target.value) : null }))}
+                                                className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all"
+                                            >
+                                                <option value="">Global (All Departments)</option>
+                                                {availableDepartments.map(dept => (
+                                                    <option key={dept.company_id} value={dept.company_id}>{dept.company_name}</option>
+                                                ))}
                                             </select>
                                         </div>
                                     </div>

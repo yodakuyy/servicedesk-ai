@@ -170,6 +170,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
   const [navVersion, setNavVersion] = useState(0);
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [selectedDeptName, setSelectedDeptName] = useState('SERVICE DESK');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileFormData, setProfileFormData] = useState({
@@ -376,12 +377,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         const isAgent = userProfile?.role_id === 3 || userProfile?.role_id === '3';
         const isSupervisor = userProfile?.role_id === 2 || userProfile?.role_id === '2';
         const isAdmin = userProfile?.role_id === 1 || userProfile?.role_id === '1';
+        const isDeptAdmin = userProfile?.is_department_admin === true;
+        const isSuperAdmin = isAdmin && !isDeptAdmin;
+        const isRequester = userProfile?.role_id === 4 || userProfile?.role_id === '4';
+
+        if (isRequester) {
+          // Requester uses UserDashboard which handles its own data fetching
+          return;
+        }
 
         let myGroupIds: string[] = [];
-        // Fetch groups for Supervisors and Agents to filter dashboard
-        if (!isAdmin) {
+        // Fetch groups for Supervisors and Agents (and Dept Admins) to filter dashboard
+        if (!isSuperAdmin) {
           const { data: groups } = await supabase.from('user_groups').select('group_id').eq('user_id', userProfile.id);
           if (groups) myGroupIds = groups.map(g => g.group_id);
+
+          // If Department Admin is not in any group, they should still see ALL groups in their department
+          if (isDeptAdmin && myGroupIds.length === 0) {
+            const { data: deptGroups } = await supabase.from('groups').select('id').eq('company_id', userProfile.company_id);
+            if (deptGroups) myGroupIds = deptGroups.map(g => g.id);
+          }
         }
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -422,7 +437,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           newTicketsQuery = newTicketsQuery.eq('assigned_to', userProfile.id);
         } else {
           newTicketsQuery = newTicketsQuery.gte('created_at', sevenDaysAgo.toISOString());
-          if (isSupervisor && myGroupIds.length > 0) {
+          if (!isSuperAdmin && myGroupIds.length > 0) {
             newTicketsQuery = newTicketsQuery.in('assignment_group_id', myGroupIds);
           }
         }
@@ -440,7 +455,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('created_at', { ascending: false });
 
         if (isAgent) openTicketsQuery = openTicketsQuery.eq('assigned_to', userProfile.id);
-        else if (isSupervisor && myGroupIds.length > 0) openTicketsQuery = openTicketsQuery.in('assignment_group_id', myGroupIds);
+        else if (!isSuperAdmin && myGroupIds.length > 0) openTicketsQuery = openTicketsQuery.in('assignment_group_id', myGroupIds);
         const { data: openTicketsFullList } = await openTicketsQuery;
 
         // 4. OVERDUE TICKETS (Enhanced Logic with Priority-based SLA & Paused Time)
@@ -461,7 +476,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('created_at', { ascending: true });
 
         if (isAgent) overdueQuery = overdueQuery.eq('assigned_to', userProfile.id);
-        else if (isSupervisor && myGroupIds.length > 0) overdueQuery = overdueQuery.in('assignment_group_id', myGroupIds);
+        else if (!isSuperAdmin && myGroupIds.length > 0) overdueQuery = overdueQuery.in('assignment_group_id', myGroupIds);
         const { data: potentialOverdue } = await overdueQuery;
 
         // Filter based on Priority SLA
@@ -500,7 +515,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('created_at', { ascending: false });
 
         // Filter Unassigned by Group for Supervisor/Agent
-        if (!isAdmin && myGroupIds.length > 0) {
+        if (!isSuperAdmin && myGroupIds.length > 0) {
           unassignedQuery = unassignedQuery.in('assignment_group_id', myGroupIds);
         }
         const { data: unassignedTicketsFullList } = await unassignedQuery;
@@ -515,7 +530,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           `)
           .in('status_id', pendingStatusIds);
         if (isAgent) pendingQuery = pendingQuery.eq('assigned_to', userProfile.id);
-        else if (isSupervisor && myGroupIds.length > 0) pendingQuery = pendingQuery.in('assignment_group_id', myGroupIds);
+        else if (!isSuperAdmin && myGroupIds.length > 0) pendingQuery = pendingQuery.in('assignment_group_id', myGroupIds);
         const { data: pendingTicketsFullList } = await pendingQuery;
         const pendingCount = pendingTicketsFullList?.length || 0;
 
@@ -535,7 +550,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('updated_at', { ascending: false });
 
         if (isAgent) resolvedQuery = resolvedQuery.eq('assigned_to', userProfile.id);
-        else if (isSupervisor && myGroupIds.length > 0) resolvedQuery = resolvedQuery.in('assignment_group_id', myGroupIds);
+        else if (!isSuperAdmin && myGroupIds.length > 0) resolvedQuery = resolvedQuery.in('assignment_group_id', myGroupIds);
         const { data: resolvedTicketsFullList } = await resolvedQuery;
 
         // 7. SATISFACTION REVIEWS
@@ -549,7 +564,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('updated_at', { ascending: false });
 
         if (isAgent) satisfactionQuery = satisfactionQuery.eq('assigned_to', userProfile.id);
-        else if (isSupervisor && myGroupIds.length > 0) satisfactionQuery = satisfactionQuery.in('assignment_group_id', myGroupIds);
+        else if (!isSuperAdmin && myGroupIds.length > 0) satisfactionQuery = satisfactionQuery.in('assignment_group_id', myGroupIds);
 
         const { data: satisfactionData } = await satisfactionQuery;
 
@@ -565,7 +580,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .eq('ticket_type', 'incident');
 
         if (isAgent) incidentQuery = incidentQuery.eq('assigned_to', userProfile.id);
-        else if (isSupervisor && myGroupIds.length > 0) incidentQuery = incidentQuery.in('assignment_group_id', myGroupIds);
+        else if (!isSuperAdmin && myGroupIds.length > 0) incidentQuery = incidentQuery.in('assignment_group_id', myGroupIds);
 
         const { data: incidentCategories } = await incidentQuery;
 
@@ -587,7 +602,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .eq('ticket_type', 'service_request');
 
         if (isAgent) srQuery = srQuery.eq('assigned_to', userProfile.id);
-        else if (isSupervisor && myGroupIds.length > 0) srQuery = srQuery.in('assignment_group_id', myGroupIds);
+        else if (!isSuperAdmin && myGroupIds.length > 0) srQuery = srQuery.in('assignment_group_id', myGroupIds);
 
         const { data: srCategories } = await srQuery;
 
@@ -612,7 +627,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .gte('created_at', sevenDaysAgoDate.toISOString().split('T')[0]);
 
         if (isAgent) trendQuery = trendQuery.eq('assigned_to', userProfile.id);
-        else if (isSupervisor && myGroupIds.length > 0) trendQuery = trendQuery.in('assignment_group_id', myGroupIds);
+        else if (!isSuperAdmin && myGroupIds.length > 0) trendQuery = trendQuery.in('assignment_group_id', myGroupIds);
 
         const { data: trendTickets } = await trendQuery;
 
@@ -818,6 +833,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       }
     }
   }, []);
+
+  // Fetch Department Name when company_id changes
+  useEffect(() => {
+    const fetchDeptName = async () => {
+      if (!userProfile?.company_id) return;
+
+      try {
+        const { supabase } = await import('../lib/supabase');
+        const { data } = await supabase
+          .from('company')
+          .select('company_name')
+          .eq('company_id', userProfile.company_id)
+          .single();
+
+        if (data?.company_name) {
+          setSelectedDeptName(data.company_name);
+        }
+      } catch (error) {
+        console.error('Error fetching department name:', error);
+      }
+    };
+
+    fetchDeptName();
+  }, [userProfile?.company_id]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -1367,6 +1406,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
     const isAgent = userProfile?.role_id === 3 || userProfile?.role_id === '3';
     const isSPV = userProfile?.role_id === 2 || userProfile?.role_id === '2' || userProfile?.role_id === 1 || userProfile?.role_id === '1'; // SPV & Admin
+    const isRequester = userProfile?.role_id === 4 || userProfile?.role_id === '4';
+
+    // REQUESTER VIEW: High-level overview, KB, and ticket status
+    if (isRequester) {
+      return (
+        <UserDashboard
+          userName={userProfile?.full_name}
+          onNavigate={(view) => setCurrentView(view as any)}
+          onViewTicket={(id) => {
+            setSelectedTicketId(id);
+            setPreviousView('user-dashboard');
+            setCurrentView('ticket-detail');
+          }}
+        />
+      );
+    }
 
     // AGENT VIEW: Focus on "My Work"
     if (isAgent) {
@@ -1768,19 +1823,34 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       <div
         className={`${isSidebarOpen ? 'w-72 border-r' : 'w-0 border-none'} bg-white border-gray-200 flex flex-col hidden lg:flex transition-all duration-300 overflow-hidden z-50 flex-shrink-0 relative h-full shadow-sm`}
       >
-        <div className="p-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-md shadow-indigo-200 flex-shrink-0">
-              <div className="w-4 h-4 bg-white rounded-full opacity-40" />
+        <div className="p-6 flex items-center justify-between border-b border-gray-50 bg-gray-50/30">
+          <div
+            className="flex items-center gap-3 cursor-pointer group/dept"
+            onClick={onChangeDepartment}
+            title="Switch Department"
+          >
+            <div className={`w-9 h-9 ${selectedDeptName.toUpperCase().includes('DIT') ? 'bg-indigo-600' :
+                selectedDeptName.toUpperCase().includes('LEGAL') ? 'bg-amber-600' :
+                  selectedDeptName.toUpperCase().includes('HC') ? 'bg-rose-600' :
+                    selectedDeptName.toUpperCase().includes('HR') ? 'bg-rose-600' :
+                      selectedDeptName.toUpperCase().includes('FINANCE') ? 'bg-emerald-600' :
+                        'bg-slate-700'
+              } rounded-xl flex items-center justify-center shadow-lg shadow-indigo-200/20 flex-shrink-0 transition-transform group-hover/dept:scale-110`}>
+              <div className="w-4 h-4 bg-white rounded-full opacity-40 animate-pulse" />
             </div>
-            <div className="overflow-hidden">
-              <h1 className="font-bold text-gray-800 text-lg leading-tight tracking-tight whitespace-nowrap">DIT</h1>
-              <p className="text-[10px] text-gray-400 uppercase tracking-widest font-semibold whitespace-nowrap">service desk</p>
+            <div className="overflow-hidden flex flex-col justify-center">
+              <div className="flex items-center gap-1.5">
+                <h1 className="font-black text-gray-800 text-base leading-tight tracking-tight whitespace-nowrap uppercase group-hover/dept:text-indigo-600 transition-colors">
+                  {selectedDeptName}
+                </h1>
+                <ArrowLeftRight size={12} className="text-gray-300 group-hover/dept:text-indigo-400 opacity-0 group-hover/dept:opacity-100 transition-all" />
+              </div>
+              <p className="text-[9px] text-gray-400 uppercase tracking-[0.2em] font-black whitespace-nowrap opacity-70">service desk</p>
             </div>
           </div>
           <button
             onClick={() => setIsSidebarOpen(false)}
-            className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-white rounded-lg transition-all border border-transparent hover:border-gray-100 hover:shadow-sm"
           >
             <ChevronLeft size={18} />
           </button>

@@ -95,6 +95,7 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                 .select('*')
                 .eq('category_type', ticketType)
                 .eq('is_active', true)
+                .or(`company_id.is.null,company_id.eq.${userProfile?.company_id || 0}`)
                 .order('level', { ascending: true })
                 .order('name', { ascending: true });
 

@@ -277,7 +277,7 @@ const AccessPolicy: React.FC = () => {
 
             if (editingPolicy) {
                 // Update existing policy
-                const { error } = await supabase
+                const { error: mainError } = await supabase
                     .from('access_policies')
                     .update({
                         name: formData.name,
@@ -288,15 +288,20 @@ const AccessPolicy: React.FC = () => {
                     })
                     .eq('id', editingPolicy.id);
 
-                if (error) throw error;
+                if (mainError) throw mainError;
 
                 // Delete existing related data
-                await Promise.all([
+                const [targetDel, condDel, actionDel, constDel] = await Promise.all([
                     supabase.from('access_policy_targets').delete().eq('policy_id', editingPolicy.id),
                     supabase.from('access_policy_conditions').delete().eq('policy_id', editingPolicy.id),
                     supabase.from('access_policy_actions').delete().eq('policy_id', editingPolicy.id),
                     supabase.from('access_policy_constraints').delete().eq('policy_id', editingPolicy.id),
                 ]);
+
+                if (targetDel.error) throw targetDel.error;
+                if (condDel.error) throw condDel.error;
+                if (actionDel.error) throw actionDel.error;
+                if (constDel.error) throw constDel.error;
             } else {
                 // Create new policy
                 const { data, error } = await supabase
@@ -321,7 +326,8 @@ const AccessPolicy: React.FC = () => {
                     target_type: t.type,
                     target_id: t.targetId,
                 }));
-                await supabase.from('access_policy_targets').insert(targetsToInsert);
+                const { error } = await supabase.from('access_policy_targets').insert(targetsToInsert);
+                if (error) throw error;
             }
 
             // Insert conditions
@@ -332,7 +338,8 @@ const AccessPolicy: React.FC = () => {
                     operator: c.operator,
                     value: c.value,
                 }));
-                await supabase.from('access_policy_conditions').insert(conditionsToInsert);
+                const { error } = await supabase.from('access_policy_conditions').insert(conditionsToInsert);
+                if (error) throw error;
             }
 
             // Insert actions
@@ -342,7 +349,8 @@ const AccessPolicy: React.FC = () => {
                     action: a.action,
                     allowed: a.allowed,
                 }));
-                await supabase.from('access_policy_actions').insert(actionsToInsert);
+                const { error } = await supabase.from('access_policy_actions').insert(actionsToInsert);
+                if (error) throw error;
             }
 
             // Insert constraints
@@ -352,14 +360,31 @@ const AccessPolicy: React.FC = () => {
                     constraint_type: c.constraintType,
                     value: c.value || {},
                 }));
-                await supabase.from('access_policy_constraints').insert(constraintsToInsert);
+                const { error } = await supabase.from('access_policy_constraints').insert(constraintsToInsert);
+                if (error) throw error;
             }
+
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: editingPolicy ? 'Policy Updated' : 'Policy Created',
+                text: `Policy "${formData.name}" has been successfully saved.`,
+                timer: 2000,
+                showConfirmButton: false
+            });
 
             closeWizard();
             fetchPolicies();
         } catch (err: any) {
             console.error('Error saving policy:', err);
-            alert('Error saving policy: ' + err.message);
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'error',
+                title: 'Error Saving Policy',
+                text: err.message
+            });
         } finally {
             setSaving(false);
         }
@@ -378,12 +403,31 @@ const AccessPolicy: React.FC = () => {
         if (!confirmModalData) return;
 
         try {
-            await supabase.from('access_policies').update({ status: confirmModalData.newStatus }).eq('id', confirmModalData.id);
+            const { error } = await supabase.from('access_policies').update({ status: confirmModalData.newStatus }).eq('id', confirmModalData.id);
+            if (error) throw error;
+
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Status Updated',
+                text: `Policy status has been changed to ${confirmModalData.newStatus}.`,
+                timer: 1500,
+                showConfirmButton: false
+            });
+
             fetchPolicies();
             setShowConfirmModal(false);
             setConfirmModalData(null);
-        } catch (err) {
+        } catch (err: any) {
             console.error('Error toggling status:', err);
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'error',
+                title: 'Error',
+                text: 'Failed to update policy status.'
+            });
         }
     };
 

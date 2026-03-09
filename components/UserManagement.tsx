@@ -773,7 +773,7 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
                                                         create: finalState.create,
                                                         update: finalState.update,
                                                         delete: finalState.delete,
-                                                        source: isDifferent ? 'CUSTOM' : 'ROLE'
+                                                        source: (isDifferent ? 'CUSTOM' : 'ROLE') as 'ROLE' | 'CUSTOM'
                                                     };
                                                 });
 
@@ -918,12 +918,32 @@ const UserManagement: React.FC = () => {
             setLoading(true);
             setError(null);
 
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+            const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+            // 1. Define queries
+            let rolesQuery = supabase.from('roles').select('*');
+            let deptQuery = supabase.from('company').select('*').order('company_id', { ascending: true });
+            let groupsQuery = supabase.from('groups').select('*');
+            let usersQuery = supabase.from('profiles').select('*').order('last_active_at', { ascending: false, nullsFirst: false });
+            let userGroupsQuery = supabase.from('user_groups').select('*');
+
+            // 2. Apply filtering for Department Admins
+            if (currentUser && !isSuperAdmin) {
+                deptQuery = deptQuery.eq('company_id', currentUser.company_id);
+                groupsQuery = groupsQuery.eq('company_id', currentUser.company_id);
+                usersQuery = usersQuery.eq('company_id', currentUser.company_id);
+            }
+
             const [rolesResponse, deptResponse, groupsResponse, usersResponse, userGroupsResponse] = await Promise.all([
-                supabase.from('roles').select('*'),
-                supabase.from('company').select('*').order('company_id', { ascending: true }),
-                supabase.from('groups').select('*'),
-                supabase.from('profiles').select('*').order('last_active_at', { ascending: false, nullsFirst: false }),
-                supabase.from('user_groups').select('*')
+                rolesQuery,
+                deptQuery,
+                groupsQuery,
+                usersQuery,
+                userGroupsQuery
             ]);
 
             const { data: rolesData, error: rolesError } = rolesResponse;

@@ -146,25 +146,45 @@ const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
         try {
             setLoading(true);
 
-            // Fetch companies
-            const { data: companiesData } = await supabase
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+            const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+            // Fetch companies with conditional filter
+            let companiesQuery = supabase
                 .from('company')
                 .select('company_id, company_name')
-                .eq('is_active', true)
-                .order('company_name');
+                .eq('is_active', true);
+
+            if (currentUser && !isSuperAdmin) {
+                companiesQuery = companiesQuery.eq('company_id', currentUser.company_id);
+            }
+
+            const { data: companiesData } = await companiesQuery.order('company_name');
 
             if (companiesData) {
                 setCompanies(companiesData);
+                // For Dept Admins, default to their company instead of 'all'
+                if (!isSuperAdmin && currentUser) {
+                    setSelectedCompany(currentUser.company_id.toString());
+                }
             }
 
-            // Fetch SLA policies from database
-            const { data: policiesData, error: policiesError } = await supabase
+            // Fetch SLA policies with conditional filter
+            let policiesQuery = supabase
                 .from('sla_policies')
                 .select(`
                     *,
                     company:company_id(company_name)
-                `)
-                .order('name');
+                `);
+
+            if (currentUser && !isSuperAdmin) {
+                policiesQuery = policiesQuery.eq('company_id', currentUser.company_id);
+            }
+
+            const { data: policiesData, error: policiesError } = await policiesQuery.order('name');
 
             // Fetch targets to get time info
             const { data: targetsData } = await supabase

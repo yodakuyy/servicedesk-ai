@@ -69,7 +69,12 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 setGroupIds(mapping);
             }
 
-            const { data: catData } = await supabase.from('ticket_categories').select('id, name, default_priority, assignment_strategy, default_group_id, parent_id').ilike('category_type', 'incident').eq('is_active', true);
+            const { data: catData } = await supabase
+                .from('ticket_categories')
+                .select('id, name, default_priority, assignment_strategy, default_group_id, parent_id, company_id')
+                .ilike('category_type', 'incident')
+                .eq('is_active', true)
+                .or(`company_id.is.null,company_id.eq.${userProfile?.company_id || 0}`);
             if (catData) setCategories(catData);
 
             const { data: svcData } = await supabase.from('services').select('id, name').eq('is_active', true);

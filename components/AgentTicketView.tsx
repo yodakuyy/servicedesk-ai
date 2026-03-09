@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
 import RequesterCreateIncident from './RequesterCreateIncident';
 import RequesterCreateServiceRequest from './RequesterCreateServiceRequest';
+import { useAccessControl, type PermissionResult } from '../hooks/useAccessControl';
 
 interface AgentTicketViewProps {
     userProfile?: any;
@@ -18,18 +19,8 @@ interface AgentTicketViewProps {
     ticketTypeFilter?: 'incident' | 'service_request' | 'change_request' | 'all';
 }
 
-const workflowMap: Record<string, string[]> = {
-    'Open': ['Pending - Waiting For Requester', 'Pending - Waiting for Vendor', 'Pending - Waiting for Sparepart', 'Pending - Internal Team', 'Pending - Development', 'Canceled'],
-    'In Progress': ['Resolved', 'Pending - Waiting For Requester', 'Pending - Waiting for Vendor', 'Pending - Waiting for Sparepart', 'Pending - Internal Team', 'Pending - Development', 'Canceled'],
-    'Pending - Waiting For Requester': ['Resolved', 'In Progress', 'Pending - Development', 'Canceled'],
-    'Pending - Waiting for Vendor': ['Resolved', 'In Progress', 'Canceled'],
-    'Pending - Waiting for Sparepart': ['Resolved', 'In Progress', 'Canceled'],
-    'Pending - Internal Team': ['Resolved', 'In Progress', 'Canceled'],
-    'Pending - Development': ['Resolved', 'In Progress', 'Canceled'],
-    'Resolved': [], // Terminal
-    'Closed': [],   // Terminal
-    'Canceled': []  // Terminal
-};
+// Removed hardcoded workflowMap - now fetched dynamically from database via department_workflows and workflow_transitions
+
 
 const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     userProfile,
@@ -61,6 +52,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     const [catSearch, setCatSearch] = useState('');
     const [isEditingPriority, setIsEditingPriority] = useState(false);
 
+    // Initializing Access Control
+    const { checkPermission, isLoaded: isAccessLoaded } = useAccessControl(userProfile);
+
     // AI Copilot States
     const [aiSummary, setAiSummary] = useState<string[]>([]);
     const [aiClassification, setAiClassification] = useState<{ category: string; priority: string } | null>(null);
@@ -81,6 +75,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     const [isInternalNote, setIsInternalNote] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
     const [currentUserRoleName, setCurrentUserRoleName] = useState<string>('');
+    const [workflowTransitions, setWorkflowTransitions] = useState<any[]>([]);
 
     // Pagination States
     const [page, setPage] = useState(0);
@@ -309,8 +304,32 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     useEffect(() => {
         const fetchAgentGroups = async () => {
             if (!userProfile?.id) return;
-            const { data } = await supabase.from('user_groups').select('group_id').eq('user_id', userProfile.id);
-            if (data) setAgentGroups(data.map(g => g.group_id));
+
+            const isAdmin = userProfile?.role_id === 1 || userProfile?.role_id === '1';
+            const isDeptAdmin = userProfile?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+            if (isSuperAdmin) {
+                // Super Admins don't need group restrictions
+                setAgentGroups([]);
+                return;
+            }
+
+            if (isDeptAdmin) {
+                // Department Admins see all groups in their department
+                const { data } = await supabase
+                    .from('groups')
+                    .select('id')
+                    .eq('company_id', userProfile.company_id);
+                if (data) setAgentGroups(data.map(g => g.id));
+            } else {
+                // Regular Agents/Supervisors see only their assigned groups
+                const { data } = await supabase
+                    .from('user_groups')
+                    .select('group_id')
+                    .eq('user_id', userProfile.id);
+                if (data) setAgentGroups(data.map(g => g.group_id));
+            }
         };
         const fetchStatuses = async () => {
             const { data } = await supabase.from('ticket_statuses').select('*').order('status_name');
@@ -369,7 +388,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
             }
         };
         const fetchCategories = async () => {
-            const { data } = await supabase.from('ticket_categories').select('*');
+            const { data } = await supabase
+                .from('ticket_categories')
+                .select('*')
+                .or(`company_id.is.null,company_id.eq.${userProfile?.company_id || 0}`);
             if (data) setAllCategories(data);
         };
         fetchAgentGroups();
@@ -391,6 +413,15 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files || e.target.files.length === 0 || !selectedTicketId) return;
+
+        const canComment = checkPermission('comment', selectedTicket);
+        if (!canComment.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canComment.reason });
+            return;
+        }
+
         const file = e.target.files[0];
 
         try {
@@ -611,6 +642,27 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .eq('id', selectedTicketId)
                 .single();
             setSelectedTicket(ticket);
+
+            // Dynamically fetch workflow transitions for the ticket's department
+            if (ticket?.group?.company_id) {
+                const { data: wf } = await supabase
+                    .from('department_workflows')
+                    .select('workflow_id')
+                    .eq('department_id', ticket.group.company_id)
+                    .eq('is_active', true)
+                    .single();
+
+                if (wf) {
+                    const { data: trans } = await supabase
+                        .from('workflow_transitions')
+                        .select('from_status_id, to_status_id, allowed_roles')
+                        .eq('workflow_id', wf.workflow_id);
+                    if (trans) setWorkflowTransitions(trans);
+                    else setWorkflowTransitions([]);
+                } else {
+                    setWorkflowTransitions([]);
+                }
+            }
 
             const { data: aiData } = await supabase.from('ticket_ai_insights').select('*').eq('ticket_id', selectedTicketId).single();
             setAiInsight(aiData);
@@ -1144,10 +1196,15 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     const [isSending, setIsSending] = useState(false);
 
     const handleSendMessage = async () => {
-        const cleanMessage = newMessage.replace(/<[^>]*>/g, '').trim();
-        const hasImage = newMessage.includes('<img');
+        const canComment = checkPermission('comment', selectedTicket);
+        if (!canComment.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canComment.reason });
+            return;
+        }
 
-        if ((!cleanMessage && !hasImage) || !selectedTicketId) return;
+        const cleanMessage = newMessage.replace(/<[^>]*>/g, '').trim();
 
         setIsSending(true);
         try {
@@ -1285,6 +1342,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
     const handleStatusUpdate = async (newStatusId: string, skipRemark = false) => {
         if (!selectedTicketId || isUpdatingStatus) return;
+
+        const canUpdate = checkPermission('update', selectedTicket);
+        if (!canUpdate.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canUpdate.reason });
+            return;
+        }
 
         // Find status name
         const statusObj = availableStatuses.find(s => s.status_id === newStatusId);
@@ -1465,6 +1530,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     const handleAssignToMe = async () => {
         if (!selectedTicketId || isAssigning) return;
 
+        const canUpdate = checkPermission('update', selectedTicket);
+        if (!canUpdate.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canUpdate.reason });
+            return;
+        }
+
         setIsAssigning(true);
         try {
             let actorId = userProfile?.id;
@@ -1543,6 +1616,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     const handleTransferGroup = async (newGroupId: string) => {
         if (!selectedTicketId || isTransferring || !newGroupId) return;
 
+        const canUpdate = checkPermission('update', selectedTicket);
+        if (!canUpdate.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canUpdate.reason });
+            return;
+        }
+
         const groupName = allGroups.find(g => g.id === newGroupId)?.name || 'New Group';
 
         // @ts-ignore
@@ -1617,6 +1698,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
     const handleEscalate = async (targetId: string) => {
         if (!selectedTicketId || isTransferring || !targetId) return;
+
+        const canUpdate = checkPermission('update', selectedTicket);
+        if (!canUpdate.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canUpdate.reason });
+            return;
+        }
 
         const targetAgent = allAgents.find(a => a.id === targetId);
         const targetName = targetAgent?.full_name || 'Agent';
@@ -1780,6 +1869,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     const handleReassign = async (targetId: string) => {
         if (!selectedTicketId || isTransferring || !targetId) return;
 
+        const canUpdate = checkPermission('update', selectedTicket);
+        if (!canUpdate.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canUpdate.reason });
+            return;
+        }
+
         const targetAgent = allAgents.find(a => a.id === targetId);
         const targetName = targetAgent?.full_name || 'Agent';
 
@@ -1851,6 +1948,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
     const handleApplyClassification = async () => {
         if (!selectedTicketId || !aiClassification || !selectedTicket) return;
+
+        const canUpdate = checkPermission('update', selectedTicket);
+        if (!canUpdate.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canUpdate.reason });
+            return;
+        }
 
         // @ts-ignore
         const Swal = (await import('sweetalert2')).default;
@@ -1951,6 +2056,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     const handleManualCategoryUpdate = async (catId: string) => {
         if (!selectedTicketId || !selectedTicket) return;
 
+        const canUpdate = checkPermission('update', selectedTicket);
+        if (!canUpdate.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canUpdate.reason });
+            return;
+        }
+
         try {
             const { error } = await supabase
                 .from('tickets')
@@ -2027,6 +2140,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     const handleVerifyCategory = async () => {
         if (!selectedTicketId || !selectedTicket) return;
 
+        const canUpdate = checkPermission('update', selectedTicket);
+        if (!canUpdate.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canUpdate.reason });
+            return;
+        }
+
         // @ts-ignore
         const Swal = (await import('sweetalert2')).default;
         const result = await Swal.fire({
@@ -2087,6 +2208,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
     const handlePriorityUpdate = async (newPriority: string) => {
         if (!selectedTicketId || !selectedTicket) return;
+
+        const canUpdate = checkPermission('update', selectedTicket);
+        if (!canUpdate.allowed) {
+            // @ts-ignore
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({ icon: 'error', title: 'Action Restricted', text: canUpdate.reason });
+            return;
+        }
 
         const oldPriority = selectedTicket.priority;
         if (oldPriority?.toLowerCase() === newPriority.toLowerCase()) {
@@ -2675,35 +2804,49 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                         <div className="relative">
                                             <select
                                                 value={selectedTicket.status_id}
-                                                disabled={isUpdatingStatus || ['Closed', 'Canceled', 'Resolved'].includes(selectedTicket.ticket_statuses?.status_name)}
+                                                disabled={isUpdatingStatus || ['Closed', 'Canceled', 'Resolved'].includes(selectedTicket.ticket_statuses?.status_name) || !checkPermission('update', selectedTicket).allowed}
                                                 onChange={(e) => handleStatusUpdate(e.target.value)}
-                                                className={`appearance-none pl-3 pr-8 py-1 rounded text-[10px] font-black tracking-widest uppercase border cursor-pointer outline-none transition-all
-                                                    ${selectedTicket.ticket_statuses?.status_name === 'Open' ? 'bg-blue-50 text-blue-600 border-blue-200' :
-                                                        selectedTicket.ticket_statuses?.status_name === 'In Progress' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' :
-                                                            selectedTicket.ticket_statuses?.status_name && selectedTicket.ticket_statuses.status_name.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-600 border-orange-200' :
-                                                                selectedTicket.ticket_statuses?.status_name === 'Resolved' ? 'bg-green-50 text-green-600 border-green-200' :
-                                                                    selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'bg-rose-50 text-rose-600 border-rose-200' :
-                                                                        'bg-slate-50 text-slate-600 border-slate-200'}`}
+                                                title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : ''}
+                                                className={`appearance-none pl-3 pr-8 py-1 rounded text-[10px] font-black tracking-widest uppercase border transition-all
+                                                    ${!checkPermission('update', selectedTicket).allowed ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed' :
+                                                        selectedTicket.ticket_statuses?.status_name === 'Open' ? 'bg-blue-50 text-blue-600 border-blue-200 cursor-pointer' :
+                                                            selectedTicket.ticket_statuses?.status_name === 'In Progress' ? 'bg-indigo-50 text-indigo-600 border-indigo-200 cursor-pointer' :
+                                                                selectedTicket.ticket_statuses?.status_name && selectedTicket.ticket_statuses.status_name.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-600 border-orange-200 cursor-pointer' :
+                                                                    selectedTicket.ticket_statuses?.status_name === 'Resolved' ? 'bg-green-50 text-green-600 border-green-200 cursor-pointer' :
+                                                                        selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'bg-rose-50 text-rose-600 border-rose-200 cursor-pointer' :
+                                                                            'bg-slate-50 text-slate-600 border-slate-200 cursor-pointer'}`}
                                             >
                                                 {availableStatuses
                                                     .filter(s => {
+                                                        const currentStatusId = selectedTicket.status_id;
                                                         const currentName = selectedTicket.ticket_statuses?.status_name || 'Open';
-                                                        const allowed = workflowMap[currentName] || [];
 
                                                         // Always show current status
-                                                        if (s.status_id === selectedTicket.status_id) return true;
+                                                        if (s.status_id === currentStatusId) return true;
 
-                                                        const isAllowed = allowed.includes(s.status_name);
+                                                        // Dynamic transition check from database
+                                                        let isAllowed = false;
+                                                        if (workflowTransitions.length > 0) {
+                                                            isAllowed = workflowTransitions.some(t =>
+                                                                t.from_status_id === currentStatusId &&
+                                                                t.to_status_id === s.status_id
+                                                            );
+                                                        } else {
+                                                            // Fallback if no workflow is mapped (legacy behavior or unconfigured)
+                                                            // For unconfigured departments, maybe allow basic transitions or nothing
+                                                            isAllowed = false;
+                                                        }
+
                                                         const isL2Status = s.status_name === 'Pending - Internal Team';
                                                         const isL2Agent = selectedTicket.assigned_agent?.roles?.role_name?.includes('L2');
 
-                                                        // Ban 'Closed' from manual selection
+                                                        // Ban 'Closed' from manual selection (it's terminal and usually automated)
                                                         if (s.status_name === 'Closed') return false;
 
-                                                        // Only show Internal Team status for L2 agents
+                                                        // Only show Internal Team status for L2 agents (extra safety check)
                                                         if (isL2Status && !isL2Agent) return false;
 
-                                                        // Hide 'In Progress' from manual selection if ticket is currently Pending
+                                                        // Hide 'In Progress' from manual selection if ticket is currently Pending (per user request previously)
                                                         if (s.status_name === 'In Progress' && currentName.toLowerCase().includes('pending')) return false;
 
                                                         return isAllowed;
@@ -2739,17 +2882,22 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             <div className="flex gap-2">
                                 <button
                                     onClick={handleAssignToMe}
-                                    disabled={isAssigning || selectedTicket.assigned_to === userProfile?.id}
+                                    disabled={isAssigning || selectedTicket.assigned_to === userProfile?.id || !checkPermission('update', selectedTicket).allowed}
                                     className={`px-4 py-2 text-xs font-bold rounded-lg shadow-md transition-all flex items-center gap-2
                                         ${selectedTicket.assigned_to === userProfile?.id
                                             ? 'bg-emerald-50 text-emerald-600 border border-emerald-100 shadow-none cursor-default'
-                                            : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'
+                                            : !checkPermission('update', selectedTicket).allowed
+                                                ? 'bg-gray-100 text-gray-400 border border-gray-200 shadow-none cursor-not-allowed'
+                                                : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'
                                         }`}
+                                    title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : ''}
                                 >
                                     {isAssigning ? (
                                         <Loader2 size={12} className="animate-spin" />
                                     ) : selectedTicket.assigned_to === userProfile?.id ? (
                                         <><CheckCircle2 size={12} /> Assigned to me</>
+                                    ) : !checkPermission('update', selectedTicket).allowed ? (
+                                        <><Lock size={12} /> Restricted</>
                                     ) : (
                                         'Assign to me'
                                     )}
@@ -2758,96 +2906,112 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 {userProfile?.role_id === 2 && (
                                     <div className="relative group">
                                         <button
-                                            className={`p-2 text-gray-400 hover:text-emerald-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 ${isTransferring ? 'opacity-50' : ''}`}
-                                            title="Reassign to Team Member"
+                                            disabled={isTransferring || !checkPermission('update', selectedTicket).allowed}
+                                            className={`p-2 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
+                                                ${isTransferring || !checkPermission('update', selectedTicket).allowed
+                                                    ? 'opacity-40 cursor-not-allowed bg-gray-50'
+                                                    : 'text-gray-400 hover:text-emerald-600'
+                                                }`}
+                                            title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Reassign to Team Member"}
                                         >
                                             <Users size={16} />
                                             <span className="text-[10px] font-black uppercase tracking-widest pr-1 text-emerald-600">Reassign</span>
                                         </button>
-                                        <select
-                                            onChange={(e) => handleReassign(e.target.value)}
-                                            value=""
-                                            className="absolute inset-0 opacity-0 cursor-pointer w-full"
-                                        >
-                                            <option value="" disabled>Select Team Member</option>
-                                            {allAgents
-                                                .filter(a =>
+                                        {!isTransferring && checkPermission('update', selectedTicket).allowed && (
+                                            <select
+                                                onChange={(e) => handleReassign(e.target.value)}
+                                                value=""
+                                                className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                            >
+                                                <option value="" disabled>Select Team Member</option>
+                                                {allAgents
+                                                    .filter(a =>
+                                                        a.id !== userProfile?.id &&
+                                                        a.group_ids?.some((gid: any) => String(gid) === String(selectedTicket.assignment_group_id)) &&
+                                                        !a.role_name?.includes('Admin') &&
+                                                        !a.role_name?.includes('L2')
+                                                    )
+                                                    .map(agent => (
+                                                        <option key={agent.id} value={agent.id}>{agent.full_name}</option>
+                                                    ))
+                                                }
+                                                {allAgents.filter(a =>
                                                     a.id !== userProfile?.id &&
                                                     a.group_ids?.some((gid: any) => String(gid) === String(selectedTicket.assignment_group_id)) &&
                                                     !a.role_name?.includes('Admin') &&
                                                     !a.role_name?.includes('L2')
-                                                )
-                                                .map(agent => (
-                                                    <option key={agent.id} value={agent.id}>{agent.full_name}</option>
-                                                ))
-                                            }
-                                            {allAgents.filter(a =>
-                                                a.id !== userProfile?.id &&
-                                                a.group_ids?.some((gid: any) => String(gid) === String(selectedTicket.assignment_group_id)) &&
-                                                !a.role_name?.includes('Admin') &&
-                                                !a.role_name?.includes('L2')
-                                            ).length === 0 && (
-                                                    <option disabled>No other team members available</option>
-                                                )}
-                                        </select>
+                                                ).length === 0 && (
+                                                        <option disabled>No other team members available</option>
+                                                    )}
+                                            </select>
+                                        )}
                                     </div>
                                 )}
 
                                 <div className="relative group">
                                     <button
-                                        className={`p-2 text-gray-400 hover:text-blue-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 ${isTransferring ? 'opacity-50' : ''}`}
-                                        title="Transfer Group"
+                                        disabled={isTransferring || !checkPermission('update', selectedTicket).allowed}
+                                        className={`p-2 text-gray-400 hover:text-blue-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
+                                            ${isTransferring || !checkPermission('update', selectedTicket).allowed ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
+                                        title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Transfer Group"}
                                     >
                                         <ArrowRight size={16} />
                                         <span className="text-[10px] font-black uppercase tracking-widest pr-1">Transfer</span>
                                     </button>
-                                    <select
-                                        onChange={(e) => handleTransferGroup(e.target.value)}
-                                        value=""
-                                        className="absolute inset-0 opacity-0 cursor-pointer w-full"
-                                    >
-                                        <option value="" disabled>Select Group</option>
-                                        {allGroups
-                                            .filter(g =>
-                                                g.id !== selectedTicket.assignment_group_id &&
-                                                g.company_id === selectedTicket.group?.company_id
-                                            )
-                                            .map(group => (
-                                                <option key={group.id} value={group.id}>{group.name}</option>
-                                            ))
-                                        }
-                                    </select>
+                                    {!isTransferring && checkPermission('update', selectedTicket).allowed && (
+                                        <select
+                                            onChange={(e) => handleTransferGroup(e.target.value)}
+                                            value=""
+                                            className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                        >
+                                            <option value="" disabled>Select Group</option>
+                                            {allGroups
+                                                .filter(g =>
+                                                    g.id !== selectedTicket.assignment_group_id &&
+                                                    g.company_id === selectedTicket.group?.company_id
+                                                )
+                                                .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                                                .map(group => (
+                                                    <option key={group.id} value={group.id}>{group.name}</option>
+                                                ))
+                                            }
+                                        </select>
+                                    )}
                                 </div>
 
                                 <div className="relative group">
                                     <button
-                                        className={`p-2 text-gray-400 hover:text-orange-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 ${isTransferring ? 'opacity-50' : ''}`}
-                                        title="Escalate to L2"
+                                        disabled={isTransferring || !checkPermission('update', selectedTicket).allowed}
+                                        className={`p-2 text-gray-400 hover:text-orange-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
+                                            ${isTransferring || !checkPermission('update', selectedTicket).allowed ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
+                                        title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Escalate to L2"}
                                     >
                                         <ArrowUpRight size={16} />
                                         <span className="text-[10px] font-black uppercase tracking-widest pr-1 text-orange-600">Escalate</span>
                                     </button>
-                                    <select
-                                        onChange={(e) => handleEscalate(e.target.value)}
-                                        value=""
-                                        className="absolute inset-0 opacity-0 cursor-pointer w-full"
-                                    >
-                                        <option value="" disabled>Select L2 Agent</option>
-                                        {allAgents
-                                            .filter(a =>
-                                                a.id !== userProfile?.id &&
-                                                a.id !== selectedTicket.assigned_to &&
-                                                a.companies.includes(selectedTicket.group?.company_id) &&
-                                                a.role_name?.includes('L2')
-                                            )
-                                            .map(agent => (
-                                                <option key={agent.id} value={agent.id}>{agent.full_name} ({agent.role_name})</option>
-                                            ))
-                                        }
-                                        {allAgents.filter(a => a.companies.includes(selectedTicket.group?.company_id) && a.role_name?.includes('L2')).length === 0 && (
-                                            <option disabled>No L2 Agents found</option>
-                                        )}
-                                    </select>
+                                    {!isTransferring && checkPermission('update', selectedTicket).allowed && (
+                                        <select
+                                            onChange={(e) => handleEscalate(e.target.value)}
+                                            value=""
+                                            className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                        >
+                                            <option value="" disabled>Select L2 Agent</option>
+                                            {allAgents
+                                                .filter(a =>
+                                                    a.id !== userProfile?.id &&
+                                                    a.id !== selectedTicket.assigned_to &&
+                                                    a.companies.includes(selectedTicket.group?.company_id) &&
+                                                    a.role_name?.includes('L2')
+                                                )
+                                                .map(agent => (
+                                                    <option key={agent.id} value={agent.id}>{agent.full_name} ({agent.role_name})</option>
+                                                ))
+                                            }
+                                            {allAgents.filter(a => a.companies.includes(selectedTicket.group?.company_id) && a.role_name?.includes('L2')).length === 0 && (
+                                                <option disabled>No L2 Agents found</option>
+                                            )}
+                                        </select>
+                                    )}
                                 </div>
                                 <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg border border-gray-200"><MoreHorizontal size={16} /></button>
                             </div>
@@ -3151,7 +3315,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                         <DetailRow label="Current Status" value={selectedTicket.ticket_statuses?.status_name} />
 
                                         {/* Priority Level - Editable */}
-                                        <div className="flex flex-col gap-1 py-1.5 border-b border-gray-50 last:border-0">
+                                        <div className="flex flex-col gap-1 py-3 border-b border-gray-50 last:border-0">
                                             <div className="flex items-center justify-between mb-1">
                                                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Priority Level</span>
                                             </div>
@@ -3173,7 +3337,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                         <div className="flex items-center gap-2 mt-1">
                                                             <button
                                                                 onClick={() => setIsEditingPriority(true)}
-                                                                className="text-[9px] font-black text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all"
+                                                                disabled={!checkPermission('update', selectedTicket).allowed}
+                                                                className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all border
+                                                                    ${!checkPermission('update', selectedTicket).allowed
+                                                                        ? 'text-gray-300 bg-gray-50 border-gray-100 cursor-not-allowed'
+                                                                        : 'text-gray-500 bg-white border-gray-200 hover:bg-gray-50'}`}
+                                                                title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Change Priority"}
                                                             >
                                                                 Change Priority
                                                             </button>
@@ -3212,7 +3381,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                             </div>
                                         </div>
 
-                                        <div className="flex flex-col gap-1 py-1.5 border-b border-gray-50 last:border-0">
+                                        <div className="flex flex-col gap-1 py-3 border-b border-gray-50 last:border-0">
                                             <div className="flex items-center justify-between mb-1">
                                                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Category</span>
                                                 {selectedTicket.is_category_verified ? (
@@ -3235,14 +3404,24 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                             {!selectedTicket.is_category_verified && (
                                                                 <button
                                                                     onClick={handleVerifyCategory}
-                                                                    className="text-[9px] font-black text-white bg-indigo-600 hover:bg-indigo-700 uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all"
+                                                                    disabled={!checkPermission('update', selectedTicket).allowed}
+                                                                    className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all
+                                                                        ${!checkPermission('update', selectedTicket).allowed
+                                                                            ? 'text-gray-300 bg-gray-100 cursor-not-allowed'
+                                                                            : 'text-white bg-indigo-600 hover:bg-indigo-700'}`}
+                                                                    title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Verify Correct"}
                                                                 >
                                                                     Verify Correct
                                                                 </button>
                                                             )}
                                                             <button
                                                                 onClick={() => setIsEditingCategory(true)}
-                                                                className="text-[9px] font-black text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all"
+                                                                disabled={!checkPermission('update', selectedTicket).allowed}
+                                                                className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all border
+                                                                    ${!checkPermission('update', selectedTicket).allowed
+                                                                        ? 'text-gray-300 bg-gray-50 border-gray-100 cursor-not-allowed'
+                                                                        : 'text-gray-500 bg-white border-gray-200 hover:bg-gray-50'}`}
+                                                                title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Change Category"}
                                                             >
                                                                 Change Category
                                                             </button>
@@ -3272,6 +3451,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                         <div className="max-h-[200px] overflow-y-auto custom-scrollbar border border-gray-100 rounded-md bg-white">
                                                             {allCategories
                                                                 .filter(c => !catSearch || c.name.toLowerCase().includes(catSearch.toLowerCase()) || getCategoryPath(c.id).toLowerCase().includes(catSearch.toLowerCase()))
+                                                                .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
                                                                 .slice(0, 50)
                                                                 .map(cat => (
                                                                     <button
@@ -3930,8 +4110,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">Attached Files</h3>
                                     {!['Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name) && (
-                                        <label className={`flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors cursor-pointer ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                                            <input type="file" className="hidden" onChange={handleFileUpload} disabled={isUploading} />
+                                        <label className={`flex items-center gap-2 px-4 py-2 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer 
+                                            ${isUploading || !checkPermission('comment', selectedTicket).allowed
+                                                ? 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed pointer-events-none'
+                                                : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                                            title={!checkPermission('comment', selectedTicket).allowed ? checkPermission('comment', selectedTicket).reason : "Upload File"}
+                                        >
+                                            <input type="file" className="hidden" onChange={handleFileUpload} disabled={isUploading || !checkPermission('comment', selectedTicket).allowed} />
                                             {isUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                                             {isUploading ? 'Uploading...' : 'Upload File'}
                                         </label>
@@ -3981,6 +4166,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         const isMySubmittedTicket = selectedTicket.requester_id === userProfile?.id;
                         const isEscalated = selectedTicket.assigned_agent?.roles?.role_name?.includes('L2');
 
+                        const canComment: PermissionResult = checkPermission('comment', selectedTicket);
+                        const canUpdate: PermissionResult = checkPermission('update', selectedTicket);
+
                         if (isTerminal) {
                             return (
                                 <div className="p-8 border-t border-gray-100 bg-gray-50/50 flex flex-col items-center text-center gap-3">
@@ -3998,9 +4186,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             );
                         }
 
-                        // L2 can only reply to their assigned tickets or their own submitted tickets
-                        // They cannot interfere with L1 or SPV tickets if not assigned to them
-                        const canPublicReply = isMySubmittedTicket || isAssignedToMe || (!isL2Agent && !isEscalated);
+                        // Combine existing logic with Access Policies
+                        const canPublicReply = (isMySubmittedTicket || isAssignedToMe || (!isL2Agent && !isEscalated)) && canComment.allowed;
 
                         return (
                             <div className="p-6 border-t border-gray-100 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.02)]">
@@ -4022,57 +4209,71 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 {!isInternalNote && !canPublicReply ? (
                                     <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 flex flex-col items-center text-center gap-3 animate-in fade-in zoom-in duration-300">
                                         <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center text-amber-600">
-                                            <AlertTriangle size={24} />
+                                            {canComment.allowed ? <AlertTriangle size={24} /> : <Lock size={24} />}
                                         </div>
                                         <div>
-                                            <h4 className="text-sm font-black text-amber-900 uppercase tracking-tight">Interaction Restricted</h4>
+                                            <h4 className="text-sm font-black text-amber-900 uppercase tracking-tight">{canComment.allowed ? "Interaction Restricted" : "Action Denied"}</h4>
                                             <p className="text-xs text-amber-700 mt-1 font-medium max-w-sm">
-                                                {isL2Agent
-                                                    ? "As an L2 Support agent, you can only send public replies on tickets that are explicitly assigned to you or were submitted by you."
-                                                    : "This ticket has been escalated. Only the assigned L2 agent can reply to the requester to maintain one voice."
+                                                {!canComment.allowed
+                                                    ? canComment.reason
+                                                    : (isL2Agent
+                                                        ? "As an L2 Support agent, you can only send public replies on tickets that are explicitly assigned to you or were submitted by you."
+                                                        : "This ticket has been escalated. Only the assigned L2 agent can reply to the requester to maintain one voice.")
                                                 }
                                             </p>
                                         </div>
-                                        <button
-                                            onClick={() => setIsInternalNote(true)}
-                                            className="px-4 py-2 bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-amber-700 transition-all shadow-sm"
-                                        >
-                                            Switch to Internal Note
-                                        </button>
+                                        {canComment.allowed && (
+                                            <button
+                                                onClick={() => setIsInternalNote(true)}
+                                                className="px-4 py-2 bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-amber-700 transition-all shadow-sm"
+                                            >
+                                                Switch to Internal Note
+                                            </button>
+                                        )}
                                     </div>
                                 ) : (
                                     <>
-                                        <RichTextEditor
-                                            content={newMessage}
-                                            onChange={setNewMessage}
-                                            placeholder={isInternalNote ? "Type an internal note (visible only to agents)..." : "Type your response to the requester..."}
-                                            minHeight="80px"
-                                        />
-                                        <div className="flex justify-between items-center mt-4">
-                                            <button
-                                                onClick={() => aiSuggestedReply && setNewMessage(aiSuggestedReply)}
-                                                disabled={!aiSuggestedReply}
-                                                className="flex items-center gap-2 text-indigo-600 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                                <Sparkles size={14} fill="currentColor" /> Masukkan Saran AI
-                                            </button>
-                                            <button
-                                                onClick={handleSendMessage}
-                                                disabled={isSending || (!isInternalNote && !canPublicReply)}
-                                                className={`flex items-center gap-3 px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isInternalNote ? 'bg-amber-600 shadow-amber-100 hover:bg-amber-700 text-white' : 'bg-indigo-600 shadow-indigo-100 hover:bg-indigo-700 text-white'}`}
-                                            >
-                                                {isSending ? (
-                                                    <>
-                                                        <Loader2 size={14} className="animate-spin" /> Sending...
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        {isInternalNote ? <Lock size={14} /> : <Send size={14} />}
-                                                        {isInternalNote ? 'Add Private Note' : 'Send Reply'}
-                                                    </>
-                                                )}
-                                            </button>
-                                        </div>
+                                        {(!isInternalNote && !canComment.allowed) || (isInternalNote && !canUpdate.allowed) ? (
+                                            <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl text-center">
+                                                <p className="text-xs text-gray-400 font-bold italic">
+                                                    {isInternalNote ? canUpdate.reason : canComment.reason}
+                                                </p>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <RichTextEditor
+                                                    content={newMessage}
+                                                    onChange={setNewMessage}
+                                                    placeholder={isInternalNote ? "Type an internal note (visible only to agents)..." : "Type your response to the requester..."}
+                                                    minHeight="80px"
+                                                />
+                                                <div className="flex justify-between items-center mt-4">
+                                                    <button
+                                                        onClick={() => aiSuggestedReply && setNewMessage(aiSuggestedReply)}
+                                                        disabled={!aiSuggestedReply}
+                                                        className="flex items-center gap-2 text-indigo-600 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        <Sparkles size={14} fill="currentColor" /> Masukkan Saran AI
+                                                    </button>
+                                                    <button
+                                                        onClick={handleSendMessage}
+                                                        disabled={isSending || (!isInternalNote && !canPublicReply) || (isInternalNote && !canUpdate.allowed)}
+                                                        className={`flex items-center gap-3 px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isInternalNote ? 'bg-amber-600 shadow-amber-100 hover:bg-amber-700 text-white' : 'bg-indigo-600 shadow-indigo-100 hover:bg-indigo-700 text-white'}`}
+                                                    >
+                                                        {isSending ? (
+                                                            <>
+                                                                <Loader2 size={14} className="animate-spin" /> Sending...
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                {isInternalNote ? <Lock size={14} /> : <Send size={14} />}
+                                                                {isInternalNote ? 'Add Private Note' : 'Send Reply'}
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
                                     </>
                                 )}
                             </div>
@@ -4157,8 +4358,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                         )}
                                         <button
                                             onClick={handleApplySummary}
-                                            disabled={isApplyingSummary || aiSummary.length === 0}
+                                            disabled={isApplyingSummary || aiSummary.length === 0 || !checkPermission('update', selectedTicket).allowed}
                                             className="mt-4 w-full text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                            title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Tambah ke Catatan Internal"}
                                         >
                                             {isApplyingSummary ? (
                                                 <><Loader2 size={12} className="animate-spin" /> Menerapkan...</>
@@ -4380,8 +4582,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                 <div className="grid grid-cols-2 gap-2 mt-2">
                                                     <button
                                                         onClick={handleApplyClassification}
-                                                        disabled={!aiClassification}
+                                                        disabled={!aiClassification || !checkPermission('update', selectedTicket).allowed}
                                                         className="py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Terapkan & Verifikasi"}
                                                     >
                                                         Terapkan & Verifikasi
                                                     </button>

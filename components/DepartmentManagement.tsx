@@ -61,10 +61,19 @@ const DepartmentManagement: React.FC = () => {
     const fetchDepartments = async () => {
         try {
             setLoading(true);
-            const { data, error } = await supabase
-                .from('company')
-                .select('*')
-                .order('company_id', { ascending: true });
+
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+            const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+            let query = supabase.from('company').select('*');
+            if (currentUser && !isSuperAdmin) {
+                query = query.eq('company_id', currentUser.company_id);
+            }
+
+            const { data, error } = await query.order('company_id', { ascending: true });
 
             if (error) throw error;
             setDepartments(data || []);
@@ -212,13 +221,15 @@ const DepartmentManagement: React.FC = () => {
 
             {/* Actions Bar */}
             <div className="flex justify-between items-center mb-6">
-                <button
-                    onClick={() => handleOpenModal()}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
-                >
-                    <Plus size={18} />
-                    Add Department
-                </button>
+                {(JSON.parse(localStorage.getItem('profile') || '{}').role_id === 1 && !JSON.parse(localStorage.getItem('profile') || '{}').is_department_admin) && (
+                    <button
+                        onClick={() => handleOpenModal()}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
+                    >
+                        <Plus size={18} />
+                        Add Department
+                    </button>
+                )}
 
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
@@ -309,9 +320,9 @@ const DepartmentManagement: React.FC = () => {
 
             {/* Add/Edit Modal */}
             {isModalOpen && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
-                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 flex-shrink-0">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto pt-20">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
+                        <div className="px-6 pt-8 pb-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 flex-shrink-0">
                             <h3 className="text-lg font-bold text-gray-800">
                                 {editingDepartment ? 'Edit Department' : 'Add Department'}
                             </h3>

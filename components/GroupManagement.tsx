@@ -57,15 +57,26 @@ const GroupManagement: React.FC = () => {
       setDepartments(deptData || []);
 
       // Fetch groups
-      const { data: groupsData, error: groupsError } = await supabase
+      const profileStr = localStorage.getItem('profile');
+      const currentUser = profileStr ? JSON.parse(profileStr) : null;
+      const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+      const isDeptAdmin = currentUser?.is_department_admin === true;
+      const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+      let groupsQuery = supabase
         .from('groups')
         .select(`
           id,
           name,
           company_id,
           is_active
-        `)
-        .order('company_id', { ascending: true });
+        `);
+
+      if (currentUser && !isSuperAdmin) {
+        groupsQuery = groupsQuery.eq('company_id', currentUser.company_id);
+      }
+
+      const { data: groupsData, error: groupsError } = await groupsQuery.order('company_id', { ascending: true });
 
       if (groupsError) throw groupsError;
 
@@ -109,7 +120,7 @@ const GroupManagement: React.FC = () => {
           company_id: group.company_id,
           company_name: dept?.company_name || 'Unknown',
           member_count: memberCount,
-          status: group.is_active ? 'Active' : 'Inactive'
+          status: (group.is_active ? 'Active' : 'Inactive') as 'Active' | 'Inactive'
         };
       });
 

@@ -366,8 +366,9 @@ const CreateUser: React.FC<CreateUserProps> = ({ onCancel, onSuccess }) => {
                             {isGroupDropdownOpen && (
                                 <div className="absolute z-10 w-full bottom-full mb-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
                                     {filteredGroups.length === 0 ? (
-                                        <div className="p-3 text-sm text-gray-500 text-center">
-                                            No groups available for this department
+                                        <div className="p-4 text-sm text-gray-500 text-center flex flex-col gap-2">
+                                            <p className="font-semibold text-gray-900">No groups found in this department.</p>
+                                            <p className="text-xs italic">You can still create this user and assign them to a group later once the group is created in Group Management.</p>
                                         </div>
                                     ) : (
                                         <div className="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto">

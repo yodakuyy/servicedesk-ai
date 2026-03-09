@@ -395,8 +395,9 @@ const CreateGroup: React.FC<CreateGroupProps> = ({ isOpen, onCancel, onSuccess }
                                             sup.full_name.toLowerCase().includes(supervisorSearch.toLowerCase()) ||
                                             sup.email.toLowerCase().includes(supervisorSearch.toLowerCase())
                                         ).length === 0 && (
-                                                <div className="px-3 py-2 text-sm text-gray-500 text-center">
-                                                    No Agent found
+                                                <div className="px-3 py-4 text-sm text-gray-500 text-center flex flex-col gap-2">
+                                                    <p className="font-semibold text-gray-900">No agents found in this department.</p>
+                                                    <p className="text-xs">Please create a user first in <b>User Management</b> (leave Group empty) to be assigned as a supervisor here.</p>
                                                 </div>
                                             )}
                                     </div>
@@ -544,6 +545,12 @@ const CreateGroup: React.FC<CreateGroupProps> = ({ isOpen, onCancel, onSuccess }
                                         </option>
                                     ))}
                             </select>
+
+                            {formData.departmentId && slaPolicies.filter(p => !p.company_id || p.company_id === parseInt(formData.departmentId)).length === 0 && (
+                                <p className="text-[10px] text-orange-500 italic mt-1">
+                                    No SLA Policy found for this department. You can add it later in <b>SLA Management</b> settings.
+                                </p>
+                            )}
                         </div>
                     </div>
                 </form>

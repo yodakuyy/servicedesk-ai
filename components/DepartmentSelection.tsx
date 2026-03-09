@@ -35,14 +35,24 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
       setLoading(true);
       setError(null);
 
+      const profileStr = localStorage.getItem('profile');
+      const profile = profileStr ? JSON.parse(profileStr) : null;
+
+      // Determine if user is a Super Admin (Global) or Department Admin
+      const isAdmin = profile?.role_id === 1 || profile?.role_id === '1';
+      const isDeptAdmin = profile?.is_department_admin === true;
+      const isSuperAdmin = isAdmin && !isDeptAdmin;
+
       console.log('🔍 Fetching active departments from Supabase...');
 
-      // Query only active departments, ordered by company_id
-      const response = await supabase
+      let query = supabase
         .from('company')
         .select('*')
-        .eq('is_active', true)
-        .order('company_id', { ascending: true });
+        .eq('is_active', true);
+
+      // Show all active departments to everyone
+      // This allows users to access other departments as Requesters
+      const response = await query.order('company_id', { ascending: true });
 
       console.log('📊 Full response:', response);
       console.log('📊 Active departments data:', response.data);
@@ -133,11 +143,37 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
       console.log('Selected Department ID:', deptId);
       console.log('User Role ID:', profile.role_id);
 
-      // Fetch role menu permissions
+      // Determine effective role and admin status
+      const isAdminRole = profile?.role_id === 1 || profile?.role_id === '1';
+      const isSuperAdmin = isAdminRole && !profile?.is_department_admin;
+
+      let effectiveRoleId = profile.role_id;
+      let effectiveIsDeptAdmin = profile.is_department_admin;
+
+      if (!isSuperAdmin) {
+        // Non-Super Admins (including Dept Admins and Agents) 
+        // become Requesters (Role 4) if they visit another department
+        if (String(deptId) !== String(profile.company_id)) {
+          console.log('⚠️ Downgrading to Requester for crossover department access');
+          effectiveRoleId = 4;
+          effectiveIsDeptAdmin = false;
+        }
+      }
+
+      // Update profile in localStorage for the session
+      const updatedProfile = {
+        ...profile,
+        role_id: effectiveRoleId,
+        is_department_admin: effectiveIsDeptAdmin,
+        company_id: Number(deptId) // Ensure all components filter by the selected department
+      };
+      localStorage.setItem('profile', JSON.stringify(updatedProfile));
+
+      // Fetch role menu permissions based on effective role
       const { data: roleMenuPerms, error: roleMenuError } = await supabase
         .from('role_menu_permissions')
         .select('menu_id, can_view, can_create, can_update, can_delete, sort_order')
-        .eq('role_id', profile.role_id);
+        .eq('role_id', effectiveRoleId);
 
       if (roleMenuError) {
         console.error('Error fetching role menu permissions:', roleMenuError);
