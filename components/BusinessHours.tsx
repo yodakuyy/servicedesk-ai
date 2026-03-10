@@ -40,6 +40,11 @@ interface Holiday {
 }
 
 const BusinessHours: React.FC = () => {
+    const profileStr = localStorage.getItem('profile');
+    const currentUser = profileStr ? JSON.parse(profileStr) : null;
+    const isSuperAdmin = (currentUser?.role_id === 1 || currentUser?.role_id === '1') && !currentUser?.is_department_admin;
+    const isAnyAdmin = (currentUser?.role_id === 1 || currentUser?.role_id === '1');
+
     const [view, setView] = useState<'list' | 'detail'>('list');
     const [selectedBusinessHour, setSelectedBusinessHour] = useState<BusinessHour | null>(null);
     const [showAddHolidayModal, setShowAddHolidayModal] = useState(false);
@@ -174,7 +179,7 @@ const BusinessHours: React.FC = () => {
     const [newHoliday, setNewHoliday] = useState({
         date: '',
         name: '',
-        scope: 'GLOBAL'
+        scope: isSuperAdmin ? 'GLOBAL' : 'DEPARTEMENT'
     });
 
     const handleViewDetail = (businessHour: BusinessHour) => {
@@ -231,6 +236,16 @@ const BusinessHours: React.FC = () => {
             return;
         }
 
+        if (!isSuperAdmin && newHoliday.scope === 'GLOBAL') {
+            Swal.fire({
+                icon: 'error',
+                title: 'Access Denied',
+                text: 'Only Super Admin can create GLOBAL holidays',
+                confirmButtonColor: '#4c40e6',
+            });
+            return;
+        }
+
         try {
             const { data, error } = await supabase
                 .from('holidays')
@@ -250,7 +265,7 @@ const BusinessHours: React.FC = () => {
                 // Refresh holidays list
                 fetchHolidays();
                 setShowAddHolidayModal(false);
-                setNewHoliday({ date: '', name: '', scope: 'GLOBAL' });
+                setNewHoliday({ date: '', name: '', scope: isSuperAdmin ? 'GLOBAL' : 'DEPARTEMENT' });
                 Swal.fire({
                     icon: 'success',
                     title: 'Success',
@@ -271,6 +286,17 @@ const BusinessHours: React.FC = () => {
 
     const handleDeleteHoliday = (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
+        const holiday = holidays.find(h => h.id === id);
+        if (!isSuperAdmin && holiday?.scope === 'GLOBAL') {
+            Swal.fire({
+                icon: 'error',
+                title: 'Access Denied',
+                text: 'Only Super Admin can delete GLOBAL holidays',
+                confirmButtonColor: '#4c40e6',
+            });
+            return;
+        }
+
         Swal.fire({
             title: 'Are you sure?',
             text: "You want to delete this holiday?",
@@ -370,6 +396,7 @@ const BusinessHours: React.FC = () => {
             name: '',
             timezone: 'Asia/Jakarta',
             usedByGroups: 0,
+            groups: [],
             status: 'Active'
         });
 
@@ -423,12 +450,16 @@ const BusinessHours: React.FC = () => {
                                 onClick={(e) => e.stopPropagation()}
                             >
                                 <span className="holiday-name">{holiday.name}</span>
-                                <button
-                                    className="delete-holiday-btn"
-                                    onClick={(e) => handleDeleteHoliday(holiday.id, e)}
-                                >
-                                    <X size={12} />
-                                </button>
+                                {isAnyAdmin && (
+                                    <button
+                                        className="delete-holiday-btn"
+                                        onClick={(e) => handleDeleteHoliday(holiday.id, e)}
+                                        title={(!isSuperAdmin && holiday.scope === 'GLOBAL') ? "Only Super Admin can delete GLOBAL holidays" : "Delete holiday"}
+                                        style={(!isSuperAdmin && holiday.scope === 'GLOBAL') ? { opacity: 0.3, cursor: 'not-allowed' } : {}}
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                )}
                             </div>
                         ))}
                     </div>
@@ -450,10 +481,12 @@ const BusinessHours: React.FC = () => {
                     </div>
                     <div className="calendar-actions">
                         <button onClick={goToToday} className="today-btn">Today</button>
-                        <button className="btn-add-holiday-calendar" onClick={() => setShowAddHolidayModal(true)}>
-                            <Plus size={16} />
-                            Add Holiday
-                        </button>
+                        {isAnyAdmin && (
+                            <button className="btn-add-holiday-calendar" onClick={() => setShowAddHolidayModal(true)}>
+                                <Plus size={16} />
+                                Add Holiday
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -480,10 +513,12 @@ const BusinessHours: React.FC = () => {
             <div className="business-hours-container">
                 <div className="business-hours-header">
                     <h2>Business Hours</h2>
-                    <button className="btn-add-business-hours" onClick={handleAddBusinessHours}>
-                        <Plus size={16} />
-                        Add Business Hours
-                    </button>
+                    {isSuperAdmin && (
+                        <button className="btn-add-business-hours" onClick={handleAddBusinessHours}>
+                            <Plus size={16} />
+                            Add Business Hours
+                        </button>
+                    )}
                 </div>
 
                 <div className="business-hours-table">
@@ -587,7 +622,7 @@ const BusinessHours: React.FC = () => {
                                         value={newHoliday.scope}
                                         onChange={(e) => setNewHoliday({ ...newHoliday, scope: e.target.value })}
                                     >
-                                        <option value="GLOBAL">GLOBAL</option>
+                                        {isSuperAdmin && <option value="GLOBAL">GLOBAL</option>}
                                         <option value="DEPARTEMENT">DEPARTEMENT</option>
                                         <option value="GROUP">GROUP</option>
                                     </select>
@@ -600,9 +635,11 @@ const BusinessHours: React.FC = () => {
                                 <button className="btn-cancel" onClick={() => setShowAddHolidayModal(false)}>
                                     Cancel
                                 </button>
-                                <button className="btn-save" onClick={handleAddHoliday}>
-                                    Save Changes
-                                </button>
+                                {isAnyAdmin && (
+                                    <button className="btn-save" onClick={handleAddHoliday}>
+                                        Save Changes
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -790,15 +827,21 @@ const BusinessHours: React.FC = () => {
                                 <label>Business Hours Name</label>
                                 <input
                                     type="text"
+                                    disabled={!isSuperAdmin}
                                     value={selectedBusinessHour.name}
                                     onChange={(e) => setSelectedBusinessHour({ ...selectedBusinessHour, name: e.target.value })}
                                     placeholder="Enter business hours name"
+                                    className={!isSuperAdmin ? 'disabled-view' : ''}
                                 />
                             </div>
 
                             <div className="form-group">
                                 <label>Timezone</label>
-                                <select value={selectedBusinessHour.timezone}>
+                                <select
+                                    value={selectedBusinessHour.timezone}
+                                    disabled={!isSuperAdmin}
+                                    className={!isSuperAdmin ? 'disabled-view' : ''}
+                                >
                                     <option value="Asia/Jakarta">Asia/Jakarta</option>
                                 </select>
                             </div>
@@ -820,12 +863,14 @@ const BusinessHours: React.FC = () => {
                                             <div className="time-inputs">
                                                 <input
                                                     type="time"
+                                                    disabled={!isSuperAdmin}
                                                     value={schedule.startTime}
                                                     onChange={(e) => handleTimeChange(index, 'startTime', e.target.value)}
                                                 />
                                                 <span className="time-separator">—</span>
                                                 <input
                                                     type="time"
+                                                    disabled={!isSuperAdmin}
                                                     value={schedule.endTime}
                                                     onChange={(e) => handleTimeChange(index, 'endTime', e.target.value)}
                                                 />
@@ -836,22 +881,28 @@ const BusinessHours: React.FC = () => {
                                                     <span className="break-label">Break:</span>
                                                     <input
                                                         type="time"
+                                                        disabled={!isSuperAdmin}
                                                         value={schedule.breakStartTime}
                                                         onChange={(e) => handleTimeChange(index, 'breakStartTime', e.target.value)}
                                                     />
                                                     <span className="time-separator">—</span>
                                                     <input
                                                         type="time"
+                                                        disabled={!isSuperAdmin}
                                                         value={schedule.breakEndTime}
                                                         onChange={(e) => handleTimeChange(index, 'breakEndTime', e.target.value)}
                                                     />
-                                                    <button className="btn-icon-edit" onClick={() => handleRemoveBreak(index)} title="Remove Break">
-                                                        <X size={14} />
-                                                    </button>
+                                                    {isSuperAdmin && (
+                                                        <button className="btn-icon-edit" onClick={() => handleRemoveBreak(index)} title="Remove Break">
+                                                            <X size={14} />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             ) : (
                                                 schedule.hasBreak ? (
-                                                    <button className="btn-break" onClick={() => handleAddBreak(index)}>+ Break</button>
+                                                    isSuperAdmin ? (
+                                                        <button className="btn-break" onClick={() => handleAddBreak(index)}>+ Break</button>
+                                                    ) : <div />
                                                 ) : (
                                                     <div /> /* Placeholder for grid alignment */
                                                 )
@@ -859,9 +910,10 @@ const BusinessHours: React.FC = () => {
                                         </>
                                     )}
 
-                                    <label className="toggle-switch" style={{ gridColumn: '-1' }}>
+                                    <label className={`toggle-switch ${!isSuperAdmin ? 'disabled' : ''}`} style={{ gridColumn: '-1' }}>
                                         <input
                                             type="checkbox"
+                                            disabled={!isSuperAdmin}
                                             checked={schedule.isActive}
                                             onChange={() => handleToggleDay(index)}
                                         />
@@ -897,7 +949,7 @@ const BusinessHours: React.FC = () => {
 
                 <div className="detail-footer">
                     <button className="btn-cancel" onClick={() => setView('list')}>Cancel</button>
-                    <button className="btn-save">Save Changes</button>
+                    {isSuperAdmin && <button className="btn-save">Save Changes</button>}
                 </div>
             </div>
         );

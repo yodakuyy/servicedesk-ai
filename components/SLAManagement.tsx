@@ -158,7 +158,7 @@ const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
                 .select('company_id, company_name')
                 .eq('is_active', true);
 
-            if (currentUser && !isSuperAdmin) {
+            if (currentUser?.company_id && !isSuperAdmin) {
                 companiesQuery = companiesQuery.eq('company_id', currentUser.company_id);
             }
 
@@ -167,7 +167,8 @@ const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
             if (companiesData) {
                 setCompanies(companiesData);
                 // For Dept Admins, default to their company instead of 'all'
-                if (!isSuperAdmin && currentUser) {
+                // For Dept Admins, default to their company. Super Admin starts at 'all'
+                if (currentUser && !isSuperAdmin) {
                     setSelectedCompany(currentUser.company_id.toString());
                 }
             }
@@ -180,7 +181,7 @@ const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
                     company:company_id(company_name)
                 `);
 
-            if (currentUser && !isSuperAdmin) {
+            if (currentUser?.company_id && !isSuperAdmin) {
                 policiesQuery = policiesQuery.eq('company_id', currentUser.company_id);
             }
 

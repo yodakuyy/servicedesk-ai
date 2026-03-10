@@ -11,6 +11,7 @@ interface SLAMetric {
     priority: string;
     time_value: number;
     time_unit: 'minutes' | 'hours' | 'days';
+    enabled?: boolean;
 }
 
 interface SLACondition {
@@ -148,8 +149,21 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
     const fetchData = async () => {
         setLoading(true);
         try {
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+            const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+            let companyQuery = supabase.from('company').select('company_id, company_name').eq('is_active', true);
+            const effectiveCompanyId = currentUser?.company_id || null;
+
+            if (effectiveCompanyId) {
+                companyQuery = companyQuery.eq('company_id', effectiveCompanyId);
+            }
+
             const [companiesRes, businessHoursRes, categoriesRes, statusesRes] = await Promise.all([
-                supabase.from('company').select('company_id, company_name').order('company_name'),
+                companyQuery.order('company_name'),
                 supabase.from('business_hours').select('id, name').order('name'),
                 supabase.from('ticket_categories').select('id, name').order('name'),
                 supabase.from('ticket_statuses').select('status_id, status_name, sla_behavior').order('sort_order')
@@ -160,13 +174,18 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
             if (statusesRes.data) setStatuses(statusesRes.data);
 
             // Fetch SLA policies with company join
-            const { data: policiesData, error: policiesError } = await supabase
+            let policiesQuery = supabase
                 .from('sla_policies')
                 .select(`
                     *,
                     company:company_id(company_name)
-                `)
-                .order('name');
+                `);
+
+            if (effectiveCompanyId) {
+                policiesQuery = policiesQuery.eq('company_id', effectiveCompanyId);
+            }
+
+            const { data: policiesData, error: policiesError } = await policiesQuery.order('name');
 
             // Fetch SLA targets
             const { data: targetsData } = await supabase
@@ -191,27 +210,23 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
                     };
 
                     // Transform targets to response/resolution SLA format
-                    const responseSLA: SLAMetric[] = policyTargets
-                        .filter((t: any) => t.sla_type === 'response')
-                        .map((t: any) => {
-                            const { value, unit } = parseTime(t.target_minutes);
-                            return {
-                                priority: t.priority || 'Medium',
-                                time_value: value,
-                                time_unit: unit
-                            };
-                        });
+                    const responseSLA: SLAMetric[] = priorities.map(p => {
+                        const target = policyTargets.find((t: any) => t.sla_type === 'response' && t.priority === p);
+                        if (target) {
+                            const { value, unit } = parseTime(target.target_minutes);
+                            return { priority: p, time_value: value, time_unit: unit, enabled: true };
+                        }
+                        return { priority: p, time_value: 4, time_unit: 'hours', enabled: false };
+                    });
 
-                    const resolutionSLA: SLAMetric[] = policyTargets
-                        .filter((t: any) => t.sla_type === 'resolution')
-                        .map((t: any) => {
-                            const { value, unit } = parseTime(t.target_minutes);
-                            return {
-                                priority: t.priority || 'Medium',
-                                time_value: value,
-                                time_unit: unit
-                            };
-                        });
+                    const resolutionSLA: SLAMetric[] = priorities.map(p => {
+                        const target = policyTargets.find((t: any) => t.sla_type === 'resolution' && t.priority === p);
+                        if (target) {
+                            const { value, unit } = parseTime(target.target_minutes);
+                            return { priority: p, time_value: value, time_unit: unit, enabled: true };
+                        }
+                        return { priority: p, time_value: 24, time_unit: 'hours', enabled: false };
+                    });
 
                     return {
                         id: policy.id?.toString(),
@@ -252,9 +267,14 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
     }, [initialPolicyId, policies, view, onClearInitial]);
 
     const handleCreateNew = () => {
+        const profileStr = localStorage.getItem('profile');
+        const currentUser = profileStr ? JSON.parse(profileStr) : null;
+
         setSelectedPolicy(null);
         setFormData({
-            id: '', name: '', description: '', company_id: null, business_hours_id: null,
+            id: '', name: '', description: '',
+            company_id: currentUser?.company_id || null,
+            business_hours_id: null,
             is_active: true, conditions: [],
             response_sla: priorities.map(p => ({ priority: p, time_value: 4, time_unit: 'hours' })),
             resolution_sla: priorities.map(p => ({ priority: p, time_value: 24, time_unit: 'hours' })),
@@ -406,14 +426,15 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
             }
 
             // Insert response SLA targets
-            const responseTargets = formData.response_sla.map((sla) => ({
-                sla_policy_id: policyId,
-                sla_type: 'response',
-                priority: sla.priority,
-                // We populate both new and legacy columns to satisfy constraints and ensure compatibility
-                target_minutes: convertToMinutes(sla.time_value, sla.time_unit),
-                response_time_minutes: convertToMinutes(sla.time_value, sla.time_unit)
-            }));
+            const responseTargets = formData.response_sla
+                .filter(sla => sla.enabled !== false)
+                .map((sla) => ({
+                    sla_policy_id: policyId,
+                    sla_type: 'response',
+                    priority: sla.priority,
+                    target_minutes: convertToMinutes(sla.time_value, sla.time_unit),
+                    response_time_minutes: convertToMinutes(sla.time_value, sla.time_unit)
+                }));
 
             if (responseTargets.length > 0) {
                 const { error: responseError } = await supabase
@@ -428,16 +449,16 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
 
             // Insert resolution SLA targets (if enabled)
             if (formData.enable_resolution_sla && formData.resolution_sla.length > 0) {
-                const resolutionTargets = formData.resolution_sla.map((sla) => ({
-                    sla_policy_id: policyId,
-                    sla_type: 'resolution',
-                    priority: sla.priority,
-                    target_minutes: convertToMinutes(sla.time_value, sla.time_unit),
-                    // For resolution targets, we satisfy the NOT NULL constraint on response_time_minutes with 0
-                    // This is a workaround until the schema constraint is relaxed
-                    response_time_minutes: 0,
-                    resolution_time_minutes: convertToMinutes(sla.time_value, sla.time_unit)
-                }));
+                const resolutionTargets = formData.resolution_sla
+                    .filter(sla => sla.enabled !== false)
+                    .map((sla) => ({
+                        sla_policy_id: policyId,
+                        sla_type: 'resolution',
+                        priority: sla.priority,
+                        target_minutes: convertToMinutes(sla.time_value, sla.time_unit),
+                        response_time_minutes: 0,
+                        resolution_time_minutes: convertToMinutes(sla.time_value, sla.time_unit)
+                    }));
 
                 const { error: resolutionError } = await supabase
                     .from('sla_targets')
@@ -671,11 +692,26 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
                             <label className="block text-sm font-medium text-gray-700 mb-1">Department <span className="text-red-500">*</span></label>
                             <div className="relative">
                                 <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                                <select value={formData.company_id?.toString() || ''} onChange={(e) => setFormData({ ...formData, company_id: parseInt(e.target.value) })}
-                                    className={`w-full pl-10 pr-10 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none ${errors.company_id ? 'border-red-300' : 'border-gray-200'}`}>
-                                    <option value="">Select Department</option>
-                                    {companies.map(c => <option key={c.company_id} value={c.company_id}>{c.company_name}</option>)}
-                                </select>
+                                {(() => {
+                                    const profileStr = localStorage.getItem('profile');
+                                    const currentUser = profileStr ? JSON.parse(profileStr) : null;
+                                    const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+                                    const isDeptAdmin = currentUser?.is_department_admin === true;
+                                    const isSuperAdmin = isAdmin && !isDeptAdmin;
+                                    const isLocked = !isSuperAdmin && currentUser?.company_id;
+
+                                    return (
+                                        <select
+                                            disabled={!!isLocked}
+                                            value={formData.company_id?.toString() || ''}
+                                            onChange={(e) => setFormData({ ...formData, company_id: parseInt(e.target.value) })}
+                                            className={`w-full pl-10 pr-10 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none ${errors.company_id ? 'border-red-300' : 'border-gray-200'} ${isLocked ? 'bg-gray-50 text-gray-500' : ''}`}
+                                        >
+                                            <option value="">Select Department</option>
+                                            {companies.map(c => <option key={c.company_id} value={c.company_id}>{c.company_name}</option>)}
+                                        </select>
+                                    );
+                                })()}
                                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
                             </div>
                             {errors.company_id && <p className="text-xs text-red-500 mt-1">{errors.company_id}</p>}
@@ -782,13 +818,22 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
                         <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2"><Clock size={16} className="text-blue-500" />Response SLA <span className="text-red-500">*</span></h3>
                         <div className="bg-blue-50/50 rounded-lg p-4 border border-blue-100">
                             <table className="w-full">
-                                <thead><tr><th className="text-left text-xs font-medium text-gray-500 pb-2">Priority</th><th className="text-left text-xs font-medium text-gray-500 pb-2">Time</th><th className="text-left text-xs font-medium text-gray-500 pb-2">Unit</th></tr></thead>
+                                <thead><tr><th className="text-left text-xs font-medium text-gray-500 pb-2">Status</th><th className="text-left text-xs font-medium text-gray-500 pb-2">Priority</th><th className="text-left text-xs font-medium text-gray-500 pb-2">Time</th><th className="text-left text-xs font-medium text-gray-500 pb-2">Unit</th></tr></thead>
                                 <tbody>
                                     {formData.response_sla.map(sla => (
-                                        <tr key={sla.priority}>
+                                        <tr key={sla.priority} className={sla.enabled === false ? 'opacity-40' : ''}>
+                                            <td className="py-2 pr-4">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => updateResponseSLA(sla.priority, 'enabled', sla.enabled === false)}
+                                                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${sla.enabled !== false ? 'bg-indigo-500' : 'bg-gray-300'}`}
+                                                >
+                                                    <span className={`inline-block h-2 w-2 transform rounded-full bg-white transition-transform ${sla.enabled !== false ? 'translate-x-4' : 'translate-x-1'}`} />
+                                                </button>
+                                            </td>
                                             <td className="py-2 pr-4"><span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${sla.priority?.toLowerCase() === 'urgent' ? 'bg-red-100 text-red-700' : sla.priority?.toLowerCase() === 'high' ? 'bg-orange-100 text-orange-700' : sla.priority?.toLowerCase() === 'medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>{sla.priority}</span></td>
-                                            <td className="py-2 pr-4"><input type="number" min="1" value={sla.time_value} onChange={(e) => updateResponseSLA(sla.priority, 'time_value', parseInt(e.target.value) || 1)} className="w-20 px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" /></td>
-                                            <td className="py-2"><select value={sla.time_unit} onChange={(e) => updateResponseSLA(sla.priority, 'time_unit', e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">{timeUnits.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}</select></td>
+                                            <td className="py-2 pr-4"><input type="number" min="1" disabled={sla.enabled === false} value={sla.time_value} onChange={(e) => updateResponseSLA(sla.priority, 'time_value', parseInt(e.target.value) || 1)} className="w-20 px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100" /></td>
+                                            <td className="py-2"><select disabled={sla.enabled === false} value={sla.time_unit} onChange={(e) => updateResponseSLA(sla.priority, 'time_unit', e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100">{timeUnits.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}</select></td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -815,13 +860,22 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
                         {formData.enable_resolution_sla ? (
                             <div className="bg-emerald-50/50 rounded-lg p-4 border border-emerald-100">
                                 <table className="w-full">
-                                    <thead><tr><th className="text-left text-xs font-medium text-gray-500 pb-2">Priority</th><th className="text-left text-xs font-medium text-gray-500 pb-2">Time</th><th className="text-left text-xs font-medium text-gray-500 pb-2">Unit</th></tr></thead>
+                                    <thead><tr><th className="text-left text-xs font-medium text-gray-500 pb-2">Status</th><th className="text-left text-xs font-medium text-gray-500 pb-2">Priority</th><th className="text-left text-xs font-medium text-gray-500 pb-2">Time</th><th className="text-left text-xs font-medium text-gray-500 pb-2">Unit</th></tr></thead>
                                     <tbody>
                                         {formData.resolution_sla.map(sla => (
-                                            <tr key={sla.priority}>
+                                            <tr key={sla.priority} className={sla.enabled === false ? 'opacity-40' : ''}>
+                                                <td className="py-2 pr-4">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => updateResolutionSLA(sla.priority, 'enabled', sla.enabled === false)}
+                                                        className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${sla.enabled !== false ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                                                    >
+                                                        <span className={`inline-block h-2 w-2 transform rounded-full bg-white transition-transform ${sla.enabled !== false ? 'translate-x-4' : 'translate-x-1'}`} />
+                                                    </button>
+                                                </td>
                                                 <td className="py-2 pr-4"><span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${sla.priority?.toLowerCase() === 'urgent' ? 'bg-red-100 text-red-700' : sla.priority?.toLowerCase() === 'high' ? 'bg-orange-100 text-orange-700' : sla.priority?.toLowerCase() === 'medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>{sla.priority}</span></td>
-                                                <td className="py-2 pr-4"><input type="number" min="1" value={sla.time_value} onChange={(e) => updateResolutionSLA(sla.priority, 'time_value', parseInt(e.target.value) || 1)} className="w-20 px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" /></td>
-                                                <td className="py-2"><select value={sla.time_unit} onChange={(e) => updateResolutionSLA(sla.priority, 'time_unit', e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">{timeUnits.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}</select></td>
+                                                <td className="py-2 pr-4"><input type="number" min="1" disabled={sla.enabled === false} value={sla.time_value} onChange={(e) => updateResolutionSLA(sla.priority, 'time_value', parseInt(e.target.value) || 1)} className="w-20 px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100" /></td>
+                                                <td className="py-2"><select disabled={sla.enabled === false} value={sla.time_unit} onChange={(e) => updateResolutionSLA(sla.priority, 'time_unit', e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100">{timeUnits.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}</select></td>
                                             </tr>
                                         ))}
                                     </tbody>

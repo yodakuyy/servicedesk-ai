@@ -52,7 +52,8 @@ const LoginSection: React.FC<LoginSectionProps> = ({ onLogin }) => {
       email,
       role_id,
       company_id,
-      status
+      status,
+      is_department_admin
     `)
       .eq('id', user.id)
       .single();

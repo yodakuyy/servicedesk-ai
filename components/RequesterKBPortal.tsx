@@ -60,13 +60,22 @@ const RequesterKBPortal: React.FC = () => {
                 if (profile) {
                     // @ts-ignore
                     const companyId = profile.groups?.[0]?.company_id;
-                    setCurrentCompanyId(companyId);
-                    fetchCategories(companyId);
-                    fetchPopularArticles(companyId);
+                    const { data: profileFull } = await supabase
+                        .from('profiles')
+                        .select('role_id')
+                        .eq('id', user.id)
+                        .single();
+
+                    const isAdmin = profileFull?.role_id === 1 || profileFull?.role_id === '1';
+                    const effectiveCompanyId = isAdmin ? null : (companyId || null);
+
+                    setCurrentCompanyId(effectiveCompanyId);
+                    fetchCategories(effectiveCompanyId);
+                    fetchPopularArticles(effectiveCompanyId);
                 }
             } else {
-                fetchCategories();
-                fetchPopularArticles();
+                fetchCategories(null);
+                fetchPopularArticles(null);
             }
         };
         initialize();

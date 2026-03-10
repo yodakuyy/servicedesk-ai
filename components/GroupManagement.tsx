@@ -72,7 +72,7 @@ const GroupManagement: React.FC = () => {
           is_active
         `);
 
-      if (currentUser && !isSuperAdmin) {
+      if (currentUser?.company_id && !isSuperAdmin) {
         groupsQuery = groupsQuery.eq('company_id', currentUser.company_id);
       }
 

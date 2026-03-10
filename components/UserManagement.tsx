@@ -931,8 +931,9 @@ const UserManagement: React.FC = () => {
             let usersQuery = supabase.from('profiles').select('*').order('last_active_at', { ascending: false, nullsFirst: false });
             let userGroupsQuery = supabase.from('user_groups').select('*');
 
-            // 2. Apply filtering for Department Admins
-            if (currentUser && !isSuperAdmin) {
+            // 2. Apply filtering for Department Admins (Restricted access)
+            // Super Admins (isSuperAdmin === true) will see everything (no filter)
+            if (currentUser?.company_id && !isSuperAdmin) {
                 deptQuery = deptQuery.eq('company_id', currentUser.company_id);
                 groupsQuery = groupsQuery.eq('company_id', currentUser.company_id);
                 usersQuery = usersQuery.eq('company_id', currentUser.company_id);

@@ -242,6 +242,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     setCurrentView('incidents');
   });
 
+  // Global navigation listener for child components (e.g. Checklist deep-links)
+  useEffect(() => {
+    const handleNavigate = (e: any) => {
+      if (e.detail) {
+        setCurrentView(e.detail);
+        // Also automatically expand settings if navigating to a settings view
+        if (['user-management', 'sla-management', 'business-hours', 'workflow-mapping'].includes(e.detail)) {
+          setIsSettingsOpen(true);
+        }
+      }
+    };
+    window.addEventListener('navigate', handleNavigate);
+    return () => window.removeEventListener('navigate', handleNavigate);
+  }, []);
+
   // Close notification panel when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -386,17 +401,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           return;
         }
 
-        let myGroupIds: string[] = [];
-        // Fetch groups for Supervisors and Agents (and Dept Admins) to filter dashboard
-        if (!isSuperAdmin) {
-          const { data: groups } = await supabase.from('user_groups').select('group_id').eq('user_id', userProfile.id);
-          if (groups) myGroupIds = groups.map(g => g.group_id);
+        // Fetch current department groups for filtering
+        const { data: deptGroups } = await supabase.from('groups').select('id').eq('company_id', userProfile.company_id);
+        const allDeptGroupIds = deptGroups?.map(g => g.id) || [];
 
-          // If Department Admin is not in any group, they should still see ALL groups in their department
-          if (isDeptAdmin && myGroupIds.length === 0) {
-            const { data: deptGroups } = await supabase.from('groups').select('id').eq('company_id', userProfile.company_id);
-            if (deptGroups) myGroupIds = deptGroups.map(g => g.id);
+        let myGroupIds: string[] = [];
+        if (isDeptAdmin && userProfile.company_id) {
+          // Department Admins are restricted to their specific department's groups
+          myGroupIds = allDeptGroupIds;
+        } else if (isAgent || isSupervisor) {
+          // Agents and Supervisors see only their assigned groups, but within the current department
+          const { data: groups } = await supabase.from('user_groups').select('group_id').eq('user_id', userProfile.id);
+          if (groups) {
+            myGroupIds = groups.map(g => g.group_id).filter(id => allDeptGroupIds.includes(id));
           }
+        } else if (isSuperAdmin) {
+          // Super Admins see everything - we leave myGroupIds empty to skip .in() filtering in some queries, 
+          // or we handle null if preferred. Here we'll use empty and conditional queries.
+          myGroupIds = [];
         }
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -437,8 +459,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           newTicketsQuery = newTicketsQuery.eq('assigned_to', userProfile.id);
         } else {
           newTicketsQuery = newTicketsQuery.gte('created_at', sevenDaysAgo.toISOString());
-          if (!isSuperAdmin && myGroupIds.length > 0) {
+          if (myGroupIds.length > 0) {
             newTicketsQuery = newTicketsQuery.in('assignment_group_id', myGroupIds);
+          } else if (!isSuperAdmin && userProfile.company_id) {
+            // If not Super Admin and we have a company but no specific groups (shouldn't happen for agents usually)
+            // we might still want a safety filter, but for Super Admin we avoid it.
+            newTicketsQuery = newTicketsQuery.in('assignment_group_id', allDeptGroupIds);
           }
         }
         const { data: newTickets } = await newTicketsQuery;
@@ -455,7 +481,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('created_at', { ascending: false });
 
         if (isAgent) openTicketsQuery = openTicketsQuery.eq('assigned_to', userProfile.id);
-        else if (!isSuperAdmin && myGroupIds.length > 0) openTicketsQuery = openTicketsQuery.in('assignment_group_id', myGroupIds);
+        else if (myGroupIds.length > 0) openTicketsQuery = openTicketsQuery.in('assignment_group_id', myGroupIds);
         const { data: openTicketsFullList } = await openTicketsQuery;
 
         // 4. OVERDUE TICKETS (Enhanced Logic with Priority-based SLA & Paused Time)
@@ -476,7 +502,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('created_at', { ascending: true });
 
         if (isAgent) overdueQuery = overdueQuery.eq('assigned_to', userProfile.id);
-        else if (!isSuperAdmin && myGroupIds.length > 0) overdueQuery = overdueQuery.in('assignment_group_id', myGroupIds);
+        else if (myGroupIds.length > 0) overdueQuery = overdueQuery.in('assignment_group_id', myGroupIds);
         const { data: potentialOverdue } = await overdueQuery;
 
         // Filter based on Priority SLA
@@ -514,8 +540,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .in('status_id', activeStatusIds)
           .order('created_at', { ascending: false });
 
-        // Filter Unassigned by Group for Supervisor/Agent
-        if (!isSuperAdmin && myGroupIds.length > 0) {
+        // Filter Unassigned by Group
+        if (myGroupIds.length > 0) {
           unassignedQuery = unassignedQuery.in('assignment_group_id', myGroupIds);
         }
         const { data: unassignedTicketsFullList } = await unassignedQuery;
@@ -530,7 +556,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           `)
           .in('status_id', pendingStatusIds);
         if (isAgent) pendingQuery = pendingQuery.eq('assigned_to', userProfile.id);
-        else if (!isSuperAdmin && myGroupIds.length > 0) pendingQuery = pendingQuery.in('assignment_group_id', myGroupIds);
+        else if (myGroupIds.length > 0) pendingQuery = pendingQuery.in('assignment_group_id', myGroupIds);
         const { data: pendingTicketsFullList } = await pendingQuery;
         const pendingCount = pendingTicketsFullList?.length || 0;
 
@@ -550,7 +576,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('updated_at', { ascending: false });
 
         if (isAgent) resolvedQuery = resolvedQuery.eq('assigned_to', userProfile.id);
-        else if (!isSuperAdmin && myGroupIds.length > 0) resolvedQuery = resolvedQuery.in('assignment_group_id', myGroupIds);
+        else if (myGroupIds.length > 0) resolvedQuery = resolvedQuery.in('assignment_group_id', myGroupIds);
         const { data: resolvedTicketsFullList } = await resolvedQuery;
 
         // 7. SATISFACTION REVIEWS
@@ -564,7 +590,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .order('updated_at', { ascending: false });
 
         if (isAgent) satisfactionQuery = satisfactionQuery.eq('assigned_to', userProfile.id);
-        else if (!isSuperAdmin && myGroupIds.length > 0) satisfactionQuery = satisfactionQuery.in('assignment_group_id', myGroupIds);
+        else if (myGroupIds.length > 0) satisfactionQuery = satisfactionQuery.in('assignment_group_id', myGroupIds);
 
         const { data: satisfactionData } = await satisfactionQuery;
 
@@ -580,7 +606,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .eq('ticket_type', 'incident');
 
         if (isAgent) incidentQuery = incidentQuery.eq('assigned_to', userProfile.id);
-        else if (!isSuperAdmin && myGroupIds.length > 0) incidentQuery = incidentQuery.in('assignment_group_id', myGroupIds);
+        else if (myGroupIds.length > 0) incidentQuery = incidentQuery.in('assignment_group_id', myGroupIds);
 
         const { data: incidentCategories } = await incidentQuery;
 
@@ -602,7 +628,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .eq('ticket_type', 'service_request');
 
         if (isAgent) srQuery = srQuery.eq('assigned_to', userProfile.id);
-        else if (!isSuperAdmin && myGroupIds.length > 0) srQuery = srQuery.in('assignment_group_id', myGroupIds);
+        else if (myGroupIds.length > 0) srQuery = srQuery.in('assignment_group_id', myGroupIds);
 
         const { data: srCategories } = await srQuery;
 
@@ -627,7 +653,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           .gte('created_at', sevenDaysAgoDate.toISOString().split('T')[0]);
 
         if (isAgent) trendQuery = trendQuery.eq('assigned_to', userProfile.id);
-        else if (!isSuperAdmin && myGroupIds.length > 0) trendQuery = trendQuery.in('assignment_group_id', myGroupIds);
+        else if (myGroupIds.length > 0) trendQuery = trendQuery.in('assignment_group_id', myGroupIds);
 
         const { data: trendTickets } = await trendQuery;
 
@@ -665,22 +691,28 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           const { data: rpcData, error: rpcError } = await supabase.rpc('get_team_pulse');
           if (rpcError) throw rpcError;
           if (rpcData) {
-            teamPulse = rpcData.map((agent: any) => {
-              const active = Number(agent.active_count);
-              const resolved = Number(agent.resolved_today_count);
-              const isSPV = agent.role_id === 2;
-              let score = 100 - (active * 5) + (resolved * 2);
-              score = Math.min(100, Math.max(0, score));
-              return {
-                name: agent.full_name || agent.email || 'Unknown Agent',
-                active: active,
-                overdue: Number(agent.overdue_count || 0),
-                resolved: resolved,
-                status: active > 8 ? 'Overload' : active > 3 ? 'Busy' : 'Free',
-                score: score,
-                isSPV: isSPV
-              };
-            });
+            // Filter only agents from the current department
+            const { data: deptAgents } = await supabase.from('profiles').select('id').eq('company_id', userProfile.company_id);
+            const deptAgentIds = new Set(deptAgents?.map(a => a.id) || []);
+
+            teamPulse = rpcData
+              .filter((agent: any) => deptAgentIds.has(agent.agent_id))
+              .map((agent: any) => {
+                const active = Number(agent.active_count);
+                const resolved = Number(agent.resolved_today_count);
+                const isSPV = agent.role_id === 2;
+                let score = 100 - (active * 5) + (resolved * 2);
+                score = Math.min(100, Math.max(0, score));
+                return {
+                  name: agent.full_name || agent.email || 'Unknown Agent',
+                  active: active,
+                  overdue: Number(agent.overdue_count || 0),
+                  resolved: resolved,
+                  status: active > 8 ? 'Overload' : active > 3 ? 'Busy' : 'Free',
+                  score: score,
+                  isSPV: isSPV
+                };
+              });
           }
         } catch (err) { console.error("Team Pulse RPC failed", err); }
 
@@ -716,7 +748,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 .gte('created_at', twentyFourHoursAgo.toISOString());
 
               if (isAgent) queryA = queryA.eq('assigned_to', userProfile.id);
-              else if (isSupervisor && myGroupIds.length > 0) queryA = queryA.in('assignment_group_id', myGroupIds);
+              else if (myGroupIds.length > 0) queryA = queryA.in('assignment_group_id', myGroupIds);
 
               const { count: countA } = await queryA;
 
@@ -727,7 +759,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 .lt('created_at', twentyFourHoursAgo.toISOString());
 
               if (isAgent) queryB = queryB.eq('assigned_to', userProfile.id);
-              else if (isSupervisor && myGroupIds.length > 0) queryB = queryB.in('assignment_group_id', myGroupIds);
+              else if (myGroupIds.length > 0) queryB = queryB.in('assignment_group_id', myGroupIds);
 
               const { count: countB } = await queryB;
 
@@ -1129,7 +1161,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-bold text-indigo-600">
                   {(ticket.requester?.full_name || 'U').charAt(0).toUpperCase()}
                 </div>
-                <span className="text-xs text-gray-600">{ticket.requester?.full_name?.split(' ')[0] || 'Unknown'}</span>
+                <span className="text-xs text-gray-600 truncate max-w-[100px]">{ticket.requester?.full_name || 'Unknown'}</span>
               </div>
             </td>
             <td className="px-6 py-4">
@@ -1137,7 +1169,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${ticket.assigned_agent ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>
                   {ticket.assigned_agent ? ticket.assigned_agent.full_name.charAt(0).toUpperCase() : '?'}
                 </div>
-                <span className="text-gray-500 text-xs">{ticket.assigned_agent?.full_name?.split(' ')[0] || 'Unassigned'}</span>
+                <span className="text-gray-500 text-xs truncate max-w-[100px]">{ticket.assigned_agent?.full_name || 'Unassigned'}</span>
               </div>
             </td>
             <td className="px-6 py-4">
@@ -1428,7 +1460,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       return (
         <div className="p-8">
           <div className="mb-6">
-            <h1 className="text-2xl font-bold text-gray-800">{getGreeting()}, {userProfile?.full_name?.split(' ')[0] || 'Agent'}! 👋</h1>
+            <h1 className="text-2xl font-bold text-gray-800">{getGreeting()}, {userProfile?.full_name || 'Agent'}! 👋</h1>
             <p className="text-gray-500">Here's what's on your plate today.</p>
           </div>
 
@@ -1751,7 +1783,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                             <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-bold text-indigo-600">
                               {(ticket.requester?.full_name || 'U').charAt(0).toUpperCase()}
                             </div>
-                            <span className="text-xs text-gray-600">{ticket.requester?.full_name?.split(' ')[0] || 'Unknown'}</span>
+                            <span className="text-xs text-gray-600 truncate max-w-[100px]">{ticket.requester?.full_name || 'Unknown'}</span>
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -1759,7 +1791,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                             <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${ticket.assigned_agent ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>
                               {ticket.assigned_agent ? ticket.assigned_agent.full_name.charAt(0).toUpperCase() : '?'}
                             </div>
-                            <span className="text-gray-500 text-xs">{ticket.assigned_agent?.full_name?.split(' ')[0] || 'Unassigned'}</span>
+                            <span className="text-gray-500 text-xs truncate max-w-[100px]">{ticket.assigned_agent?.full_name || 'Unassigned'}</span>
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -1830,11 +1862,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             title="Switch Department"
           >
             <div className={`w-9 h-9 ${selectedDeptName.toUpperCase().includes('DIT') ? 'bg-indigo-600' :
-                selectedDeptName.toUpperCase().includes('LEGAL') ? 'bg-amber-600' :
-                  selectedDeptName.toUpperCase().includes('HC') ? 'bg-rose-600' :
-                    selectedDeptName.toUpperCase().includes('HR') ? 'bg-rose-600' :
-                      selectedDeptName.toUpperCase().includes('FINANCE') ? 'bg-emerald-600' :
-                        'bg-slate-700'
+              selectedDeptName.toUpperCase().includes('LEGAL') ? 'bg-amber-600' :
+                selectedDeptName.toUpperCase().includes('HC') ? 'bg-rose-600' :
+                  selectedDeptName.toUpperCase().includes('HR') ? 'bg-rose-600' :
+                    selectedDeptName.toUpperCase().includes('FINANCE') ? 'bg-emerald-600' :
+                      'bg-slate-700'
               } rounded-xl flex items-center justify-center shadow-lg shadow-indigo-200/20 flex-shrink-0 transition-transform group-hover/dept:scale-110`}>
               <div className="w-4 h-4 bg-white rounded-full opacity-40 animate-pulse" />
             </div>
@@ -2086,6 +2118,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             <div className="absolute bottom-16 left-4 right-4 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-50">
               <button onClick={() => { setCurrentView('profile'); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"><User size={16} /> Profile</button>
               <button onClick={() => { setCurrentView('my-notifications'); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"><Bell size={16} /> Notifications</button>
+              <button onClick={() => { onChangeDepartment(); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"><ArrowLeftRight size={16} /> Change Department</button>
               <div className="h-px bg-gray-100 my-1 mx-4"></div>
               <button onClick={onLogout} className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"><LogOut size={16} /> Logout</button>
             </div>
@@ -2114,7 +2147,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto z-0 relative">
+        <main className="flex-1 overflow-auto relative">
           <div key={`${currentView}-${navVersion}`} className="h-full">
             {renderContent()}
           </div>

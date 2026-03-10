@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Check, ArrowRight, MessageSquare, X, Send, Bot, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import Swal from 'sweetalert2';
 
 interface DepartmentSelectionProps {
   onSelectDepartment: (id: string) => void;
@@ -145,14 +146,35 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
 
       // Determine effective role and admin status
       const isAdminRole = profile?.role_id === 1 || profile?.role_id === '1';
-      const isSuperAdmin = isAdminRole && !profile?.is_department_admin;
+      const isDeptAdmin = profile?.is_department_admin === true;
+      const isSuperAdmin = isAdminRole && !isDeptAdmin;
+
+      console.log('Is Admin Role:', isAdminRole);
+      console.log('Is Dept Admin:', isDeptAdmin);
+      console.log('Is Super Admin:', isSuperAdmin);
+      console.log('User Company ID:', profile.company_id);
+      console.log('Target Dept ID:', deptId);
+
+      // 🛑 REJECT: Dept Admin trying to access another department
+      if (isDeptAdmin && String(deptId) !== String(profile.company_id)) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Akses Ditolak',
+          text: `Sebagai Admin Departemen, Anda hanya diizinkan mengelola departemen Anda sendiri.`,
+          confirmButtonColor: '#4f46e5',
+          background: '#ffffff',
+          customClass: {
+            popup: 'rounded-2xl shadow-xl border border-gray-100'
+          }
+        });
+        return;
+      }
 
       let effectiveRoleId = profile.role_id;
       let effectiveIsDeptAdmin = profile.is_department_admin;
 
-      if (!isSuperAdmin) {
-        // Non-Super Admins (including Dept Admins and Agents) 
-        // become Requesters (Role 4) if they visit another department
+      if (!isSuperAdmin && !isDeptAdmin) {
+        // Regular Agents/Requesters become Requesters (Role 4) if they visit another department
         if (String(deptId) !== String(profile.company_id)) {
           console.log('⚠️ Downgrading to Requester for crossover department access');
           effectiveRoleId = 4;

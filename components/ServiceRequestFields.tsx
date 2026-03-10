@@ -39,6 +39,7 @@ interface CategoryNode {
     level: number;
     children?: CategoryNode[];
     parent_id?: string | null;
+    company_id?: number | null;
 }
 
 interface CustomField {
@@ -66,18 +67,54 @@ const ServiceRequestFields: React.FC = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [previewMode, setPreviewMode] = useState(true);
     const [isFieldsLoading, setIsFieldsLoading] = useState(false);
+    const [availableDepartments, setAvailableDepartments] = useState<{ company_id: number, company_name: string }[]>([]);
+    const [selectedDeptFilter, setSelectedDeptFilter] = useState<number | 'all'>('all');
 
     useEffect(() => {
+        fetchDepartments();
         fetchCategories();
-    }, []);
+    }, [selectedDeptFilter]); // Fetch categories when filter changes
+
+    const fetchDepartments = async () => {
+        const profileStr = localStorage.getItem('profile');
+        const currentUser = profileStr ? JSON.parse(profileStr) : null;
+        const isAdmin = (currentUser?.role_id === 1 || currentUser?.role_id === '1');
+        const isDeptAdmin = currentUser?.is_department_admin === true;
+        const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+        let query = supabase.from('company').select('company_id, company_name');
+        if (currentUser?.company_id && !isSuperAdmin) {
+            query = query.eq('company_id', currentUser.company_id);
+            setSelectedDeptFilter(currentUser.company_id);
+        }
+
+        const { data } = await query.order('company_name');
+        if (data) setAvailableDepartments(data);
+    };
 
     // Fetch Categories
     const fetchCategories = async () => {
         try {
             setIsLoading(true);
-            const { data, error } = await supabase
+
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+            const isAdmin = (currentUser?.role_id === 1 || currentUser?.role_id === '1');
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+            let query = supabase
                 .from('ticket_categories')
-                .select('id, name, description, category_type, level, parent_id')
+                .select('id, name, description, category_type, level, parent_id, company_id');
+
+            // Apply department filtering
+            if (selectedDeptFilter !== 'all') {
+                query = query.or(`company_id.is.null,company_id.eq.${selectedDeptFilter}`);
+            } else if (currentUser?.company_id && !isSuperAdmin) {
+                query = query.or(`company_id.is.null,company_id.eq.${currentUser.company_id}`);
+            }
+
+            const { data, error } = await query
                 .order('level', { ascending: true })
                 .order('name', { ascending: true });
 
@@ -91,6 +128,7 @@ const ServiceRequestFields: React.FC = () => {
                     type: item.category_type,
                     level: item.level || 1,
                     parent_id: item.parent_id ? String(item.parent_id) : null,
+                    company_id: item.company_id || null,
                 }));
                 const tree = buildTree(nodes);
                 setCategories(tree);
@@ -166,6 +204,10 @@ const ServiceRequestFields: React.FC = () => {
     const renderTree = (nodes: CategoryNode[]) => {
         const filtered = nodes
             .filter(n => n.type === ticketType)
+            .filter(n => {
+                const matchesDept = selectedDeptFilter === 'all' || n.company_id === selectedDeptFilter;
+                return matchesDept;
+            })
             .filter(n => !searchQuery || n.name.toLowerCase().includes(searchQuery.toLowerCase()) || n.children?.some(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())));
 
         if (filtered.length === 0 && searchQuery === '') return <div className="p-4 text-center text-gray-400 text-xs text-center">No categories found.</div>;
@@ -359,15 +401,32 @@ const ServiceRequestFields: React.FC = () => {
                         ))}
                     </div>
                     {/* Search */}
-                    <div className="relative">
-                        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input
-                            type="text"
-                            placeholder="Search categories..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 transition-all shadow-sm"
-                        />
+                    <div className="space-y-4">
+                        <div className="relative">
+                            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input
+                                type="text"
+                                placeholder="Search categories..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 transition-all shadow-sm"
+                            />
+                        </div>
+
+                        {/* Department Filter */}
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block ml-1">Filter Department</label>
+                            <select
+                                value={selectedDeptFilter}
+                                onChange={(e) => setSelectedDeptFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                                className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 transition-all shadow-sm appearance-none cursor-pointer"
+                            >
+                                <option value="all">All Departments</option>
+                                {availableDepartments.map(dept => (
+                                    <option key={dept.company_id} value={dept.company_id}>{dept.company_name}</option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
                 </div >
 

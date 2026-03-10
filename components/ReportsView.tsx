@@ -244,9 +244,20 @@ const ReportsView: React.FC = () => {
     const fetchReportsData = async () => {
         setIsLoading(true);
         try {
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+            const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
             // 0. Fetch Policies, Targets & All Categories for Breadcrumbs
+            let pQuery = supabase.from('sla_policies').select('*').eq('is_active', true);
+            if (currentUser?.company_id) {
+                pQuery = pQuery.eq('company_id', currentUser.company_id);
+            }
+
             const [pRes, tRes, cRes, sRes] = await Promise.all([
-                supabase.from('sla_policies').select('*').eq('is_active', true),
+                pQuery,
                 supabase.from('sla_targets').select('*'),
                 supabase.from('ticket_categories').select('id, name, parent_id'),
                 supabase.from('ticket_statuses').select('status_id, status_name')
@@ -269,13 +280,18 @@ const ReportsView: React.FC = () => {
                     total_paused_minutes, paused_at, status_id, category_id, assignment_group_id,
                     ticket_statuses!fk_tickets_status (status_name),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id),
-                    group:groups!assignment_group_id (
+                    group:groups!assignment_group_id!inner (
                         id, 
+                        company_id,
                         business_hours (weekly_schedule)
                     )
                 `)
                 .gte('created_at', dateRange.start + 'T00:00:00')
                 .lte('created_at', dateRange.end + 'T23:59:59');
+
+            if (currentUser?.company_id) {
+                query = query.eq('group.company_id', currentUser.company_id);
+            }
 
             const { data: tickets, error } = await query;
             if (error) throw error;
@@ -605,8 +621,14 @@ const ReportsView: React.FC = () => {
     const handleExportExcel = async () => {
         setIsExporting(true);
         try {
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+            const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
             // Fetch comprehensive data for export
-            const { data: tickets, error } = await supabase
+            let query = supabase
                 .from('tickets')
                 .select(`
                     id, ticket_number, subject, description, priority, created_at, updated_at, ticket_type, 
@@ -616,13 +638,20 @@ const ReportsView: React.FC = () => {
                     reporter:profiles!fk_tickets_created_by (full_name),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id),
                     services (name),
-                    group:groups!assignment_group_id (
+                    group:groups!assignment_group_id!inner (
                         id, name,
+                        company_id,
                         business_hours (weekly_schedule)
                     )
                 `)
                 .gte('created_at', dateRange.start + 'T00:00:00')
                 .lte('created_at', dateRange.end + 'T23:59:59');
+
+            if (currentUser?.company_id && !isSuperAdmin) {
+                query = query.eq('group.company_id', currentUser.company_id);
+            }
+
+            const { data: tickets, error } = await query;
 
             if (error) throw error;
             if (!tickets || tickets.length === 0) {

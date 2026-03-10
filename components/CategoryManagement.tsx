@@ -82,7 +82,7 @@ const CategoryManagement: React.FC = () => {
         const isSuperAdmin = isAdmin && !isDeptAdmin;
 
         let query = supabase.from('company').select('company_id, company_name');
-        if (currentUser && !isSuperAdmin) {
+        if (currentUser?.company_id && !isSuperAdmin) {
             query = query.eq('company_id', currentUser.company_id);
             setSelectedDeptFilter(currentUser.company_id);
         }
@@ -99,7 +99,7 @@ const CategoryManagement: React.FC = () => {
         const isSuperAdmin = isAdmin && !isDeptAdmin;
 
         let query = supabase.from('groups').select('id, name').eq('is_active', true);
-        if (currentUser && !isSuperAdmin) {
+        if (currentUser?.company_id && !isSuperAdmin) {
             query = query.eq('company_id', currentUser.company_id);
         }
 
@@ -121,7 +121,7 @@ const CategoryManagement: React.FC = () => {
                 .from('ticket_categories')
                 .select('*');
 
-            if (currentUser && !isSuperAdmin) {
+            if (currentUser?.company_id && !isSuperAdmin) {
                 // Return categories for user's company or global (null)
                 query = query.or(`company_id.is.null,company_id.eq.${currentUser.company_id}`);
             }

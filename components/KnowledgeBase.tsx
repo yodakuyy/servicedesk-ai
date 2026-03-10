@@ -68,21 +68,36 @@ const KnowledgeBase: React.FC = () => {
     try {
       // 0. Fetch User Profile & Company
       let companyId = currentCompanyId;
-      if (!userProfile) {
+      // Retrieve profile from localStorage to match the Dashboard's current department selection
+      const profileStr = localStorage.getItem('profile');
+      const profile = profileStr ? JSON.parse(profileStr) : null;
+
+      if (profile) {
+        setUserProfile(profile);
+        const isAdmin = profile.role_id === 1 || profile.role_id === '1';
+        const isDeptAdmin = profile.is_department_admin === true;
+
+        const effectiveCompanyId = profile.company_id || (isAdmin ? null : null);
+        companyId = effectiveCompanyId;
+        setCurrentCompanyId(effectiveCompanyId);
+        console.log(`KnowledgeBase filter applied for ${profile.full_name}: company_id = ${effectiveCompanyId}`);
+      } else {
+        // Fallback to Supabase if local profile is missing
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
-          const { data: profile } = await supabase
+          const { data: profileData } = await supabase
             .from('profiles')
             .select('*, groups!user_groups(company_id)')
             .eq('id', user.id)
             .single();
 
-          if (profile) {
-            setUserProfile(profile);
-            // Get company_id from the first group if available
-            // @ts-ignore
-            companyId = profile.groups?.[0]?.company_id || null;
-            setCurrentCompanyId(companyId);
+          if (profileData) {
+            setUserProfile(profileData);
+            const isAdmin = profileData.role_id === 1 || profileData.role_id === '1';
+            const userCompanyId = profileData.company_id || (profileData as any).groups?.[0]?.company_id || null;
+            const effectiveCompanyId = userCompanyId || (isAdmin ? null : null);
+            companyId = effectiveCompanyId;
+            setCurrentCompanyId(effectiveCompanyId);
           }
         }
       }
@@ -285,7 +300,7 @@ const KnowledgeBase: React.FC = () => {
             <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-200">
               <BookOpen size={20} className="text-white" />
             </div>
-            Knowledge Base
+            Knowledge Base {currentCompanyId && <span className="text-sm font-normal text-gray-400 ml-2">(Department Scoped)</span>}
           </h2>
           <p className="text-gray-500 text-sm mt-1">Manage articles for your service desk</p>
         </div>

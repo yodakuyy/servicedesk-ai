@@ -752,3 +752,18 @@
     min-height: 80px;
   }
 }
+
+.disabled-view {
+  background-color: #f9fafb !important;
+  color: #6b7280 !important;
+  cursor: not-allowed !important;
+}
+
+.toggle-switch.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toggle-switch.disabled input {
+  cursor: not-allowed;
+}

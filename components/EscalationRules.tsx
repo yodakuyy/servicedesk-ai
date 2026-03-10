@@ -273,18 +273,32 @@ const EscalationRules: React.FC = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+            const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+            // Fetch groups with conditional filter
+            let groupQuery = supabase.from('groups').select('id, name');
+            if (currentUser?.company_id) {
+                groupQuery = groupQuery.eq('company_id', currentUser.company_id);
+            }
+
             const [groupsRes, usersRes] = await Promise.all([
-                supabase.from('groups').select('id, name').order('name'),
+                groupQuery.order('name'),
                 supabase.from('profiles').select('id, full_name, email').order('full_name')
             ]);
             if (groupsRes.data) setGroups(groupsRes.data);
             if (usersRes.data) setUsers(usersRes.data);
 
-            // Fetch SLA policies for dropdown
-            const { data: policiesData } = await supabase
-                .from('sla_policies')
-                .select('id, name')
-                .order('name');
+            // Fetch SLA policies for dropdown with conditional filter
+            let policiesQuery = supabase.from('sla_policies').select('id, name, company_id');
+            if (currentUser?.company_id) {
+                policiesQuery = policiesQuery.eq('company_id', currentUser.company_id);
+            }
+
+            const { data: policiesData } = await policiesQuery.order('name');
 
             if (policiesData && policiesData.length > 0) {
                 setSLAPolicies(policiesData.map((p: any) => ({ id: p.id?.toString(), name: p.name })));
@@ -292,14 +306,19 @@ const EscalationRules: React.FC = () => {
                 setSLAPolicies(mockSLAPolicies);
             }
 
-            // Fetch escalation rules
-            const { data: escalationsData, error: escalationsError } = await supabase
+            // Fetch escalation rules with policy join filter
+            let escalationsQuery = supabase
                 .from('sla_escalations')
                 .select(`
                     *,
-                    policy:sla_policy_id(id, name)
-                `)
-                .order('created_at', { ascending: false });
+                    policy:sla_policy_id!inner(id, name, company_id)
+                `);
+
+            if (currentUser?.company_id) {
+                escalationsQuery = escalationsQuery.eq('policy.company_id', currentUser.company_id);
+            }
+
+            const { data: escalationsData, error: escalationsError } = await escalationsQuery.order('created_at', { ascending: false });
 
             if (escalationsError) {
                 console.error('Error fetching escalations:', escalationsError);

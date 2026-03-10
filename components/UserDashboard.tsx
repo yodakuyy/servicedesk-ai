@@ -52,7 +52,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
 
     // Chatbot States
     const [chatMessages, setChatMessages] = useState<{ sender: 'bot' | 'user', text: string, type?: 'text' | 'article' | 'option', articles?: any[] }[]>([
-        { sender: 'bot', text: `Hi ${userName?.split(' ')[0] || 'User'}! 👋 I'm your AI assistant. How can I help you today?`, type: 'text' }
+        { sender: 'bot', text: `Hi ${userName || 'User'}! 👋 I'm your AI assistant. How can I help you today?`, type: 'text' }
     ]);
     const [chatInput, setChatInput] = useState('');
     const [isBotTyping, setIsBotTyping] = useState(false);
@@ -357,7 +357,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                 <div className="lg:col-span-2 bg-gradient-to-br from-indigo-600 to-violet-700 p-8 rounded-2xl shadow-lg border border-indigo-500/20 relative overflow-hidden flex flex-col justify-center">
                     <div className="relative z-10 space-y-2">
                         <span className="inline-block px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-white text-[10px] font-black uppercase tracking-widest mb-2">Welcome Back</span>
-                        <h1 className="text-4xl font-black text-white">Hi, {userName?.split(' ')[0] || 'User'}!</h1>
+                        <h1 className="text-4xl font-black text-white">Hi, {userName || 'User'}!</h1>
                         <p className="text-indigo-100 text-lg font-medium max-w-md">
                             Everything is running smoothly. How can we assist you today?
                         </p>

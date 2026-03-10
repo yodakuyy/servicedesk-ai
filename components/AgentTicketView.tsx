@@ -310,13 +310,11 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
             const isSuperAdmin = isAdmin && !isDeptAdmin;
 
             if (isSuperAdmin) {
-                // Super Admins don't need group restrictions
-                setAgentGroups([]);
-                return;
-            }
-
-            if (isDeptAdmin) {
-                // Department Admins see all groups in their department
+                // Super Admins see all groups globally
+                const { data } = await supabase.from('groups').select('id').eq('is_active', true);
+                if (data) setAgentGroups(data.map(g => g.id));
+            } else if (isDeptAdmin) {
+                // Department Admins see all groups in the selected department
                 const { data } = await supabase
                     .from('groups')
                     .select('id')
@@ -918,7 +916,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 // ==========================================
                 // 6. AI SUGGESTED REPLY GENERATION (Context-Aware)
                 // ==========================================
-                const requesterName = selectedTicket.requester?.full_name?.split(' ')[0] || 'User';
+                const requesterName = selectedTicket.requester?.full_name || 'User';
 
                 // Get last requester message for context
                 const lastRequesterMsg = [...messages].reverse().find(m => m.sender_role === 'requester');
@@ -2879,142 +2877,153 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     )}
                                 </div>
                             </div>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={handleAssignToMe}
-                                    disabled={isAssigning || selectedTicket.assigned_to === userProfile?.id || !checkPermission('update', selectedTicket).allowed}
-                                    className={`px-4 py-2 text-xs font-bold rounded-lg shadow-md transition-all flex items-center gap-2
-                                        ${selectedTicket.assigned_to === userProfile?.id
-                                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100 shadow-none cursor-default'
-                                            : !checkPermission('update', selectedTicket).allowed
-                                                ? 'bg-gray-100 text-gray-400 border border-gray-200 shadow-none cursor-not-allowed'
-                                                : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'
-                                        }`}
-                                    title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : ''}
-                                >
-                                    {isAssigning ? (
-                                        <Loader2 size={12} className="animate-spin" />
-                                    ) : selectedTicket.assigned_to === userProfile?.id ? (
-                                        <><CheckCircle2 size={12} /> Assigned to me</>
-                                    ) : !checkPermission('update', selectedTicket).allowed ? (
-                                        <><Lock size={12} /> Restricted</>
-                                    ) : (
-                                        'Assign to me'
-                                    )}
-                                </button>
-
-                                {userProfile?.role_id === 2 && (
-                                    <div className="relative group">
+                            {(() => {
+                                const isTerminalStatus = ['Closed', 'Canceled', 'Cancelled', 'Rejected'].includes(selectedTicket.ticket_statuses?.status_name || '');
+                                return (
+                                    <div className="flex gap-2">
                                         <button
-                                            disabled={isTransferring || !checkPermission('update', selectedTicket).allowed}
-                                            className={`p-2 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
-                                                ${isTransferring || !checkPermission('update', selectedTicket).allowed
-                                                    ? 'opacity-40 cursor-not-allowed bg-gray-50'
-                                                    : 'text-gray-400 hover:text-emerald-600'
+                                            onClick={handleAssignToMe}
+                                            disabled={isAssigning || selectedTicket.assigned_to === userProfile?.id || !checkPermission('update', selectedTicket).allowed || isTerminalStatus}
+                                            className={`px-4 py-2 text-xs font-bold rounded-lg shadow-md transition-all flex items-center gap-2
+                                                ${selectedTicket.assigned_to === userProfile?.id
+                                                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-100 shadow-none cursor-default'
+                                                    : !checkPermission('update', selectedTicket).allowed || isTerminalStatus
+                                                        ? 'bg-gray-100 text-gray-400 border border-gray-200 shadow-none cursor-not-allowed'
+                                                        : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'
                                                 }`}
-                                            title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Reassign to Team Member"}
+                                            title={isTerminalStatus ? 'Ticket is closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : ''}
                                         >
-                                            <Users size={16} />
-                                            <span className="text-[10px] font-black uppercase tracking-widest pr-1 text-emerald-600">Reassign</span>
-                                        </button>
-                                        {!isTransferring && checkPermission('update', selectedTicket).allowed && (
-                                            <select
-                                                onChange={(e) => handleReassign(e.target.value)}
-                                                value=""
-                                                className="absolute inset-0 opacity-0 cursor-pointer w-full"
-                                            >
-                                                <option value="" disabled>Select Team Member</option>
-                                                {allAgents
-                                                    .filter(a =>
-                                                        a.id !== userProfile?.id &&
-                                                        a.group_ids?.some((gid: any) => String(gid) === String(selectedTicket.assignment_group_id)) &&
-                                                        !a.role_name?.includes('Admin') &&
-                                                        !a.role_name?.includes('L2')
-                                                    )
-                                                    .map(agent => (
-                                                        <option key={agent.id} value={agent.id}>{agent.full_name}</option>
-                                                    ))
-                                                }
-                                                {allAgents.filter(a =>
-                                                    a.id !== userProfile?.id &&
-                                                    a.group_ids?.some((gid: any) => String(gid) === String(selectedTicket.assignment_group_id)) &&
-                                                    !a.role_name?.includes('Admin') &&
-                                                    !a.role_name?.includes('L2')
-                                                ).length === 0 && (
-                                                        <option disabled>No other team members available</option>
-                                                    )}
-                                            </select>
-                                        )}
-                                    </div>
-                                )}
-
-                                <div className="relative group">
-                                    <button
-                                        disabled={isTransferring || !checkPermission('update', selectedTicket).allowed}
-                                        className={`p-2 text-gray-400 hover:text-blue-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
-                                            ${isTransferring || !checkPermission('update', selectedTicket).allowed ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
-                                        title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Transfer Group"}
-                                    >
-                                        <ArrowRight size={16} />
-                                        <span className="text-[10px] font-black uppercase tracking-widest pr-1">Transfer</span>
-                                    </button>
-                                    {!isTransferring && checkPermission('update', selectedTicket).allowed && (
-                                        <select
-                                            onChange={(e) => handleTransferGroup(e.target.value)}
-                                            value=""
-                                            className="absolute inset-0 opacity-0 cursor-pointer w-full"
-                                        >
-                                            <option value="" disabled>Select Group</option>
-                                            {allGroups
-                                                .filter(g =>
-                                                    g.id !== selectedTicket.assignment_group_id &&
-                                                    g.company_id === selectedTicket.group?.company_id
-                                                )
-                                                .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-                                                .map(group => (
-                                                    <option key={group.id} value={group.id}>{group.name}</option>
-                                                ))
-                                            }
-                                        </select>
-                                    )}
-                                </div>
-
-                                <div className="relative group">
-                                    <button
-                                        disabled={isTransferring || !checkPermission('update', selectedTicket).allowed}
-                                        className={`p-2 text-gray-400 hover:text-orange-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
-                                            ${isTransferring || !checkPermission('update', selectedTicket).allowed ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
-                                        title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Escalate to L2"}
-                                    >
-                                        <ArrowUpRight size={16} />
-                                        <span className="text-[10px] font-black uppercase tracking-widest pr-1 text-orange-600">Escalate</span>
-                                    </button>
-                                    {!isTransferring && checkPermission('update', selectedTicket).allowed && (
-                                        <select
-                                            onChange={(e) => handleEscalate(e.target.value)}
-                                            value=""
-                                            className="absolute inset-0 opacity-0 cursor-pointer w-full"
-                                        >
-                                            <option value="" disabled>Select L2 Agent</option>
-                                            {allAgents
-                                                .filter(a =>
-                                                    a.id !== userProfile?.id &&
-                                                    a.id !== selectedTicket.assigned_to &&
-                                                    a.companies.includes(selectedTicket.group?.company_id) &&
-                                                    a.role_name?.includes('L2')
-                                                )
-                                                .map(agent => (
-                                                    <option key={agent.id} value={agent.id}>{agent.full_name} ({agent.role_name})</option>
-                                                ))
-                                            }
-                                            {allAgents.filter(a => a.companies.includes(selectedTicket.group?.company_id) && a.role_name?.includes('L2')).length === 0 && (
-                                                <option disabled>No L2 Agents found</option>
+                                            {isAssigning ? (
+                                                <Loader2 size={12} className="animate-spin" />
+                                            ) : selectedTicket.assigned_to === userProfile?.id ? (
+                                                <><CheckCircle2 size={12} /> Assigned to me</>
+                                            ) : !checkPermission('update', selectedTicket).allowed ? (
+                                                <><Lock size={12} /> Restricted</>
+                                            ) : (
+                                                'Assign to me'
                                             )}
-                                        </select>
-                                    )}
-                                </div>
-                                <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg border border-gray-200"><MoreHorizontal size={16} /></button>
-                            </div>
+                                        </button>
+
+                                        {userProfile?.role_id === 2 && (
+                                            <div className="relative group">
+                                                <button
+                                                    disabled={isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus}
+                                                    className={`p-2 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
+                                                        ${isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus
+                                                            ? 'opacity-40 cursor-not-allowed bg-gray-50'
+                                                            : 'text-gray-400 hover:text-emerald-600'
+                                                        }`}
+                                                    title={isTerminalStatus ? 'Ticket is closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Reassign to Team Member"}
+                                                >
+                                                    <Users size={16} />
+                                                    <span className="text-[10px] font-black uppercase tracking-widest pr-1 text-emerald-600">Reassign</span>
+                                                </button>
+                                                {!isTransferring && checkPermission('update', selectedTicket).allowed && !isTerminalStatus && (
+                                                    <select
+                                                        onChange={(e) => handleReassign(e.target.value)}
+                                                        value=""
+                                                        className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                                    >
+                                                        <option value="" disabled>Select Team Member</option>
+                                                        {allAgents
+                                                            .filter(a =>
+                                                                a.id !== userProfile?.id &&
+                                                                a.group_ids?.some((gid: any) => String(gid) === String(selectedTicket.assignment_group_id)) &&
+                                                                !a.role_name?.includes('Admin') &&
+                                                                !a.role_name?.includes('L2')
+                                                            )
+                                                            .map(agent => (
+                                                                <option key={agent.id} value={agent.id}>{agent.full_name}</option>
+                                                            ))
+                                                        }
+                                                        {allAgents.filter(a =>
+                                                            a.id !== userProfile?.id &&
+                                                            a.group_ids?.some((gid: any) => String(gid) === String(selectedTicket.assignment_group_id)) &&
+                                                            !a.role_name?.includes('Admin') &&
+                                                            !a.role_name?.includes('L2')
+                                                        ).length === 0 && (
+                                                                <option disabled>No other team members available</option>
+                                                            )}
+                                                    </select>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <div className="relative group">
+                                            <button
+                                                disabled={isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus}
+                                                className={`p-2 text-gray-400 hover:text-blue-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
+                                                    ${isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
+                                                title={isTerminalStatus ? 'Ticket is closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Transfer Group"}
+                                            >
+                                                <ArrowRight size={16} />
+                                                <span className="text-[10px] font-black uppercase tracking-widest pr-1">Transfer</span>
+                                            </button>
+                                            {!isTransferring && checkPermission('update', selectedTicket).allowed && !isTerminalStatus && (
+                                                <select
+                                                    onChange={(e) => handleTransferGroup(e.target.value)}
+                                                    value=""
+                                                    className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                                >
+                                                    <option value="" disabled>Select Group</option>
+                                                    {allGroups
+                                                        .filter(g =>
+                                                            g.id !== selectedTicket.assignment_group_id &&
+                                                            g.company_id === selectedTicket.group?.company_id
+                                                        )
+                                                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                                                        .map(group => (
+                                                            <option key={group.id} value={group.id}>{group.name}</option>
+                                                        ))
+                                                    }
+                                                </select>
+                                            )}
+                                        </div>
+
+                                        <div className="relative group">
+                                            <button
+                                                disabled={isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus}
+                                                className={`p-2 text-gray-400 hover:text-orange-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
+                                                    ${isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
+                                                title={isTerminalStatus ? 'Ticket is closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Escalate to L2"}
+                                            >
+                                                <ArrowUpRight size={16} />
+                                                <span className="text-[10px] font-black uppercase tracking-widest pr-1 text-orange-600">Escalate</span>
+                                            </button>
+                                            {!isTransferring && checkPermission('update', selectedTicket).allowed && !isTerminalStatus && (
+                                                <select
+                                                    onChange={(e) => handleEscalate(e.target.value)}
+                                                    value=""
+                                                    className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                                >
+                                                    <option value="" disabled>Select L2 Agent</option>
+                                                    {allAgents
+                                                        .filter(a =>
+                                                            a.id !== userProfile?.id &&
+                                                            a.id !== selectedTicket.assigned_to &&
+                                                            a.companies.includes(selectedTicket.group?.company_id) &&
+                                                            a.role_name?.includes('L2')
+                                                        )
+                                                        .map(agent => (
+                                                            <option key={agent.id} value={agent.id}>{agent.full_name} ({agent.role_name})</option>
+                                                        ))
+                                                    }
+                                                    {allAgents.filter(a => a.companies.includes(selectedTicket.group?.company_id) && a.role_name?.includes('L2')).length === 0 && (
+                                                        <option disabled>No L2 Agents found</option>
+                                                    )}
+                                                </select>
+                                            )}
+                                        </div>
+                                        <button
+                                            disabled={isTerminalStatus}
+                                            className={`p-2 text-gray-400 hover:text-gray-600 rounded-lg border border-gray-200 ${isTerminalStatus ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
+                                            title={isTerminalStatus ? 'Ticket is closed or canceled' : ''}
+                                        >
+                                            <MoreHorizontal size={16} />
+                                        </button>
+                                    </div>
+                                );
+                            })()}
                         </div>
 
                         {/* Real SLA Bar */}

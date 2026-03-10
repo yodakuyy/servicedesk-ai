@@ -17,6 +17,7 @@ import {
     XCircle
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import Swal from 'sweetalert2';
 
 interface Status {
     status_id: string;
@@ -95,17 +96,23 @@ const WorkflowMapping: React.FC = () => {
     const [showTransitionModal, setShowTransitionModal] = useState(false);
     const [showWarning, setShowWarning] = useState(false);
     const [pendingDepartmentChange, setPendingDepartmentChange] = useState<string | null>(null);
-
-    // Toast notification state
-    const [toast, setToast] = useState<{ show: boolean; type: 'success' | 'error'; message: string }>({
-        show: false,
-        type: 'success',
-        message: ''
-    });
+    const [isSaving, setIsSaving] = useState(false);
 
     const showToast = (type: 'success' | 'error', message: string) => {
-        setToast({ show: true, type, message });
-        setTimeout(() => setToast(prev => ({ ...prev, show: false })), 4000);
+        Swal.fire({
+            icon: type,
+            title: type === 'success' ? 'Success' : 'Error',
+            text: message,
+            toast: true,
+            position: 'top-end',
+            showConfirmButton: false,
+            timer: 3000,
+            timerProgressBar: true,
+            background: '#ffffff',
+            customClass: {
+                popup: 'rounded-xl shadow-lg border border-gray-100'
+            }
+        });
     };
 
     const [draggedStatus, setDraggedStatus] = useState<Status | null>(null);
@@ -175,6 +182,8 @@ const WorkflowMapping: React.FC = () => {
 
             showToast('success', 'Workflow configuration deleted successfully');
             setShowDeleteConfirm(false);
+            setNodes([]);
+            setTransitions([]);
             setSelectedDepartment(null);
             fetchDepartments(); // Refresh list
         } catch (error: any) {
@@ -197,11 +206,20 @@ const WorkflowMapping: React.FC = () => {
 
     const fetchAvailableDepts = async () => {
         try {
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+
             // 1. Get all departments (from company table as per project structure)
-            const { data: allDepts, error: deptError } = await supabase
+            let query = supabase
                 .from('company')
                 .select('company_id, company_name')
                 .eq('is_active', true);
+
+            if (currentUser?.company_id) {
+                query = query.eq('company_id', currentUser.company_id);
+            }
+
+            const { data: allDepts, error: deptError } = await query;
 
             if (deptError) throw deptError;
 
@@ -262,7 +280,7 @@ const WorkflowMapping: React.FC = () => {
             const { data: newWorkflow, error: wfError } = await supabase
                 .from('department_workflows')
                 .insert({
-                    company_id: 1, // Default company, adjust if needed
+                    company_id: dept.id, // Use actual department ID as company_id
                     department_id: dept.id,
                     workflow_name: selectedTemplateId
                         ? dept.name + ' Workflow|template:' + selectedTemplateId
@@ -379,17 +397,7 @@ const WorkflowMapping: React.FC = () => {
             if (status.is_final) return 'bg-gray-600'; // Dark gray for final system
             return 'bg-gray-400'; // Gray for system
         }
-
-        const code = status.status_code.toLowerCase();
-        if (code.includes('open') || code.includes('new')) return 'bg-blue-500';
-        if (code.includes('progress') || code.includes('wip')) return 'bg-green-500';
-        if (code.includes('pending') || code.includes('wait')) return 'bg-yellow-500';
-        if (code.includes('resolved') || code.includes('complete')) return 'bg-emerald-400';
-        if (code.includes('closed')) return 'bg-gray-600';
-        if (code.includes('cancel') || code.includes('reject')) return 'bg-red-500';
-        if (code.includes('reopen')) return 'bg-purple-500';
-
-        return 'bg-indigo-500'; // Default
+        return getStatusColorFromCode(status.status_code);
     };
 
     useEffect(() => {
@@ -406,11 +414,19 @@ const WorkflowMapping: React.FC = () => {
 
     const fetchDepartments = async () => {
         try {
-            const { data, error } = await supabase
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+
+            let query = supabase
                 .from('department_workflows')
                 .select('workflow_id, company_id, department_id, workflow_name, is_active')
-                .eq('is_active', true)
-                .order('workflow_name');
+                .eq('is_active', true);
+
+            if (currentUser?.company_id) {
+                query = query.eq('company_id', currentUser.company_id);
+            }
+
+            const { data, error } = await query.order('workflow_name');
 
             if (error) throw error;
             setDepartments(data || []);
@@ -529,6 +545,11 @@ const WorkflowMapping: React.FC = () => {
 
     const loadWorkflow = async () => {
         if (!selectedDepartment) return;
+
+        // Clear current state while loading
+        setNodes([]);
+        setTransitions([]);
+        setLoadingWorkflowStatuses(true);
 
         try {
             // Get the selected department's workflow info
@@ -734,6 +755,8 @@ const WorkflowMapping: React.FC = () => {
             setNodes([]);
             setTransitions([]);
             updateAvailableStatuses([]);
+        } finally {
+            setLoadingWorkflowStatuses(false);
         }
     };
 
@@ -741,14 +764,27 @@ const WorkflowMapping: React.FC = () => {
     const getStatusColorFromCode = (code: string): string => {
         const lowerCode = code.toLowerCase();
         if (lowerCode.includes('new')) return 'bg-blue-500';
-        if (lowerCode.includes('open') || lowerCode.includes('assign')) return 'bg-indigo-500';
-        if (lowerCode.includes('progress') || lowerCode.includes('work')) return 'bg-green-500';
-        if (lowerCode.includes('pending') || lowerCode.includes('wait')) return 'bg-yellow-500';
+        if (lowerCode.includes('open')) return 'bg-blue-600';
+        if (lowerCode.includes('assign')) return 'bg-indigo-500';
+
+        // Progress colors
+        if (lowerCode.includes('progress') || lowerCode.includes('work') || lowerCode.includes('draft')) return 'bg-green-500';
+
+        // Waiting/Hold colors
+        if (lowerCode.includes('pending') || lowerCode.includes('wait') || lowerCode.includes('hold')) return 'bg-yellow-500';
+
+        // Review/Approval colors
+        if (lowerCode.includes('review') || lowerCode.includes('sign') || lowerCode.includes('user')) return 'bg-purple-500';
+
+        // Resolution colors
         if (lowerCode.includes('resolved') || lowerCode.includes('complete')) return 'bg-emerald-400';
         if (lowerCode.includes('closed')) return 'bg-gray-600';
-        if (lowerCode.includes('cancel') || lowerCode.includes('reject')) return 'bg-red-500';
-        if (lowerCode.includes('reopen')) return 'bg-purple-500';
-        return 'bg-indigo-500';
+
+        // Rejection/Cancellation colors
+        if (lowerCode.includes('cancel') || lowerCode.includes('reject') || lowerCode.includes('revise')) return 'bg-red-500';
+
+        if (lowerCode.includes('reopen')) return 'bg-purple-600';
+        return 'bg-indigo-500'; // Default fallback
     };
 
     const updateAvailableStatuses = (usedNodes: WorkflowNode[]) => {
@@ -758,16 +794,24 @@ const WorkflowMapping: React.FC = () => {
     };
 
     const handleDepartmentChange = (workflowId: string) => {
+        if (workflowId === selectedDepartment) return;
+
         if (hasUnsavedChanges) {
             setPendingDepartmentChange(workflowId);
             setShowWarning(true);
         } else {
+            // Clear nodes immediately to show loading state
+            setNodes([]);
+            setTransitions([]);
             setSelectedDepartment(workflowId);
         }
     };
 
     const confirmDepartmentChange = () => {
         if (pendingDepartmentChange) {
+            setNodes([]);
+            setTransitions([]);
+            setHasUnsavedChanges(false);
             setSelectedDepartment(pendingDepartmentChange);
             setPendingDepartmentChange(null);
         }
@@ -1037,10 +1081,60 @@ const WorkflowMapping: React.FC = () => {
     };
 
     const handleSave = async () => {
-        // TODO: Save workflow to database
-        console.log('Saving workflow:', { nodes, transitions, departmentId: selectedDepartment });
-        setHasUnsavedChanges(false);
-        showToast('success', 'Workflow saved successfully!');
+        if (!selectedDepartment) return;
+        setIsSaving(true);
+
+        try {
+            const selectedWorkflow = departments.find(d => d.workflow_id === selectedDepartment);
+            let templateId: string | null = null;
+            if (selectedWorkflow?.workflow_name?.includes('|template:')) {
+                templateId = selectedWorkflow.workflow_name.split('|template:')[1];
+            }
+
+            // Save node positions
+            if (templateId) {
+                // Update workflow_template_statuses
+                const { error } = await supabase
+                    .from('workflow_template_statuses')
+                    .upsert(
+                        nodes.map(node => ({
+                            workflow_template_status_id: node.id,
+                            workflow_template_id: templateId,
+                            status_id: node.statusId,
+                            position_x: Math.round(node.x),
+                            position_y: Math.round(node.y),
+                            sort_order: nodes.indexOf(node) + 1
+                        })),
+                        { onConflict: 'workflow_template_status_id' }
+                    );
+                if (error) throw error;
+            } else {
+                // Update workflow_statuses
+                // Just try to save, might fail if columns don't exist yet but we should have them
+                const { error } = await supabase
+                    .from('workflow_statuses')
+                    .upsert(
+                        nodes.map(node => ({
+                            workflow_status_id: node.id,
+                            workflow_template_id: selectedDepartment,
+                            status_id: node.statusId,
+                            position_x: Math.round(node.x),
+                            position_y: Math.round(node.y),
+                            sort_order: nodes.indexOf(node) + 1
+                        })),
+                        { onConflict: 'workflow_status_id' }
+                    );
+                if (error) console.warn('Could not save positions to legacy table:', error);
+            }
+
+            setHasUnsavedChanges(false);
+            showToast('success', 'Workflow mapping and layout saved successfully');
+        } catch (error: any) {
+            console.error('Error saving workflow:', error);
+            showToast('error', error.message || 'Failed to save workflow changes');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleCancel = () => {
@@ -1056,38 +1150,6 @@ const WorkflowMapping: React.FC = () => {
 
     return (
         <div className="h-full flex flex-col bg-gray-50">
-            {/* Toast Notification */}
-            {toast.show && (
-                <div
-                    className={`fixed top-4 right-4 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border backdrop-blur-sm ${toast.type === 'success'
-                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                        : 'bg-red-50 border-red-200 text-red-800'
-                        }`}
-                    style={{
-                        animation: 'slideIn 0.3s ease-out forwards'
-                    }}
-                >
-                    <style>{`
-                        @keyframes slideIn {
-                            from { transform: translateX(100%); opacity: 0; }
-                            to { transform: translateX(0); opacity: 1; }
-                        }
-                    `}</style>
-                    {toast.type === 'success' ? (
-                        <CheckCircle size={20} className="text-emerald-500 flex-shrink-0" />
-                    ) : (
-                        <XCircle size={20} className="text-red-500 flex-shrink-0" />
-                    )}
-                    <span className="text-sm font-medium">{toast.message}</span>
-                    <button
-                        onClick={() => setToast(prev => ({ ...prev, show: false }))}
-                        className="ml-2 p-1 rounded-full hover:bg-black/5 transition-colors"
-                    >
-                        <X size={14} />
-                    </button>
-                </div>
-            )}
-
             {/* Header */}
             <div className="bg-white border-b border-gray-200 px-6 py-4">
                 <div className="flex justify-between items-start">
@@ -1095,8 +1157,28 @@ const WorkflowMapping: React.FC = () => {
                         <h1 className="text-2xl font-bold text-gray-800">Workflow Mapping</h1>
                         <p className="text-gray-500 text-sm">Configure workflow rules for each department</p>
                     </div>
-
-
+                    {selectedDepartment && hasUnsavedChanges && (
+                        <div className="flex items-center gap-3">
+                            <button
+                                onClick={handleCancel}
+                                className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSave}
+                                disabled={isSaving}
+                                className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium shadow-lg shadow-indigo-100 disabled:opacity-50"
+                            >
+                                {isSaving ? (
+                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                ) : (
+                                    <Save size={16} />
+                                )}
+                                Save Changes
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Department Selector */}
@@ -1183,12 +1265,30 @@ const WorkflowMapping: React.FC = () => {
                                 >
                                     <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1" />
                                 </marker>
+                                <marker
+                                    id="arrowhead-bi"
+                                    markerWidth="10"
+                                    markerHeight="7"
+                                    refX="9"
+                                    refY="3.5"
+                                    orient="auto"
+                                >
+                                    <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b" />
+                                </marker>
                             </defs>
                             {transitions.map(trans => {
                                 const from = getNodePosition(trans.fromNodeId);
                                 const to = getNodePosition(trans.toNodeId);
                                 const midX = (from.x + to.x) / 2;
                                 const midY = (from.y + to.y) / 2;
+
+                                // Check if this is a bidirectional transition
+                                const isBidirectional = transitions.some(t =>
+                                    t.fromNodeId === trans.toNodeId && t.toNodeId === trans.fromNodeId
+                                );
+
+                                const strokeColor = isBidirectional ? '#f59e0b' : '#6366f1';
+                                const markerId = isBidirectional ? 'arrowhead-bi' : 'arrowhead';
 
                                 return (
                                     <g key={trans.id}>
@@ -1197,10 +1297,10 @@ const WorkflowMapping: React.FC = () => {
                                             y1={from.y}
                                             x2={to.x}
                                             y2={to.y}
-                                            stroke="#6366f1"
-                                            strokeWidth="2"
-                                            markerEnd="url(#arrowhead)"
-                                            className="cursor-pointer pointer-events-auto hover:stroke-red-500"
+                                            stroke={strokeColor}
+                                            strokeWidth={isBidirectional ? "3" : "2"}
+                                            markerEnd={`url(#${markerId})`}
+                                            className="cursor-pointer pointer-events-auto hover:stroke-red-500 transition-all"
                                             onClick={() => removeTransition(trans.id)}
                                         />
                                         {trans.conditionLabel && (

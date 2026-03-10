@@ -56,24 +56,44 @@ const KBCategoryManagement: React.FC<KBCategoryManagementProps> = ({ onClose }) 
 
     useEffect(() => {
         const initialize = async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                const { data: profile } = await supabase
-                    .from('profiles')
-                    .select('groups!user_groups(company_id)')
-                    .eq('id', user.id)
-                    .single();
+            console.log('KBCategoryManagement: Component initializing...');
+            try {
+                // Get profile from localStorage to match the active department session
+                const profileStr = localStorage.getItem('profile');
+                const profile = profileStr ? JSON.parse(profileStr) : null;
 
                 if (profile) {
-                    // @ts-ignore
-                    const companyId = profile.groups?.[0]?.company_id;
-                    setCurrentCompanyId(companyId);
-                    fetchCategories(companyId);
+                    const isAdmin = profile.role_id === 1 || profile.role_id === '1';
+                    const effectiveCompanyId = profile.company_id || (isAdmin ? null : null);
+                    setCurrentCompanyId(effectiveCompanyId);
+                    fetchCategories(effectiveCompanyId);
+                } else {
+                    // Fallback to Supabase for company ID if local profile is not available
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (user) {
+                        const { data: profileFromDB } = await supabase
+                            .from('profiles')
+                            .select('role_id, is_department_admin, company_id, groups!user_groups(company_id)')
+                            .eq('id', user.id)
+                            .single();
+
+                        if (profileFromDB) {
+                            const isAdmin = profileFromDB.role_id === 1 || profileFromDB.role_id === '1';
+                            const companyId = profileFromDB.company_id || (profileFromDB as any).groups?.[0]?.company_id || (isAdmin ? null : null);
+
+                            setCurrentCompanyId(companyId);
+                            fetchCategories(companyId);
+                            return;
+                        }
+                    }
+                    fetchCategories();
                 }
-            } else {
+            } catch (err) {
+                console.error('Error initializing category management:', err);
                 fetchCategories();
             }
         };
+
         initialize();
     }, []);
 
@@ -91,6 +111,8 @@ const KBCategoryManagement: React.FC<KBCategoryManagementProps> = ({ onClose }) 
             const { data, error } = await query.order('name', { ascending: true });
 
             if (error) throw error;
+
+            console.log(`KBCategoryManagement: Fetched ${data?.length || 0} categories for companyId: ${companyId || currentCompanyId}`);
 
             if (data) {
                 const nodes: KBCategoryNode[] = data.map((item: any) => ({

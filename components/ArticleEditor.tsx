@@ -101,21 +101,25 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
     }, [articleId]);
 
     const fetchUserCompany = async () => {
-        if (article.company_id) return;
+        if (article.company_id && article.id) return; // Don't override existing article's company_id
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
                 const { data: profile } = await supabase
                     .from('profiles')
-                    .select('groups!user_groups(company_id)')
+                    .select('role_id, groups!user_groups(company_id)')
                     .eq('id', user.id)
                     .single();
 
                 if (profile) {
+                    const isAdmin = profile.role_id === 1 || profile.role_id === '1';
                     // @ts-ignore
-                    const companyId = profile.groups?.[0]?.company_id;
-                    if (companyId) {
-                        setArticle(prev => ({ ...prev, company_id: companyId }));
+                    const userCompanyId = profile.groups?.[0]?.company_id;
+
+                    if (!articleId) {
+                        // New article: set company_id for both filtering and saving
+                        const initialCompanyId = isAdmin ? null : userCompanyId;
+                        setArticle(prev => ({ ...prev, company_id: initialCompanyId }));
                     }
                 }
             }
@@ -126,13 +130,31 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
 
     const fetchCategories = async () => {
         try {
-            const { data, error } = await supabase
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('role_id, groups!user_groups(company_id)')
+                .eq('id', user.id)
+                .single();
+
+            const isAdmin = profile?.role_id === 1 || profile?.role_id === '1';
+            // @ts-ignore
+            const userCompanyId = profile?.groups?.[0]?.company_id || null;
+
+            let query = supabase
                 .from('kb_categories')
                 .select('id, name, parent_id')
-                .order('name');
+                .eq('is_active', true);
+
+            if (!isAdmin && userCompanyId) {
+                query = query.eq('company_id', userCompanyId);
+            }
+
+            const { data, error } = await query.order('name');
 
             if (data) {
-                // Just pass data through, let the UI filter it
                 setCategories(data);
             }
         } catch (err) {
@@ -617,7 +639,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
     }
 
     return (
-        <div className="fixed inset-0 bg-[#f3f4f6] z-50 flex flex-col overflow-hidden">
+        <div className="fixed inset-0 bg-[#f3f4f6] z-[99999] flex flex-col overflow-hidden">
             {/* Header */}
             <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-4">
@@ -1089,7 +1111,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
 
             {/* Alert Modal */}
             {alertModal.show && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100001] flex items-center justify-center p-4">
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-200">
                         <div className="flex items-center gap-3 mb-4">
                             <div className={`w-12 h-12 rounded-full flex items-center justify-center ${alertModal.type === 'error' ? 'bg-red-100' :
@@ -1119,7 +1141,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
 
             {/* Confirm Modal */}
             {confirmModal.show && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100001] flex items-center justify-center p-4">
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-200">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center">

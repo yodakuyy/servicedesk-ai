@@ -76,19 +76,39 @@ const SECTION_TYPE_MAP: { [key: string]: string } = {
 const HelpCenter: React.FC = () => {
     const [userRole, setUserRole] = useState<string | null>('requester');
     const [view, setView] = useState<'home' | 'categories' | 'articles' | 'detail' | 'faq' | 'policies' | 'contact' | 'updates'>('home');
+    const [currentCompanyId, setCurrentCompanyId] = useState<number | null>(null);
 
     useEffect(() => {
         const checkUser = async () => {
+            // Priority 1: Profile from localStorage (session consistent)
+            const profileStr = localStorage.getItem('profile');
+            const profile = profileStr ? JSON.parse(profileStr) : null;
+
+            if (profile) {
+                const isAdmin = profile.role_id === 1 || profile.role_id === '1';
+                const effectiveCompanyId = profile.company_id || (isAdmin ? null : null);
+
+                setUserRole(profile.role);
+                setCurrentCompanyId(effectiveCompanyId);
+                fetchRealData(effectiveCompanyId);
+                return;
+            }
+
+            // Priority 2: Fallback to active auth session
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-                const { data: profile } = await supabase.from('profiles').select('role, company_id').eq('id', user.id).single();
-                if (profile) {
-                    setUserRole(profile.role);
-                    fetchRealData(profile.company_id);
+                const { data: profileDB } = await supabase.from('profiles').select('role, company_id, role_id, is_department_admin').eq('id', user.id).single();
+                if (profileDB) {
+                    const isAdmin = profileDB.role_id === 1 || profileDB.role_id === '1';
+                    const effectiveCompanyId = profileDB.company_id || (isAdmin ? null : null);
+
+                    setUserRole(profileDB.role);
+                    setCurrentCompanyId(effectiveCompanyId);
+                    fetchRealData(effectiveCompanyId);
                     return;
                 }
             }
-            // Fallback for guests or if profile fetch fails
+            // Fallback for guests
             fetchRealData(null);
         };
         checkUser();
@@ -147,7 +167,7 @@ const HelpCenter: React.FC = () => {
             // Filter active and relevant
             const filtered = policiesData.filter(p => {
                 const isActive = p.is_active === true;
-                const isMyCompany = !p.company_id || (companyId && p.company_id === companyId);
+                const isMyCompany = !companyId || !p.company_id || p.company_id === companyId;
                 const isDIT = p.name?.toLowerCase().includes('dit');
                 const isStandard = p.name?.toLowerCase().includes('standard');
                 return isActive && (isMyCompany || isDIT || isStandard);
@@ -252,7 +272,7 @@ const HelpCenter: React.FC = () => {
     const handleSearch = async (query: string) => {
         setSearching(true);
         try {
-            const { data } = await supabase
+            let queryBuilder = supabase
                 .from('kb_articles')
                 .select(`
                     id, title, summary, content, category_id, updated_at,
@@ -260,8 +280,13 @@ const HelpCenter: React.FC = () => {
                 `)
                 .eq('visibility', 'public')
                 .eq('status', 'published')
-                .or(`title.ilike.%${query}%,summary.ilike.%${query}%`)
-                .limit(10);
+                .or(`title.ilike.%${query}%,summary.ilike.%${query}%`);
+
+            if (currentCompanyId) {
+                queryBuilder = queryBuilder.eq('company_id', currentCompanyId);
+            }
+
+            const { data } = await queryBuilder.limit(10);
 
             if (data) {
                 const results = data.map((a: any) => ({
@@ -291,13 +316,18 @@ const HelpCenter: React.FC = () => {
                 if (articleType === 'getting-started') {
                     setView('articles'); // Use split view directly
 
-                    const { data: articlesData } = await supabase
+                    let artQuery = supabase
                         .from('kb_articles')
                         .select('*, kb_categories(name)')
                         .eq('visibility', 'public')
                         .eq('status', 'published')
-                        .eq('article_type', articleType)
-                        .order('title', { ascending: true });
+                        .eq('article_type', articleType);
+
+                    if (currentCompanyId) {
+                        artQuery = artQuery.eq('company_id', currentCompanyId);
+                    }
+
+                    const { data: articlesData } = await artQuery.order('title', { ascending: true });
 
                     if (articlesData) {
                         const formattedArticles = articlesData.map((a: any) => ({
@@ -326,13 +356,18 @@ const HelpCenter: React.FC = () => {
 
                 // Special handling for FAQ: Fetch articles directly and show in Accordion View
                 if (articleType === 'faq') {
-                    const { data: articlesData } = await supabase
+                    let faqQuery = supabase
                         .from('kb_articles')
                         .select('*')
                         .eq('visibility', 'public')
                         .eq('status', 'published')
-                        .eq('article_type', articleType)
-                        .order('title', { ascending: true });
+                        .eq('article_type', articleType);
+
+                    if (currentCompanyId) {
+                        faqQuery = faqQuery.eq('company_id', currentCompanyId);
+                    }
+
+                    const { data: articlesData } = await faqQuery.order('title', { ascending: true });
 
                     if (articlesData) {
                         setArticles(articlesData);
@@ -345,18 +380,30 @@ const HelpCenter: React.FC = () => {
 
                 // Normal handling for other sections (aggregated by category)
                 // Fetch all categories with their parent info
-                const { data: allCategories } = await supabase
+                let catQuery = supabase
                     .from('kb_categories')
                     .select('id, name, parent_id, description');
 
+                if (currentCompanyId) {
+                    catQuery = catQuery.eq('company_id', currentCompanyId);
+                }
+
+                const { data: allCategories } = await catQuery;
+
                 // Fetch articles with this type
-                const { data: articlesData } = await supabase
+                let artQuery = supabase
                     .from('kb_articles')
                     // Only need category_id for counting
                     .select('category_id')
                     .eq('visibility', 'public')
                     .eq('status', 'published')
                     .eq('article_type', articleType);
+
+                if (currentCompanyId) {
+                    artQuery = artQuery.eq('company_id', currentCompanyId);
+                }
+
+                const { data: articlesData } = await artQuery;
 
                 if (articlesData && allCategories) {
                     // Separate parent and child categories
@@ -472,7 +519,7 @@ const HelpCenter: React.FC = () => {
             setExpandedSubCats(expandedMap);
 
             // Fetch articles from parent AND all sub-categories
-            const { data } = await supabase
+            let artFetchQuery = supabase
                 .from('kb_articles')
                 .select(`
                     id, title, summary, content, category_id, updated_at,
@@ -481,8 +528,13 @@ const HelpCenter: React.FC = () => {
                 .eq('visibility', 'public')
                 .eq('status', 'published')
                 .eq('article_type', articleType)
-                .in('category_id', categoryIds)
-                .order('title');
+                .in('category_id', categoryIds);
+
+            if (currentCompanyId) {
+                artFetchQuery = artFetchQuery.eq('company_id', currentCompanyId);
+            }
+
+            const { data } = await artFetchQuery.order('title');
 
             if (data) {
                 const articlesWithCategory = data.map((a: any) => ({
@@ -1566,7 +1618,14 @@ const HelpCenter: React.FC = () => {
         <div className="p-8 max-w-7xl mx-auto">
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-center mb-10 gap-4">
-                <h1 className="text-3xl font-bold text-gray-800">Help Center</h1>
+                <h1 className="text-3xl font-bold text-gray-800">
+                    Help Center
+                    {currentCompanyId && (
+                        <span className="text-indigo-600/50 text-sm font-medium ml-2 font-mono tracking-tight">
+                            (Department Scoped)
+                        </span>
+                    )}
+                </h1>
                 <div className="relative w-full md:w-96">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
                     <input
