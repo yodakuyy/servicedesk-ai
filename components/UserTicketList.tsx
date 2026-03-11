@@ -19,9 +19,10 @@ interface UserTicketListProps {
     userName?: string;
     userId?: string; // NEEDED for filtering
     ticketTypeFilter?: 'incident' | 'service_request' | 'change_request';
+    companyId?: string | number | null;
 }
 
-const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicket, onCreateTicket, userName, userId, ticketTypeFilter }) => {
+const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicket, onCreateTicket, userName, userId, ticketTypeFilter, companyId }) => {
     // State
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -70,12 +71,30 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                     .from('tickets')
                     .select(`
                         id, ticket_number, subject, description, created_at, status_id, ticket_type,
-                        ticket_statuses!fk_tickets_status (status_name)
+                        ticket_statuses!fk_tickets_status (status_name),
+                        ticket_categories!category_id (company_id)
                     `);
 
                 // Apply Ticket Type Filter
                 if (ticketTypeFilter) {
                     query = query.eq('ticket_type', ticketTypeFilter);
+                }
+
+                // Apply Department Filter
+                if (companyId) {
+                    // Start fresh query for the inner join if companyId exists
+                    query = supabase
+                        .from('tickets')
+                        .select(`
+                            id, ticket_number, subject, description, created_at, status_id, ticket_type,
+                            ticket_statuses!fk_tickets_status (status_name),
+                            ticket_categories!category_id!inner (company_id)
+                        `)
+                        .eq('ticket_categories.company_id', companyId);
+                    
+                    if (ticketTypeFilter) {
+                        query = query.eq('ticket_type', ticketTypeFilter);
+                    }
                 }
 
                 // Apply User Filter
@@ -241,51 +260,72 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
 
                             {isCreateMenuOpen && (
                                 <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-30 animate-in fade-in zoom-in-95 duration-200">
-                                    <button
-                                        onClick={() => {
-                                            setIsCreateMenuOpen(false);
-                                            if (onCreateTicket) onCreateTicket('incident');
-                                        }}
-                                        className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-3 transition-colors"
-                                    >
-                                        <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
-                                            <AlertCircle size={16} />
-                                        </div>
-                                        <div>
-                                            <div className="leading-tight">Incident</div>
-                                            <div className="text-[10px] text-gray-400 font-normal">Report an issue</div>
-                                        </div>
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setIsCreateMenuOpen(false);
-                                            if (onCreateTicket) onCreateTicket('service_request');
-                                        }}
-                                        className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-3 border-t border-gray-50 transition-colors"
-                                    >
-                                        <div className="p-1.5 bg-green-50 text-green-600 rounded-lg">
-                                            <CheckCircle size={16} />
-                                        </div>
-                                        <div>
-                                            <div className="leading-tight">Service Request</div>
-                                            <div className="text-[10px] text-gray-400 font-normal">Request service or items</div>
-                                        </div>
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setIsCreateMenuOpen(false);
-                                            if (onCreateTicket) onCreateTicket('change_request');
-                                        }}
-                                        className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-3 border-t border-gray-50 transition-colors"
-                                    >
-                                        <div className="p-1.5 bg-orange-50 text-orange-600 rounded-lg">
-                                            <Activity size={16} />
-                                        </div>
-                                        <div>
-                                            <div className="leading-tight">Change Request</div>
-                                            <div className="text-[10px] text-gray-400 font-normal">System modification</div>
-                                        </div>
-                                    </button>
+                                    {(() => {
+                                        const profileStr = localStorage.getItem('profile');
+                                        const profile = profileStr ? JSON.parse(profileStr) : null;
+                                        const deptServices = (profile?.services || []) as string[];
+                                        const hasServices = deptServices.length > 0;
+
+                                        const showIncident = !hasServices || deptServices.some(s => s.toLowerCase() === 'incident');
+                                        const showSR = !hasServices || deptServices.some(s => s.toLowerCase() === 'service request');
+                                        const showCR = !hasServices || deptServices.some(s => s.toLowerCase() === 'change request');
+
+                                        return (
+                                            <>
+                                                {showIncident && (
+                                                    <button
+                                                        onClick={() => {
+                                                            setIsCreateMenuOpen(false);
+                                                            if (onCreateTicket) onCreateTicket('incident');
+                                                        }}
+                                                        className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-3 transition-colors"
+                                                    >
+                                                        <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                                                            <AlertCircle size={16} />
+                                                        </div>
+                                                        <div>
+                                                            <div className="leading-tight">Incident</div>
+                                                            <div className="text-[10px] text-gray-400 font-normal">Report an issue</div>
+                                                        </div>
+                                                    </button>
+                                                )}
+                                                {showSR && (
+                                                    <button
+                                                        onClick={() => {
+                                                            setIsCreateMenuOpen(false);
+                                                            if (onCreateTicket) onCreateTicket('service_request');
+                                                        }}
+                                                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-3 ${showIncident ? 'border-t border-gray-50' : ''} transition-colors`}
+                                                    >
+                                                        <div className="p-1.5 bg-green-50 text-green-600 rounded-lg">
+                                                            <CheckCircle size={16} />
+                                                        </div>
+                                                        <div>
+                                                            <div className="leading-tight">Service Request</div>
+                                                            <div className="text-[10px] text-gray-400 font-normal">Request service or items</div>
+                                                        </div>
+                                                    </button>
+                                                )}
+                                                {showCR && (
+                                                    <button
+                                                        onClick={() => {
+                                                            setIsCreateMenuOpen(false);
+                                                            if (onCreateTicket) onCreateTicket('change_request');
+                                                        }}
+                                                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-3 ${(showIncident || showSR) ? 'border-t border-gray-50' : ''} transition-colors`}
+                                                    >
+                                                        <div className="p-1.5 bg-orange-50 text-orange-600 rounded-lg">
+                                                            <Activity size={16} />
+                                                        </div>
+                                                        <div>
+                                                            <div className="leading-tight">Change Request</div>
+                                                            <div className="text-[10px] text-gray-400 font-normal">System modification</div>
+                                                        </div>
+                                                    </button>
+                                                )}
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                             )}
                         </div>

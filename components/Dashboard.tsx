@@ -1218,6 +1218,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         <UserDashboard
           onNavigate={(view: any) => setCurrentView(view)}
           userName={userProfile?.full_name}
+          companyId={userProfile?.company_id}
           onViewTicket={(id) => handleViewTicket(id, 'user-dashboard')}
         />
       );
@@ -1247,7 +1248,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     if (currentView === 'knowledge') {
       // Check if user is Requester (role_id = 4)
       const isRequester = userProfile?.role_id === 4 || userProfile?.role_id === '4';
-      return isRequester ? <RequesterKBPortal /> : <KnowledgeBase />;
+      return isRequester ? <RequesterKBPortal companyId={userProfile?.company_id} /> : <KnowledgeBase companyId={userProfile?.company_id} />;
     }
 
     if (currentView === 'help-center') {
@@ -1445,6 +1446,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       return (
         <UserDashboard
           userName={userProfile?.full_name}
+          companyId={userProfile?.company_id}
           onNavigate={(view) => setCurrentView(view as any)}
           onViewTicket={(id) => {
             setSelectedTicketId(id);

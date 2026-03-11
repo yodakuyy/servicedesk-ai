@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Plus, Upload, Download, ChevronDown, Eye, Edit2, Loader2 } from 'lucide-react';
+import { Search, Plus, Upload, Download, ChevronDown, Eye, Edit2, Loader2, Clock, User as UserIcon, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import CreateUser from './CreateUser';
 import StatusBadge from './StatusBadge';
@@ -18,6 +18,7 @@ interface User {
     status: 'Active' | 'Inactive';
     is_department_admin: boolean;
     last_active: string;
+    is_external: boolean;
 }
 
 interface Role {
@@ -154,6 +155,10 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [loadingMenus, setLoadingMenus] = useState(true);
     const [editedMenus, setEditedMenus] = useState<Map<string, MenuItem>>(new Map());
+    const [userActivities, setUserActivities] = useState<any[]>([]);
+    const [loadingActivities, setLoadingActivities] = useState(false);
+    const [activitiesLimit, setActivitiesLimit] = useState(10);
+    const [hasMoreActivities, setHasMoreActivities] = useState(true);
 
     useEffect(() => {
         // Update formData ketika user prop berubah
@@ -282,6 +287,118 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
             setLoadingMenus(false);
         }
     };
+
+    const fetchUserActivities = async () => {
+        try {
+            setLoadingActivities(true);
+            
+            // 1. Fetch ticket activity logs where this user is the actor
+            const { data: logData, error: logError } = await supabase
+                .from('ticket_activity_log')
+                .select('*, tickets(ticket_number, subject)')
+                .eq('actor_id', user.id)
+                .order('created_at', { ascending: false })
+                .limit(activitiesLimit);
+
+            if (logError) console.error('Error fetching logs:', logError);
+
+            // 2. Fetch tickets requested by this user
+            const { data: requestedTickets, error: reqError } = await supabase
+                .from('tickets')
+                .select('id, ticket_number, subject, created_at, status_id, ticket_statuses(status_name)')
+                .eq('requester_id', user.id)
+                .order('created_at', { ascending: false })
+                .limit(activitiesLimit);
+                
+            if (reqError) console.error('Error fetching requested tickets:', reqError);
+
+            // 3. Fetch tickets assigned to this user
+            const { data: assignedTickets, error: assError } = await supabase
+                .from('tickets')
+                .select('id, ticket_number, subject, created_at, status_id, ticket_statuses(status_name)')
+                .eq('assigned_to', user.id)
+                .order('created_at', { ascending: false })
+                .limit(activitiesLimit);
+
+            if (assError) console.error('Error fetching assigned tickets:', assError);
+
+            // Combine and format activities
+            const activities: any[] = [];
+
+            // Transform logs
+            (logData || []).forEach((log: any) => {
+                activities.push({
+                    id: `log-${log.id}`,
+                    type: 'action',
+                    title: log.action,
+                    subtitle: log.tickets ? `${log.tickets.ticket_number}: ${log.tickets.subject}` : 'Unknown Ticket',
+                    timestamp: log.created_at,
+                    icon: 'activity'
+                });
+            });
+
+            // Transform requested tickets
+            (requestedTickets || []).forEach((ticket: any) => {
+                activities.push({
+                    id: `req-${ticket.id}`,
+                    type: 'creation',
+                    title: `Created Ticket ${ticket.ticket_number}`,
+                    subtitle: ticket.subject,
+                    timestamp: ticket.created_at,
+                    icon: 'plus',
+                    status: ticket.ticket_statuses?.status_name
+                });
+            });
+
+            // Transform assigned tickets
+            (assignedTickets || []).forEach((ticket: any) => {
+                activities.push({
+                    id: `ass-${ticket.id}`,
+                    type: 'assignment',
+                    title: `Assigned to Ticket ${ticket.ticket_number}`,
+                    subtitle: ticket.subject,
+                    timestamp: ticket.created_at,
+                    icon: 'user',
+                    status: ticket.ticket_statuses?.status_name
+                });
+            });
+
+            // Add last active activity if significantly different from last activity log
+            if (user.last_active) {
+                activities.push({
+                    id: 'last-active',
+                    type: 'system',
+                    title: 'Last System Activity',
+                    subtitle: 'Most recent interaction with the platform',
+                    timestamp: user.last_active,
+                    icon: 'clock'
+                });
+            }
+
+            // Sort by timestamp descending
+            activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+            // Check if we might have more data (if any category hit the limit)
+            const reachedLimit = 
+                (logData?.length === activitiesLimit) || 
+                (requestedTickets?.length === activitiesLimit) || 
+                (assignedTickets?.length === activitiesLimit);
+            
+            setHasMoreActivities(reachedLimit);
+
+            setUserActivities(activities);
+        } catch (error) {
+            console.error('Error in fetchUserActivities:', error);
+        } finally {
+            setLoadingActivities(false);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'Activity') {
+            fetchUserActivities();
+        }
+    }, [activeTab, activitiesLimit]);
 
     const handleSaveProfile = async () => {
         try {
@@ -430,7 +547,7 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
 
             {/* Tabs */}
             <div className="flex gap-1 bg-gray-100/50 p-1 rounded-lg w-fit">
-                {['Profile', 'Menu Access', 'Activity'].filter(tab => !isViewOnly || tab === 'Profile').map((tab) => (
+                {['Profile', 'Menu Access', 'Activity'].filter(tab => !isViewOnly || tab === 'Profile' || tab === 'Activity').map((tab) => (
                     <button
                         key={tab}
                         onClick={() => setActiveTab(tab)}
@@ -884,8 +1001,106 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
                 </div>
             )}
             {activeTab === 'Activity' && (
-                <div className="py-12 text-center text-gray-500 bg-white rounded-xl border border-gray-200 border-dashed">
-                    Activity content not implemented yet.
+                <div className="space-y-6 animate-in fade-in duration-300">
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                        <div className="flex items-center gap-2 mb-6">
+                            <div className="p-2 bg-gray-100 rounded-lg text-gray-600">
+                                <Clock size={18} />
+                            </div>
+                            <h3 className="text-lg font-bold text-gray-900">User Activity Timeline</h3>
+                        </div>
+
+                        {loadingActivities ? (
+                            <div className="space-y-8 py-4">
+                                {[1, 2, 3].map(i => (
+                                    <div key={i} className="flex gap-4 animate-pulse">
+                                        <div className="w-10 h-10 rounded-full bg-gray-100 shrink-0"></div>
+                                        <div className="flex-1 space-y-2 pt-1">
+                                            <div className="h-4 bg-gray-100 rounded w-1/3"></div>
+                                            <div className="h-3 bg-gray-50 rounded w-1/2"></div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : userActivities.length > 0 ? (
+                            <div className="relative pl-12 space-y-10 before:absolute before:left-[23px] before:top-2 before:bottom-2 before:w-0.5 before:bg-gray-100">
+                                {userActivities.map((activity) => (
+                                    <div key={activity.id} className="relative flex gap-4">
+                                        {/* Icon Node */}
+                                        <div className={`absolute -left-[44px] z-10 w-10 h-10 rounded-full border-4 border-white shadow-sm flex items-center justify-center shrink-0 ${
+                                            activity.icon === 'plus' ? 'bg-blue-50 text-blue-600' :
+                                            activity.icon === 'user' ? 'bg-indigo-50 text-indigo-600' :
+                                            activity.icon === 'clock' ? 'bg-amber-50 text-amber-600' :
+                                            'bg-gray-50 text-gray-600'
+                                        }`}>
+                                            {activity.icon === 'plus' && <Plus size={16} />}
+                                            {activity.icon === 'user' && <UserIcon size={16} />}
+                                            {activity.icon === 'clock' && <Clock size={16} />}
+                                            {activity.icon === 'activity' && <Eye size={16} />}
+                                        </div>
+
+                                        <div className="flex-1 pt-0.5">
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <p className="text-sm font-bold text-gray-900">{activity.title}</p>
+                                                    <p className="text-xs text-gray-500 mt-1">{activity.subtitle}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-[10px] font-medium text-gray-400">
+                                                        {(() => {
+                                                            const d = new Date(activity.timestamp);
+                                                            if (isNaN(d.getTime())) return activity.timestamp;
+                                                            return d.toLocaleString('id-ID', {
+                                                                day: '2-digit',
+                                                                month: 'short',
+                                                                year: 'numeric',
+                                                                hour: '2-digit',
+                                                                minute: '2-digit'
+                                                            });
+                                                        })()}
+                                                    </p>
+                                                    {activity.status && (
+                                                        <span className="mt-1 inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600 uppercase border border-gray-200">
+                                                            {activity.status}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {hasMoreActivities && (
+                                    <div className="flex justify-center pt-6">
+                                        <button
+                                            onClick={() => setActivitiesLimit(prev => prev + 10)}
+                                            disabled={loadingActivities}
+                                            className="px-6 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-100 transition-all shadow-sm flex items-center gap-2 disabled:opacity-50"
+                                        >
+                                            {loadingActivities ? (
+                                                <>
+                                                    <Loader2 size={16} className="animate-spin" />
+                                                    Loading...
+                                                </>
+                                            ) : (
+                                                'Show More Activity'
+                                            )}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="py-20 text-center">
+                                <div className="inline-flex p-4 rounded-full bg-gray-50 text-gray-400 mb-4">
+                                    <Clock size={32} />
+                                </div>
+                                <h4 className="text-gray-900 font-medium">No activity found</h4>
+                                <p className="text-gray-500 text-sm max-w-xs mx-auto mt-1">
+                                    This user hasn't performed any logged actions or created any tickets yet.
+                                </p>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
         </div>
@@ -906,6 +1121,15 @@ const UserManagement: React.FC = () => {
     const [statusFilter, setStatusFilter] = useState('All');
     const [departmentFilter, setDepartmentFilter] = useState('All');
     const [groupFilter, setGroupFilter] = useState('All');
+    const [mainTab, setMainTab] = useState<'system' | 'external' | 'identity'>('system');
+
+    // Modena Identity States
+    const [identityUsers, setIdentityUsers] = useState<any[]>([]);
+    const [loadingIdentity, setLoadingIdentity] = useState(false);
+    const [identitySearch, setIdentitySearch] = useState('');
+    const [identityPage, setIdentityPage] = useState(1);
+    const [identityTotal, setIdentityTotal] = useState(0);
+    const [isActivatingUser, setIsActivatingUser] = useState<any | null>(null);
 
     // Fetch users and roles from Supabase
     useEffect(() => {
@@ -1078,6 +1302,18 @@ const UserManagement: React.FC = () => {
                 const rawStatus = user.status || (user.is_active ? 'Active' : 'Inactive');
                 const normalizedStatus = rawStatus.toLowerCase() === 'inactive' ? 'Inactive' : 'Active';
 
+                // Determine if user is external
+                const email = (user.email || '').toLowerCase();
+                const isModenaEmail = email.includes('@modena.com') || email.includes('@modena.co.id');
+                const isInternalSpecial = email === 'super.admin@xmail.com' || email.includes('@xmail.com');
+                
+                const roleName = (userRole?.role_name || userRole?.name || 'N/A').toLowerCase();
+                const isRequester = roleName === 'requester';
+
+                // User is external ONLY if they are a Requester AND have an external email
+                // If they are Admin/Agent, they are always Internal regardless of email
+                const isExternal = isRequester && !isModenaEmail && !isInternalSpecial;
+
                 return {
                     id: user.id,
                     name: user.full_name || '',
@@ -1089,7 +1325,8 @@ const UserManagement: React.FC = () => {
                     groups: userGroups,
                     is_department_admin: user.is_department_admin || false,
                     status: normalizedStatus,
-                    last_active: lastActiveDisplay
+                    last_active: lastActiveDisplay,
+                    is_external: isExternal
                 };
             });
 
@@ -1102,7 +1339,67 @@ const UserManagement: React.FC = () => {
         }
     };
 
+    // Fetch Modena Identity Users
+    const fetchIdentityUsers = async (page = 1, search = '') => {
+        try {
+            setLoadingIdentity(true);
+            const perPage = 50;
+            let url = `/modena-api/modena/users?page=${page}&perpage=${perPage}`;
+            
+            if (search) {
+                url += `&filter=employe_name:${search}`;
+            }
+            url += `&filterAnd=employee_status:Active`;
+
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Security-Code': '81b637d8fcd2c6da6359e6963113a1170de795e4b725b84d1e0b4cfd9ec58ce9'
+                }
+            });
+
+            if (!response.ok) throw new Error('Failed to fetch from Modena Identity');
+            
+            const result = await response.json();
+            setIdentityUsers(result.data || []);
+            setIdentityTotal(result.total || 0);
+            setIdentityPage(page);
+        } catch (err: any) {
+            console.error('Identity API Error:', err);
+        } finally {
+            setLoadingIdentity(false);
+        }
+    };
+
+    useEffect(() => {
+        if (mainTab === 'identity') {
+            fetchIdentityUsers(1, identitySearch);
+        }
+    }, [mainTab]);
+
+    const handleIdentitySearch = (e: React.FormEvent) => {
+        e.preventDefault();
+        fetchIdentityUsers(1, identitySearch);
+    };
+
+    // Helper to clean cost center (e.g. "CB018-CC028 Digital Infrastructure" -> "Digital Infrastructure")
+    const cleanCostCenter = (costCenter: string) => {
+        if (!costCenter) return 'N/A';
+        const parts = costCenter.split(' ');
+        if (parts.length > 1) {
+            const firstPart = parts[0];
+            if (/[\d-]/.test(firstPart)) {
+                return parts.slice(1).join(' ');
+            }
+        }
+        return costCenter;
+    };
+
     const filteredUsers = users.filter(user => {
+        // Tab filtering
+        if (mainTab === 'system' && user.is_external) return false;
+        if (mainTab === 'external' && !user.is_external) return false;
+
         const matchesSearch =
             user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
             user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1127,25 +1424,55 @@ const UserManagement: React.FC = () => {
         );
     }
 
-
-
     return (
         <div className="p-8 bg-[#f3f4f6] min-h-screen">
-            {/* Header */}
-            <div className="flex justify-between items-center mb-8">
-                <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
-                <div className="flex gap-3">
+            {/* Tabs & Header */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+                <div className="md:flex-1">
+                    <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
+                    <p className="text-sm text-gray-500 mt-1">Manage system access and roles</p>
+                </div>
+                
+                <div className="flex gap-1 bg-gray-200/50 p-1 rounded-xl self-stretch md:self-auto">
                     <button
-                        onClick={() => setIsCreatingUser(true)}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-200 text-sm font-medium"
+                        onClick={() => setMainTab('system')}
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${mainTab === 'system' 
+                            ? 'bg-white text-indigo-600 shadow-sm' 
+                            : 'text-gray-500 hover:text-gray-700'}`}
                     >
-                        <Plus size={18} />
-                        Add User
+                        Staff & Agents
                     </button>
-                    <button className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium">
-                        <Download size={18} />
-                        Export CSV
+                    <button
+                        onClick={() => setMainTab('external')}
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${mainTab === 'external' 
+                            ? 'bg-white text-indigo-600 shadow-sm' 
+                            : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        External Users
                     </button>
+                    <button
+                        onClick={() => setMainTab('identity')}
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${mainTab === 'identity' 
+                            ? 'bg-white text-indigo-600 shadow-sm' 
+                            : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        Modena Directory
+                    </button>
+                </div>
+
+                <div className="md:flex-1 flex justify-end">
+                    {(mainTab === 'system' || mainTab === 'external') ? (
+                        <button
+                            onClick={() => setIsCreatingUser(true)}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-200 text-sm font-medium"
+                        >
+                            <Plus size={18} />
+                            Add User
+                        </button>
+                    ) : (
+                        // Placeholder to keep tabs in center when Add User is hidden
+                        <div className="hidden md:block w-[120px]" />
+                    )}
                 </div>
             </div>
 
@@ -1157,210 +1484,357 @@ const UserManagement: React.FC = () => {
                         <strong>Error:</strong> {error}
                     </div>
                 )}
-                <div className="p-6 border-b border-gray-100">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                        <input
-                            type="text"
-                            placeholder="Search users by name, email, role or department"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                        />
-                    </div>
-                </div>
-
-                {/* Filters */}
-                <div className="p-6 border-b border-gray-100 grid grid-cols-4 gap-4">
-                    <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-2">Role</label>
-                        <div className="relative">
-                            <select
-                                value={roleFilter}
-                                onChange={(e) => setRoleFilter(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none bg-white pr-8"
-                            >
-                                <option value="All">All</option>
-                                {roles.map(role => (
-                                    <option key={`role-${role.id}`} value={role.role_name}>{role.role_name}</option>
-                                ))}
-                            </select>
-                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+                {mainTab === 'system' || mainTab === 'external' ? (
+                    <>
+                        {/* Search Bar */}
+                        <div className="p-6 border-b border-gray-100">
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                                <input
+                                    type="text"
+                                    placeholder="Search users by name, email, role or department"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                                />
+                            </div>
                         </div>
-                    </div>
 
-                    <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-2">Status</label>
-                        <div className="relative">
-                            <select
-                                value={statusFilter}
-                                onChange={(e) => setStatusFilter(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none bg-white pr-8"
-                            >
-                                <option value="All">All</option>
-                                <option value="Active">Active</option>
-                                <option value="Inactive">Inactive</option>
-                            </select>
-                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
-                        </div>
-                    </div>
+                        {/* Filters */}
+                        <div className={`p-6 border-b border-gray-100 grid ${mainTab === 'external' ? 'grid-cols-2' : 'grid-cols-4'} gap-4`}>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-2">Role</label>
+                                <div className="relative">
+                                    <select
+                                        value={roleFilter}
+                                        onChange={(e) => setRoleFilter(e.target.value)}
+                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none bg-white pr-8"
+                                    >
+                                        <option value="All">All</option>
+                                        {roles.map(role => (
+                                            <option key={`role-${role.id}`} value={role.role_name}>{role.role_name}</option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+                                </div>
+                            </div>
 
-                    <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-2">Department</label>
-                        <div className="relative">
-                            <select
-                                value={departmentFilter}
-                                onChange={(e) => {
-                                    setDepartmentFilter(e.target.value);
-                                    setGroupFilter('All');
-                                }}
-                                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none bg-white pr-8"
-                            >
-                                <option value="All">All</option>
-                                {departments.map(dept => (
-                                    <option key={`dept-${dept.id}`} value={dept.name}>{dept.name}</option>
-                                ))}
-                            </select>
-                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
-                        </div>
-                    </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-2">Status</label>
+                                <div className="relative">
+                                    <select
+                                        value={statusFilter}
+                                        onChange={(e) => setStatusFilter(e.target.value)}
+                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none bg-white pr-8"
+                                    >
+                                        <option value="All">All</option>
+                                        <option value="Active">Active</option>
+                                        <option value="Inactive">Inactive</option>
+                                    </select>
+                                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+                                </div>
+                            </div>
 
-                    <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-2">
-                            Group
-                            {departmentFilter === 'All' && <span className="text-orange-600 ml-1 text-[10px] italic">* Select Department first</span>}
-                        </label>
-                        <div className="relative">
-                            <select
-                                value={groupFilter}
-                                onChange={(e) => setGroupFilter(e.target.value)}
-                                disabled={departmentFilter === 'All'}
-                                className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none pr-8 ${departmentFilter === 'All' ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : 'bg-white'
-                                    }`}
-                            >
-                                <option value="All">All</option>
-                                {groups
-                                    .filter(g => {
-                                        if (departmentFilter === 'All') return false;
-                                        const selectedDept = departments.find(d => d.name === departmentFilter);
-                                        return selectedDept && g.company_id === selectedDept.id;
-                                    })
-                                    .map(group => (
-                                        <option key={`group-${group.id}`} value={group.name}>{group.name}</option>
-                                    ))
-                                }
-                            </select>
-                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Table */}
-                <div className="overflow-x-auto">
-                    <table className="w-full">
-                        <thead>
-                            <tr className="border-b border-gray-100 bg-gray-50/50">
-                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
-                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
-                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
-                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Department</th>
-                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Group</th>
-                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Last Active</th>
-                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-50">
-                            {loading ? (
-                                // Skeleton Loading Rows
-                                Array.from({ length: 5 }).map((_, i) => (
-                                    <tr key={i} className="animate-pulse">
-                                        <td className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                                        <td className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-48"></div></td>
-                                        <td className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
-                                        <td className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                                        <td className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                                        <td className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
-                                        <td className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-32"></div></td>
-                                        <td className="px-6 py-4"><div className="h-8 bg-gray-200 rounded w-16"></div></td>
-                                    </tr>
-                                ))
-                            ) : filteredUsers.length > 0 ? (
-                                filteredUsers.map((user) => (
-                                    <tr key={user.id} className="hover:bg-gray-50/50 transition-colors">
-                                        <td className="px-6 py-4 text-sm font-medium text-gray-900">{user.name}</td>
-                                        <td className="px-6 py-4 text-sm text-gray-600">{user.email}</td>
-                                        <td className="px-6 py-4 text-sm text-gray-600">{user.role_name}</td>
-                                        <td className="px-6 py-4 text-sm text-gray-600">{user.department}</td>
-                                        <td className="px-6 py-4 text-sm">
-                                            <GroupsDisplay groups={user.groups} maxDisplay={2} userName={user.name} />
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center">
-                                                <StatusBadge
-                                                    status={user.status}
-                                                />
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 text-sm text-gray-600">{user.last_active}</td>
-                                        <td className="px-6 py-4">
-                                            <button
-                                                onClick={() => setSelectedUser(user)}
-                                                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
+                            {mainTab !== 'external' && (
+                                <>
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-500 mb-2">Department</label>
+                                        <div className="relative">
+                                            <select
+                                                value={departmentFilter}
+                                                onChange={(e) => {
+                                                    setDepartmentFilter(e.target.value);
+                                                    setGroupFilter('All');
+                                                }}
+                                                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none bg-white pr-8"
                                             >
-                                                View
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))
-                            ) : (
-                                <tr>
-                                    <td colSpan={8} className="px-6 py-12 text-center text-gray-500 text-sm">
-                                        No users found matching your filters.
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+                                                <option value="All">All</option>
+                                                {departments.map(dept => (
+                                                    <option key={`dept-${dept.id}`} value={dept.name}>{dept.name}</option>
+                                                ))}
+                                            </select>
+                                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+                                        </div>
+                                    </div>
 
-                {/* Pagination */}
-                {filteredUsers.length > 0 && (
-                    <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
-                        <div className="text-sm text-gray-500">
-                            Showing <span className="font-medium text-gray-700">1</span> to <span className="font-medium text-gray-700">{filteredUsers.length}</span> of <span className="font-medium text-gray-700">{filteredUsers.length}</span> users
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-500 mb-2">
+                                            Group
+                                            {departmentFilter === 'All' && <span className="text-orange-600 ml-1 text-[10px] italic">* Select Department first</span>}
+                                        </label>
+                                        <div className="relative">
+                                            <select
+                                                value={groupFilter}
+                                                onChange={(e) => setGroupFilter(e.target.value)}
+                                                disabled={departmentFilter === 'All'}
+                                                className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none pr-8 ${departmentFilter === 'All' ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : 'bg-white'
+                                                    }`}
+                                            >
+                                                <option value="All">All</option>
+                                                {groups
+                                                    .filter(g => {
+                                                        if (departmentFilter === 'All') return false;
+                                                        const selectedDept = departments.find(d => d.name === departmentFilter);
+                                                        return selectedDept && g.company_id === selectedDept.id;
+                                                    })
+                                                    .map(group => (
+                                                        <option key={`group-${group.id}`} value={group.name}>{group.name}</option>
+                                                    ))
+                                                }
+                                            </select>
+                                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+                                        </div>
+                                    </div>
+                                </>
+                            )}
                         </div>
-                        <div className="flex gap-2">
-                            <button className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                                Previous
-                            </button>
-                            <button className="px-3 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg">
-                                1
-                            </button>
-                            <button className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                                Next
-                            </button>
+
+                        {/* Table */}
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="border-b border-gray-100 bg-gray-50/50">
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
+                                        {mainTab !== 'external' && (
+                                            <>
+                                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Department</th>
+                                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Group</th>
+                                            </>
+                                        )}
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Last Active</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50">
+                                    {loading ? (
+                                        Array.from({ length: 5 }).map((_, i) => (
+                                            <tr key={i} className="animate-pulse">
+                                                <td colSpan={8} className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-full"></div></td>
+                                            </tr>
+                                        ))
+                                    ) : filteredUsers.length > 0 ? (
+                                        filteredUsers.map((user) => (
+                                            <tr key={user.id} className="hover:bg-gray-50/50 transition-colors">
+                                                <td className="px-6 py-4 text-sm font-medium text-gray-900">{user.name}</td>
+                                                <td className="px-6 py-4 text-sm text-gray-600">{user.email}</td>
+                                                <td className="px-6 py-4 text-sm text-gray-600">{user.role_name}</td>
+                                                {mainTab !== 'external' && (
+                                                    <>
+                                                        <td className="px-6 py-4 text-sm text-gray-600">{user.department}</td>
+                                                        <td className="px-6 py-4 text-sm">
+                                                            <GroupsDisplay groups={user.groups} maxDisplay={2} userName={user.name} />
+                                                        </td>
+                                                    </>
+                                                )}
+                                                <td className="px-6 py-4 text-sm">
+                                                    <StatusBadge status={user.status} />
+                                                </td>
+                                                <td className="px-6 py-4 text-sm text-gray-600">{user.last_active}</td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <button
+                                                        onClick={() => setSelectedUser(user)}
+                                                        className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
+                                                    >
+                                                        View
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    ) : (
+                                        <tr>
+                                            <td colSpan={8} className="px-6 py-12 text-center text-gray-500 text-sm">
+                                                No users found matching your filters.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
                         </div>
-                    </div>
+                        {/* Pagination (System Only) */}
+                        {filteredUsers.length > 0 && (
+                            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+                                <div className="text-sm text-gray-500">
+                                    Showing <span className="font-medium text-gray-700">1</span> to <span className="font-medium text-gray-700">{filteredUsers.length}</span> of <span className="font-medium text-gray-700">{filteredUsers.length}</span> users
+                                </div>
+                                <div className="flex gap-2">
+                                    <button className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                        Previous
+                                    </button>
+                                    <button className="px-3 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg">
+                                        1
+                                    </button>
+                                    <button className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                        Next
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        {/* Directory Search */}
+                        <div className="p-6 border-b border-gray-100">
+                            <form onSubmit={handleIdentitySearch} className="flex gap-4">
+                                <div className="relative flex-1">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                                    <input
+                                        type="text"
+                                        placeholder="Search by name in Modena Identity..."
+                                        value={identitySearch}
+                                        onChange={(e) => setIdentitySearch(e.target.value)}
+                                        className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={loadingIdentity}
+                                    className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-bold flex items-center gap-2"
+                                >
+                                    {loadingIdentity ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
+                                    Search Identity
+                                </button>
+                            </form>
+                        </div>
+
+                        {/* Identity Table */}
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="border-b border-gray-100 bg-gray-50/50">
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Emp No</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Employee Name</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Department (Cost Center)</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50">
+                                    {loadingIdentity ? (
+                                        Array.from({ length: 5 }).map((_, i) => (
+                                            <tr key={i} className="animate-pulse">
+                                                <td colSpan={6} className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-full"></div></td>
+                                            </tr>
+                                        ))
+                                    ) : identityUsers.length > 0 ? (
+                                        identityUsers.map((iUser, idx) => {
+                                            const isRegistered = users.some(u => u.email.toLowerCase() === iUser.email?.toLowerCase());
+                                            
+                                            return (
+                                                <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                                                    <td className="px-6 py-4 text-sm font-mono text-gray-500">{iUser.emp_no || 'N/A'}</td>
+                                                    <td className="px-6 py-4 text-sm font-medium text-gray-900">{iUser.employe_name}</td>
+                                                    <td className="px-6 py-4 text-sm text-gray-600">{iUser.email || 'N/A'}</td>
+                                                    <td className="px-6 py-4 text-sm text-gray-600">
+                                                        <div className="flex flex-col">
+                                                            <span className="font-medium text-gray-800">{cleanCostCenter(iUser.cost_center)}</span>
+                                                            <span className="text-[10px] text-gray-400 font-mono italic">{iUser.cost_center}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <span className="px-2.5 py-1 bg-green-50 text-green-700 rounded-full text-xs font-medium border border-green-100">
+                                                            Active
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        {isRegistered ? (
+                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-500 rounded-lg text-xs font-bold border border-gray-200">
+                                                                <Check size={14} className="text-green-500" />
+                                                                Already Active
+                                                            </span>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => setIsActivatingUser(iUser)}
+                                                                className="flex items-center gap-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-all shadow-sm shadow-indigo-100"
+                                                            >
+                                                                <Plus size={14} />
+                                                                Activate as Staff
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
+                                    ) : (
+                                        <tr>
+                                            <td colSpan={5} className="px-6 py-12 text-center text-gray-500 text-sm">
+                                                {identitySearch ? 'No employees found.' : 'Enter a name to search the directory.'}
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {/* Identity Pagination */}
+                        {identityUsers.length > 0 && (
+                            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+                                <div className="text-sm text-gray-500">
+                                    Showing <span className="font-medium text-gray-700">{(identityPage - 1) * 50 + 1}</span> to <span className="font-medium text-gray-700">{Math.min(identityPage * 50, identityTotal)}</span> of <span className="font-medium text-gray-700">{identityTotal}</span> employees
+                                </div>
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => fetchIdentityUsers(identityPage - 1, identitySearch)}
+                                        disabled={identityPage <= 1 || loadingIdentity}
+                                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                        Previous
+                                    </button>
+                                    <button className="px-3 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg">
+                                        {identityPage}
+                                    </button>
+                                    <button 
+                                        onClick={() => fetchIdentityUsers(identityPage + 1, identitySearch)}
+                                        disabled={identityPage * 50 >= identityTotal || loadingIdentity}
+                                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                        Next
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </>
                 )}
             </div>
 
-            {/* Create User Drawer Overlay */}
+            {/* Overlays */}
             {isCreatingUser && (
                 <div className="fixed inset-0 z-50 flex justify-end transition-opacity duration-300">
-                    {/* Backdrop */}
                     <div
                         className="absolute inset-0 bg-black/30 backdrop-blur-[2px]"
                         onClick={() => setIsCreatingUser(false)}
                     />
-
-                    {/* Drawer Content */}
                     <div className="relative w-full max-w-2xl bg-[#f3f4f6] h-full shadow-2xl overflow-y-auto transform transition-transform duration-300 animate-in slide-in-from-right">
                         <div className="p-6 h-full">
                             <CreateUser
                                 onCancel={() => setIsCreatingUser(false)}
                                 onSuccess={() => {
                                     setIsCreatingUser(false);
+                                    fetchData();
+                                }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {isActivatingUser && (
+                <div className="fixed inset-0 z-50 flex justify-end">
+                    <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={() => setIsActivatingUser(null)} />
+                    <div className="relative w-full max-w-2xl bg-[#f3f4f6] h-full shadow-2xl overflow-y-auto transform transition-transform duration-300 animate-in slide-in-from-right">
+                        <div className="p-6 h-full">
+                            <CreateUser
+                                initialData={{
+                                    fullName: isActivatingUser.employe_name,
+                                    email: isActivatingUser.email,
+                                }}
+                                onCancel={() => setIsActivatingUser(null)}
+                                onSuccess={() => {
+                                    setIsActivatingUser(null);
+                                    setMainTab('system');
                                     fetchData();
                                 }}
                             />

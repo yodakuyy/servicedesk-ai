@@ -90,6 +90,7 @@ const RequesterTicketManager: React.FC<RequesterTicketManagerProps> = ({ userPro
             onViewTicket={handleTicketClick}
             onCreateTicket={handleCreateTicket}
             userName={userProfile?.full_name}
+            companyId={userProfile?.company_id}
             ticketTypeFilter={ticketTypeFilter}
         />
     );

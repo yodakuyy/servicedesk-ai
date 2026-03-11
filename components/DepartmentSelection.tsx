@@ -13,6 +13,7 @@ interface Department {
   description: string;
   is_active: boolean;
   items?: string[];
+  rawServices?: string[];
 }
 
 const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepartment }) => {
@@ -86,14 +87,15 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
           }
         }
 
+        const allServices = services && Array.isArray(services) ? services : [];
+
         return {
           id: dept.company_id || dept.id || String(Math.random()),
           company_name: dept.company_name || 'Unknown',
           description: dept.description || 'No description',
           is_active: dept.is_active !== false,
-          items: services && Array.isArray(services) && services.length > 0
-            ? services
-            : ['Service 1', 'Service 2', 'Service 3']
+          items: allServices.filter((s: string) => !s.startsWith('__type:')),
+          rawServices: allServices // Keep everything for handleSelectDepartment
         };
       });
 
@@ -182,12 +184,25 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
         }
       }
 
+      // Find the selected department object to get its services
+      const selectedDept = departments.find(d => String(d.id) === String(deptId));
+      
+      // Extract module access types (prefixed with __type:)
+      // If no __type: entries exist, default to ALL for compatibility
+      const allServices = (selectedDept?.rawServices || []) as string[];
+      const typeSpecificServices = allServices
+        .filter(s => s.startsWith('__type:'))
+        .map(s => s.replace('__type:', ''));
+      
+      const effectiveServices = typeSpecificServices.length > 0 ? typeSpecificServices : [];
+
       // Update profile in localStorage for the session
       const updatedProfile = {
         ...profile,
         role_id: effectiveRoleId,
         is_department_admin: effectiveIsDeptAdmin,
-        company_id: Number(deptId) // Ensure all components filter by the selected department
+        company_id: Number(deptId), // Ensure all components filter by the selected department
+        services: effectiveServices // Store clean module types (Incident, etc.) for dynamic filtering
       };
       localStorage.setItem('profile', JSON.stringify(updatedProfile));
 
@@ -251,6 +266,7 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
       });
 
       // Build accessible menus - only include menus with can_view permission
+      // AND filter by department-specific services if they are defined
       const accessibleMenus = Array.from(permissionsMap.values())
         .filter(perm => perm.can_view === true)
         .map(perm => {
@@ -266,6 +282,25 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
             sort_order: perm.sort_order || menu?.order_no || 0,
             source: perm.source
           };
+        })
+        .filter(menu => {
+          // If no specific module access is checked, show all for backward compatibility
+          if (effectiveServices.length === 0) return true;
+
+          const menuName = (menu.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const allowedServices = effectiveServices.map(s => s.toLowerCase());
+
+          // Check if it's a service-related menu
+          const isIncidentMenu = menuName.includes('incident');
+          const isSRMenu = menuName.includes('servicerequest') || menuName.includes('myrequest');
+          const isCRMenu = menuName.includes('changerequest') || menuName.includes('escalated');
+
+          // If it's a service menu, check if the service is allowed
+          if (isIncidentMenu && !allowedServices.includes('incident')) return false;
+          if (isSRMenu && !allowedServices.includes('service request')) return false;
+          if (isCRMenu && !allowedServices.includes('change request')) return false;
+
+          return true;
         })
         .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 

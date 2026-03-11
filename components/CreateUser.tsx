@@ -7,6 +7,10 @@ import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
 interface CreateUserProps {
     onCancel: () => void;
     onSuccess: () => void;
+    initialData?: {
+        fullName?: string;
+        email?: string;
+    };
 }
 
 interface Role {
@@ -25,7 +29,7 @@ interface Group {
     company_id: number;
 }
 
-const CreateUser: React.FC<CreateUserProps> = ({ onCancel, onSuccess }) => {
+const CreateUser: React.FC<CreateUserProps> = ({ onCancel, onSuccess, initialData }) => {
     const [loading, setLoading] = useState(false);
     const [fetchingOptions, setFetchingOptions] = useState(true);
     const [showPassword, setShowPassword] = useState(false);
@@ -39,10 +43,10 @@ const CreateUser: React.FC<CreateUserProps> = ({ onCancel, onSuccess }) => {
 
     // Form State
     const [formData, setFormData] = useState({
-        fullName: '',
-        email: '',
+        fullName: initialData?.fullName || '',
+        email: initialData?.email || '',
         password: '',
-        roleId: '',
+        roleId: '4', // Default to Requester
         departmentId: '',
         groupIds: [] as string[],
         status: 'Active'
@@ -148,16 +152,16 @@ const CreateUser: React.FC<CreateUserProps> = ({ onCancel, onSuccess }) => {
             // STEP 2: Create Profile (WAJIB)
             console.log('STEP 2: Creating profile...');
             console.log('Role ID being sent:', formData.roleId, 'Type:', typeof formData.roleId);
-            const { error: profileError } = await supabase
-                .from('profiles')
-                .insert({
-                    id: userId,
-                    full_name: formData.fullName,
-                    email: formData.email,
-                    role_id: parseInt(formData.roleId),
-                    company_id: parseInt(formData.departmentId),
-                    status: formData.status
-                });
+                const { error: profileError } = await supabase
+                    .from('profiles')
+                    .insert({
+                        id: userId,
+                        full_name: formData.fullName,
+                        email: formData.email,
+                        role_id: parseInt(formData.roleId),
+                        company_id: formData.departmentId ? parseInt(formData.departmentId) : 1, // Default to Global (1) if empty
+                        status: formData.status
+                    });
 
             if (profileError) throw new Error(`Profile error: ${profileError.message}`);
             console.log('✅ Profile created');
@@ -322,83 +326,87 @@ const CreateUser: React.FC<CreateUserProps> = ({ onCancel, onSuccess }) => {
                     </div>
 
                     {/* Department */}
-                    <div className="space-y-1.5">
-                        <label className="text-sm font-semibold text-gray-700">Department</label>
-                        <select
-                            name="departmentId"
-                            required
-                            value={formData.departmentId}
-                            onChange={handleChange}
-                            disabled={fetchingOptions}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
-                        >
-                            <option value="">{fetchingOptions ? "Loading departments..." : "Select Department"}</option>
-                            {departments.map(dept => (
-                                <option key={dept.company_id} value={dept.company_id}>{dept.company_name}</option>
-                            ))}
-                        </select>
-                    </div>
+                    {formData.roleId !== '4' && (
+                        <div className="space-y-1.5">
+                            <label className="text-sm font-semibold text-gray-700">Department</label>
+                            <select
+                                name="departmentId"
+                                required={formData.roleId !== '4'}
+                                value={formData.departmentId}
+                                onChange={handleChange}
+                                disabled={fetchingOptions}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                            >
+                                <option value="">{fetchingOptions ? "Loading departments..." : "Select Department"}</option>
+                                {departments.map(dept => (
+                                    <option key={dept.company_id} value={dept.company_id}>{dept.company_name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
 
                     {/* Group Multi-Select */}
-                    <div className="space-y-1.5" ref={groupDropdownRef}>
-                        <label className="text-sm font-semibold text-gray-700">Group</label>
-                        <div className="relative">
-                            <button
-                                type="button"
-                                onClick={() => formData.departmentId && !fetchingOptions && setIsGroupDropdownOpen(!isGroupDropdownOpen)}
-                                disabled={fetchingOptions || !formData.departmentId}
-                                className="w-full flex items-center justify-between px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white text-left disabled:bg-gray-50 disabled:cursor-not-allowed"
-                            >
-                                <span className={formData.groupIds.length === 0 ? "text-gray-500" : "text-gray-900"}>
-                                    {fetchingOptions
-                                        ? "Loading groups..."
-                                        : formData.groupIds.length === 0
-                                            ? "Select Groups"
-                                            : filteredGroups
-                                                .filter(g => formData.groupIds.includes(g.id))
-                                                .map(g => g.name)
-                                                .join(", ")
-                                    }
-                                </span>
-                                {fetchingOptions ? <Loader2 size={16} className="animate-spin text-gray-400" /> : <ChevronsUpDown size={16} className="text-gray-400" />}
-                            </button>
+                    {formData.roleId !== '4' && (
+                        <div className="space-y-1.5" ref={groupDropdownRef}>
+                            <label className="text-sm font-semibold text-gray-700">Group</label>
+                            <div className="relative">
+                                <button
+                                    type="button"
+                                    onClick={() => formData.departmentId && !fetchingOptions && setIsGroupDropdownOpen(!isGroupDropdownOpen)}
+                                    disabled={fetchingOptions || !formData.departmentId}
+                                    className="w-full flex items-center justify-between px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white text-left disabled:bg-gray-50 disabled:cursor-not-allowed"
+                                >
+                                    <span className={formData.groupIds.length === 0 ? "text-gray-500" : "text-gray-900"}>
+                                        {fetchingOptions
+                                            ? "Loading groups..."
+                                            : formData.groupIds.length === 0
+                                                ? "Select Groups"
+                                                : filteredGroups
+                                                    .filter(g => formData.groupIds.includes(g.id))
+                                                    .map(g => g.name)
+                                                    .join(", ")
+                                        }
+                                    </span>
+                                    {fetchingOptions ? <Loader2 size={16} className="animate-spin text-gray-400" /> : <ChevronsUpDown size={16} className="text-gray-400" />}
+                                </button>
 
-                            {isGroupDropdownOpen && (
-                                <div className="absolute z-10 w-full bottom-full mb-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
-                                    {filteredGroups.length === 0 ? (
-                                        <div className="p-4 text-sm text-gray-500 text-center flex flex-col gap-2">
-                                            <p className="font-semibold text-gray-900">No groups found in this department.</p>
-                                            <p className="text-xs italic">You can still create this user and assign them to a group later once the group is created in Group Management.</p>
-                                        </div>
-                                    ) : (
-                                        <div className="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto">
-                                            {filteredGroups.map(group => {
-                                                const isSelected = formData.groupIds.includes(group.id);
-                                                return (
-                                                    <div
-                                                        key={group.id}
-                                                        onClick={() => toggleGroup(group.id)}
-                                                        className="flex items-center gap-3 p-2 hover:bg-gray-50 cursor-pointer transition-colors rounded"
-                                                    >
-                                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors flex-shrink-0 ${isSelected ? "bg-indigo-600 border-indigo-600" : "border-gray-300 bg-white"
-                                                            }`}>
-                                                            {isSelected && <Check size={12} className="text-white" />}
+                                {isGroupDropdownOpen && (
+                                    <div className="absolute z-10 w-full bottom-full mb-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
+                                        {filteredGroups.length === 0 ? (
+                                            <div className="p-4 text-sm text-gray-500 text-center flex flex-col gap-2">
+                                                <p className="font-semibold text-gray-900">No groups found in this department.</p>
+                                                <p className="text-xs italic">You can still create this user and assign them to a group later once the group is created in Group Management.</p>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto">
+                                                {filteredGroups.map(group => {
+                                                    const isSelected = formData.groupIds.includes(group.id);
+                                                    return (
+                                                        <div
+                                                            key={group.id}
+                                                            onClick={() => toggleGroup(group.id)}
+                                                            className="flex items-center gap-3 p-2 hover:bg-gray-50 cursor-pointer transition-colors rounded"
+                                                        >
+                                                            <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors flex-shrink-0 ${isSelected ? "bg-indigo-600 border-indigo-600" : "border-gray-300 bg-white"
+                                                                }`}>
+                                                                {isSelected && <Check size={12} className="text-white" />}
+                                                            </div>
+                                                            <span className={`text-sm ${isSelected ? "text-gray-900 font-medium" : "text-gray-700"}`}>
+                                                                {group.name}
+                                                            </span>
                                                         </div>
-                                                        <span className={`text-sm ${isSelected ? "text-gray-900 font-medium" : "text-gray-700"}`}>
-                                                            {group.name}
-                                                        </span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                            {formData.departmentId === '' && (
+                                <p className="text-xs text-orange-500 mt-1">Please select a department first.</p>
                             )}
                         </div>
-                        {formData.departmentId === '' && (
-                            <p className="text-xs text-orange-500 mt-1">Please select a department first.</p>
-                        )}
-                    </div>
+                    )}
                 </div>
 
                 {/* Actions */}

@@ -67,6 +67,7 @@ const CategoryManagement: React.FC = () => {
 
     const [availableDepartments, setAvailableDepartments] = useState<{ company_id: number, company_name: string }[]>([]);
     const [selectedDeptFilter, setSelectedDeptFilter] = useState<number | 'all'>('all');
+    const [currentDeptPriorities, setCurrentDeptPriorities] = useState<string[]>(['Urgent', 'High', 'Medium', 'Low']);
 
     useEffect(() => {
         fetchCategories();
@@ -314,6 +315,55 @@ const CategoryManagement: React.FC = () => {
     }, [categories]);
 
     const selectedNode = selectedNodeId ? flatNodes[selectedNodeId] : null;
+
+    const updateDeptPriorities = async (companyId: number | null) => {
+        if (companyId === null) {
+            setCurrentDeptPriorities(['Urgent', 'High', 'Medium', 'Low']);
+            return;
+        }
+
+        try {
+            const { data: policies } = await supabase
+                .from('sla_policies')
+                .select('id')
+                .eq('company_id', companyId)
+                .eq('is_active', true);
+
+            if (policies && policies.length > 0) {
+                const policyIds = policies.map(p => p.id);
+                const { data: targets } = await supabase
+                    .from('sla_targets')
+                    .select('priority')
+                    .in('sla_policy_id', policyIds);
+                
+                if (targets && targets.length > 0) {
+                    const unique = Array.from(new Set(targets.map(t => t.priority)));
+                    const order = ['Urgent', 'High', 'Medium', 'Low'];
+                    const sorted = order.filter(p => unique.some(up => up.toLowerCase() === p.toLowerCase()));
+                    setCurrentDeptPriorities(sorted.length > 0 ? sorted : order);
+                } else {
+                    setCurrentDeptPriorities(['Urgent', 'High', 'Medium', 'Low']);
+                }
+            } else {
+                setCurrentDeptPriorities(['Urgent', 'High', 'Medium', 'Low']);
+            }
+        } catch (err) {
+            console.error('Error fetching priorities:', err);
+            setCurrentDeptPriorities(['Urgent', 'High', 'Medium', 'Low']);
+        }
+    };
+
+    useEffect(() => {
+        if (selectedNode) {
+            updateDeptPriorities(selectedNode.company_id);
+        }
+    }, [selectedNodeId, selectedNode?.company_id]);
+
+    useEffect(() => {
+        if (isAddModalOpen) {
+            updateDeptPriorities(newCategoryData.company_id);
+        }
+    }, [isAddModalOpen, newCategoryData.company_id]);
 
     const toggleExpand = (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
@@ -782,10 +832,9 @@ const CategoryManagement: React.FC = () => {
                                         className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 disabled:bg-gray-100/50 disabled:cursor-not-allowed transition-all"
                                     >
                                         <option value="">System Default</option>
-                                        <option value="urgent">Urgent</option>
-                                        <option value="high">High</option>
-                                        <option value="medium">Medium</option>
-                                        <option value="low">Low</option>
+                                        {currentDeptPriorities.map(p => (
+                                            <option key={p} value={p.toLowerCase()}>{p}</option>
+                                        ))}
                                     </select>
                                     <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide ml-1">Automate urgency based on category</span>
                                 </div>
@@ -1093,10 +1142,9 @@ const CategoryManagement: React.FC = () => {
                                                 className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all"
                                             >
                                                 <option value="">System Default</option>
-                                                <option value="urgent">Urgent</option>
-                                                <option value="high">High</option>
-                                                <option value="medium">Medium</option>
-                                                <option value="low">Low</option>
+                                                {currentDeptPriorities.map(p => (
+                                                    <option key={p} value={p.toLowerCase()}>{p}</option>
+                                                ))}
                                             </select>
                                         </div>
                                         <div className="space-y-3 col-span-2 pt-2">

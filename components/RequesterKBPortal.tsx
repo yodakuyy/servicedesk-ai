@@ -35,7 +35,7 @@ interface Category {
     children?: Category[];
 }
 
-const RequesterKBPortal: React.FC = () => {
+const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId: propCompanyId }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [articles, setArticles] = useState<Article[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
@@ -49,6 +49,15 @@ const RequesterKBPortal: React.FC = () => {
 
     useEffect(() => {
         const initialize = async () => {
+            // Priority 1: Use propCompanyId if provided
+            if (propCompanyId !== undefined) {
+                setCurrentCompanyId(propCompanyId);
+                fetchCategories(propCompanyId);
+                fetchPopularArticles(propCompanyId);
+                return;
+            }
+
+            // Priority 2: Fetch from profile if no prop provided
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
                 const { data: profile } = await supabase
@@ -79,7 +88,7 @@ const RequesterKBPortal: React.FC = () => {
             }
         };
         initialize();
-    }, []);
+    }, [propCompanyId]);
 
     useEffect(() => {
         if (searchQuery.trim()) {

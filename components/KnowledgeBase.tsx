@@ -34,7 +34,7 @@ interface Article {
 type StatusFilter = 'all' | 'draft' | 'review' | 'published' | 'archived';
 type ViewMode = 'list' | 'card';
 
-const KnowledgeBase: React.FC = () => {
+const KnowledgeBase: React.FC<{ companyId?: number | null }> = ({ companyId: propCompanyId }) => {
   const [articles, setArticles] = useState<Article[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,43 +61,52 @@ const KnowledgeBase: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [propCompanyId]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
       // 0. Fetch User Profile & Company
       let companyId = currentCompanyId;
-      // Retrieve profile from localStorage to match the Dashboard's current department selection
-      const profileStr = localStorage.getItem('profile');
-      const profile = profileStr ? JSON.parse(profileStr) : null;
 
-      if (profile) {
-        setUserProfile(profile);
-        const isAdmin = profile.role_id === 1 || profile.role_id === '1';
-        const isDeptAdmin = profile.is_department_admin === true;
-
-        const effectiveCompanyId = profile.company_id || (isAdmin ? null : null);
-        companyId = effectiveCompanyId;
-        setCurrentCompanyId(effectiveCompanyId);
-        console.log(`KnowledgeBase filter applied for ${profile.full_name}: company_id = ${effectiveCompanyId}`);
+      // Priority 1: Use propCompanyId if provided
+      if (propCompanyId !== undefined) {
+        companyId = propCompanyId;
+        setCurrentCompanyId(propCompanyId);
+        // We still fetch profile for role info
+        const profileStr = localStorage.getItem('profile');
+        const profile = profileStr ? JSON.parse(profileStr) : null;
+        if (profile) setUserProfile(profile);
       } else {
-        // Fallback to Supabase if local profile is missing
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data: profileData } = await supabase
-            .from('profiles')
-            .select('*, groups!user_groups(company_id)')
-            .eq('id', user.id)
-            .single();
+        // Priority 2: Retrieve profile from localStorage to match the Dashboard's current department selection
+        const profileStr = localStorage.getItem('profile');
+        const profile = profileStr ? JSON.parse(profileStr) : null;
 
-          if (profileData) {
-            setUserProfile(profileData);
-            const isAdmin = profileData.role_id === 1 || profileData.role_id === '1';
-            const userCompanyId = profileData.company_id || (profileData as any).groups?.[0]?.company_id || null;
-            const effectiveCompanyId = userCompanyId || (isAdmin ? null : null);
-            companyId = effectiveCompanyId;
-            setCurrentCompanyId(effectiveCompanyId);
+        if (profile) {
+          setUserProfile(profile);
+          const isAdmin = profile.role_id === 1 || profile.role_id === '1';
+
+          const effectiveCompanyId = profile.company_id || (isAdmin ? null : null);
+          companyId = effectiveCompanyId;
+          setCurrentCompanyId(effectiveCompanyId);
+        } else {
+          // Fallback to Supabase if local profile is missing
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: profileData } = await supabase
+              .from('profiles')
+              .select('*, groups!user_groups(company_id)')
+              .eq('id', user.id)
+              .single();
+
+            if (profileData) {
+              setUserProfile(profileData);
+              const isAdmin = profileData.role_id === 1 || profileData.role_id === '1';
+              const userCompanyId = profileData.company_id || (profileData as any).groups?.[0]?.company_id || null;
+              const effectiveCompanyId = userCompanyId || (isAdmin ? null : null);
+              companyId = effectiveCompanyId;
+              setCurrentCompanyId(effectiveCompanyId);
+            }
           }
         }
       }

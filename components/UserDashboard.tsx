@@ -29,9 +29,10 @@ interface UserDashboardProps {
     onNavigate?: (view: string) => void;
     onViewTicket?: (ticketId: string) => void;
     userName?: string;
+    companyId?: string;
 }
 
-const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket, userName }) => {
+const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket, userName, companyId }) => {
     const [selectionType, setSelectionType] = useState<'create' | 'view' | null>(null);
     const [isChatOpen, setIsChatOpen] = useState(false);
     // KB & Articles
@@ -49,6 +50,61 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
         resolvedBreakdown: '',
         total: 0
     });
+
+    // Access permissions state for filtering cards based on legal/department requirements
+    const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
+
+    React.useEffect(() => {
+        const menus = localStorage.getItem('accessibleMenus');
+        if (menus) {
+            try {
+                setAccessibleMenus(JSON.parse(menus));
+            } catch (e) {
+                console.error("Error parsing accessibleMenus in UserDashboard", e);
+            }
+        }
+    }, []);
+
+    // Helper to check if a view is accessible based on menu permissions AND department services
+    const isViewAccessible = (view: string) => {
+        const profileStr = localStorage.getItem('profile');
+        const profile = profileStr ? JSON.parse(profileStr) : null;
+        const deptServices = (profile?.services || []) as string[];
+
+        // 1. Check Department-specific Service visibility if services are defined
+        // If the department hasn't defined any service, we show everything by default for compatibility
+        if (deptServices.length > 0) {
+            const serviceMap: { [key: string]: string } = {
+                'my-tickets': 'Incident',
+                'service-requests': 'Service Request',
+                'escalated-tickets': 'Change Request'
+            };
+
+            const requiredService = serviceMap[view];
+            if (requiredService) {
+                const isAllowedByDept = deptServices.some(s => s.toLowerCase() === requiredService.toLowerCase());
+                if (!isAllowedByDept) return false;
+            }
+        }
+
+        // 2. Check Role-based Menu Access
+        if (!accessibleMenus || accessibleMenus.length === 0) return true; // Default while loading
+        
+        const menuViewMap: { [key: string]: string[] } = {
+            'my-tickets': ['usertickets', 'mytickets', 'myincidents', 'userincidents', 'allincidents', 'incidents', 'incidentlist'],
+            'service-requests': ['servicerequests', 'allservicerequests', 'myservicerequest', 'myservicerequests', 'myrequests'],
+            'escalated-tickets': ['escalatedtickets', 'changerequest'],
+            'help-center': ['helpcenter']
+        };
+
+        const targetKeys = menuViewMap[view];
+        if (!targetKeys) return true;
+
+        return accessibleMenus.some(menu => {
+            const normalizedName = (menu.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            return targetKeys.includes(normalizedName);
+        });
+    };
 
     // Chatbot States
     const [chatMessages, setChatMessages] = useState<{ sender: 'bot' | 'user', text: string, type?: 'text' | 'article' | 'option', articles?: any[] }[]>([
@@ -72,13 +128,30 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
             if (!user) return;
 
             // Fetch recent tickets (Either I am the requester OR I am the one who created it)
-            const { data: ticketsData } = await supabase
+            // Filter by current department if companyId is provided
+            let ticketsQuery = supabase
                 .from('tickets')
                 .select(`
                     id, ticket_number, subject, status_id, created_at,
-                    ticket_statuses!status_id (status_name)
+                    ticket_statuses!status_id (status_name),
+                    ticket_categories!category_id (company_id)
                 `)
-                .or(`requester_id.eq.${user.id},created_by.eq.${user.id}`)
+                .or(`requester_id.eq.${user.id},created_by.eq.${user.id}`);
+
+            if (companyId) {
+                // Use !inner join to filter by company_id via categories
+                ticketsQuery = supabase
+                    .from('tickets')
+                    .select(`
+                        id, ticket_number, subject, status_id, created_at,
+                        ticket_statuses!status_id (status_name),
+                        ticket_categories!category_id!inner (company_id)
+                    `)
+                    .or(`requester_id.eq.${user.id},created_by.eq.${user.id}`)
+                    .eq('ticket_categories.company_id', companyId);
+            }
+
+            const { data: ticketsData } = await ticketsQuery
                 .order('created_at', { ascending: false })
                 .limit(5);
 
@@ -92,10 +165,32 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
             }
 
             // Fetch all tickets for stats (Either I am the requester OR I am the one who created it)
-            const { data: allUserTickets } = await supabase
+            let statsQuery = supabase
                 .from('tickets')
-                .select('status_id, ticket_statuses!status_id(status_name), requester_id, created_by')
+                .select(`
+                    status_id, 
+                    ticket_statuses!status_id(status_name), 
+                    requester_id, 
+                    created_by,
+                    ticket_categories!category_id(company_id)
+                `)
                 .or(`requester_id.eq.${user.id},created_by.eq.${user.id}`);
+
+            if (companyId) {
+                statsQuery = supabase
+                    .from('tickets')
+                    .select(`
+                        status_id, 
+                        ticket_statuses!status_id(status_name), 
+                        requester_id, 
+                        created_by,
+                        ticket_categories!category_id!inner(company_id)
+                    `)
+                    .or(`requester_id.eq.${user.id},created_by.eq.${user.id}`)
+                    .eq('ticket_categories.company_id', companyId);
+            }
+
+            const { data: allUserTickets } = await statsQuery;
 
             if (allUserTickets) {
                 console.log('UserDashboard: Raw items fetched:', allUserTickets.length);
@@ -135,12 +230,45 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                 });
             }
 
+            // Handle companyId fallback if not provided
+            let effectiveCompanyId = companyId;
+            if (!effectiveCompanyId) {
+                // Priority 1: Check localStorage first (fastest and consistent)
+                const profileStr = localStorage.getItem('profile');
+                if (profileStr) {
+                    try {
+                        const localProfile = JSON.parse(profileStr);
+                        effectiveCompanyId = localProfile.company_id;
+                    } catch (e) {}
+                }
+
+                // Priority 2: Fetch from DB if still not found
+                if (!effectiveCompanyId) {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('company_id, groups!user_groups(company_id)')
+                        .eq('id', user.id)
+                        .single();
+                    
+                    if (profile) {
+                        // @ts-ignore
+                        effectiveCompanyId = profile.company_id || profile.groups?.[0]?.company_id;
+                    }
+                }
+            }
+
             // Fetch Knowledge Base Articles
-            const { data: articlesData } = await supabase
+            let articlesQuery = supabase
                 .from('kb_articles')
                 .select('id, title, summary, kb_categories(name)')
                 .eq('status', 'published')
-                .eq('visibility', 'public')
+                .eq('visibility', 'public');
+
+            if (effectiveCompanyId) {
+                articlesQuery = articlesQuery.eq('company_id', effectiveCompanyId);
+            }
+
+            const { data: articlesData } = await articlesQuery
                 .order('updated_at', { ascending: false })
                 .limit(3);
 
@@ -160,10 +288,16 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
             }
 
             // Fetch Announcements
-            const { data: announceData } = await supabase
+            let announceQuery = supabase
                 .from('announcements')
                 .select('*')
-                .eq('is_active', true)
+                .eq('is_active', true);
+
+            if (effectiveCompanyId) {
+                announceQuery = announceQuery.eq('company_id', effectiveCompanyId);
+            }
+
+            const { data: announceData } = await announceQuery
                 .order('created_at', { ascending: false })
                 .limit(1);
 
@@ -174,7 +308,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
             }
         };
         fetchData();
-    }, []);
+    }, [companyId]);
 
     const handleSendMessage = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
@@ -197,13 +331,18 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                 // If we have keywords, search for any of them in the title
                 if (keywords.length > 0) {
                     const orQuery = keywords.map(w => `title.ilike.%${w}%`).join(',');
-                    const { data } = await supabase
+                    let chatbotQuery = supabase
                         .from('kb_articles')
                         .select('id, title, summary, kb_categories(name)')
                         .eq('status', 'published')
                         .eq('visibility', 'public')
-                        .or(orQuery)
-                        .limit(3);
+                        .or(orQuery);
+
+                    if (companyId) {
+                        chatbotQuery = chatbotQuery.eq('company_id', companyId);
+                    }
+
+                    const { data } = await chatbotQuery.limit(3);
                     if (data) {
                         matches = data.map((a: any) => ({
                             id: a.id,
@@ -214,13 +353,18 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                     }
                 } else {
                     // Fallback to strict match if keywords are too short
-                    const { data } = await supabase
+                    let chatbotQuery = supabase
                         .from('kb_articles')
                         .select('id, title, summary, kb_categories(name)')
                         .eq('status', 'published')
                         .eq('visibility', 'public')
-                        .ilike('title', `%${rawQuery}%`)
-                        .limit(2);
+                        .ilike('title', `%${rawQuery}%`);
+
+                    if (companyId) {
+                        chatbotQuery = chatbotQuery.eq('company_id', companyId);
+                    }
+
+                    const { data } = await chatbotQuery.limit(2);
                     if (data) {
                         matches = data.map((a: any) => ({
                             id: a.id,
@@ -424,11 +568,13 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
             {/* Quick Actions */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {[
-                    { icon: AlertCircle, label: 'Incident List', sub: 'My ticket history', color: 'rose', action: () => onNavigate?.('my-tickets') },
-                    { icon: Package, label: 'Service Request', sub: 'Browse IT services', color: 'amber', action: () => onNavigate?.('service-requests') },
-                    { icon: GitBranch, label: 'Change Request', sub: 'Track change requests', color: 'violet', action: () => onNavigate?.('escalated-tickets') },
-                    { icon: HelpCircle, label: 'Help Center', sub: 'Guides & Support', color: 'teal', action: () => onNavigate?.('help-center') },
-                ].map((action, index) => (
+                    { icon: AlertCircle, label: 'Incident List', sub: 'My ticket history', color: 'rose', view: 'my-tickets', action: () => onNavigate?.('my-tickets') },
+                    { icon: Package, label: 'Service Request', sub: 'Browse IT services', color: 'amber', view: 'service-requests', action: () => onNavigate?.('service-requests') },
+                    { icon: GitBranch, label: 'Change Request', sub: 'Track change requests', color: 'violet', view: 'escalated-tickets', action: () => onNavigate?.('escalated-tickets') },
+                    { icon: HelpCircle, label: 'Help Center', sub: 'Guides & Support', color: 'teal', view: 'help-center', action: () => onNavigate?.('help-center') },
+                ]
+                .filter(action => isViewAccessible(action.view))
+                .map((action, index) => (
                     <button
                         key={index}
                         onClick={action.action}
@@ -465,31 +611,35 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                                 <X size={20} />
                             </button>
                         </div>
-                        <div className="p-6 grid grid-cols-2 gap-4">
-                            <button
-                                onClick={() => {
-                                    setSelectionType(null);
-                                    onNavigate?.('create-incident');
-                                }}
-                                className="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-dashed border-gray-200 hover:border-indigo-500 hover:bg-indigo-50 transition-all group"
-                            >
-                                <div className="p-3 bg-indigo-100 text-indigo-600 rounded-lg group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                                    <AlertCircle size={24} />
-                                </div>
-                                <span className="font-bold text-gray-700 group-hover:text-indigo-700">Incident</span>
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setSelectionType(null);
-                                    onNavigate?.('service-requests');
-                                }}
-                                className="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-dashed border-gray-200 hover:border-indigo-500 hover:bg-indigo-50 transition-all group"
-                            >
-                                <div className="p-3 bg-purple-100 text-purple-600 rounded-lg group-hover:bg-purple-600 group-hover:text-white transition-colors">
-                                    <Package size={24} />
-                                </div>
-                                <span className="font-bold text-gray-700 group-hover:text-purple-700">Service Request</span>
-                            </button>
+                        <div className={`p-6 grid ${isViewAccessible('my-tickets') && isViewAccessible('service-requests') ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
+                            {isViewAccessible('my-tickets') && (
+                                <button
+                                    onClick={() => {
+                                        setSelectionType(null);
+                                        onNavigate?.('create-incident');
+                                    }}
+                                    className="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-dashed border-gray-200 hover:border-indigo-500 hover:bg-indigo-50 transition-all group"
+                                >
+                                    <div className="p-3 bg-indigo-100 text-indigo-600 rounded-lg group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                                        <AlertCircle size={24} />
+                                    </div>
+                                    <span className="font-bold text-gray-700 group-hover:text-indigo-700">Incident</span>
+                                </button>
+                            )}
+                            {isViewAccessible('service-requests') && (
+                                <button
+                                    onClick={() => {
+                                        setSelectionType(null);
+                                        onNavigate?.('service-requests');
+                                    }}
+                                    className="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-dashed border-gray-200 hover:border-indigo-500 hover:bg-indigo-50 transition-all group"
+                                >
+                                    <div className="p-3 bg-purple-100 text-purple-600 rounded-lg group-hover:bg-purple-600 group-hover:text-white transition-colors">
+                                        <Package size={24} />
+                                    </div>
+                                    <span className="font-bold text-gray-700 group-hover:text-purple-700">Service Request</span>
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>

@@ -12,6 +12,13 @@ export default defineConfig(({ mode }) => {
         usePolling: true,
         interval: 100,
       },
+      proxy: {
+        '/modena-api': {
+          target: 'http://192.168.0.41:9501',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/modena-api/, ''),
+        }
+      },
     },
     plugins: [react()],
     define: {

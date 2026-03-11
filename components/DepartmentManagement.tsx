@@ -530,7 +530,7 @@ const DepartmentManagement: React.FC = () => {
                                                 />
                                             </div>
                                             <div className="flex flex-wrap gap-2">
-                                                {formData.services.map((service, idx) => (
+                                                {formData.services.filter(s => !s.startsWith('__type:')).map((service, idx) => (
                                                     <div key={idx} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs font-medium border border-indigo-100">
                                                         <span>{service}</span>
                                                         {(!isDeptAdmin || (isDeptAdmin && editingDepartment?.company_id === currentUser?.company_id)) && (
@@ -538,8 +538,11 @@ const DepartmentManagement: React.FC = () => {
                                                                 type="button"
                                                                 onClick={() => {
                                                                     const newServices = [...formData.services];
-                                                                    newServices.splice(idx, 1);
-                                                                    setFormData({ ...formData, services: newServices });
+                                                                    const originalIdx = newServices.indexOf(service);
+                                                                    if (originalIdx !== -1) {
+                                                                        newServices.splice(originalIdx, 1);
+                                                                        setFormData({ ...formData, services: newServices });
+                                                                    }
                                                                 }}
                                                                 className="hover:text-indigo-900"
                                                             >
@@ -550,6 +553,38 @@ const DepartmentManagement: React.FC = () => {
                                                 ))}
                                             </div>
                                         </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-3">Module Access</label>
+                                        <div className="grid grid-cols-1 gap-2 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100/50">
+                                            {['Incident', 'Service Request', 'Change Request'].map((type) => {
+                                                const isChecked = formData.services.includes(`__type:${type}`);
+                                                return (
+                                                    <label key={type} className="flex items-center gap-3 cursor-pointer group">
+                                                        <div className="relative flex items-center">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={isChecked}
+                                                                disabled={isDeptAdmin && editingDepartment?.company_id !== currentUser?.company_id}
+                                                                onChange={(e) => {
+                                                                    const tag = `__type:${type}`;
+                                                                    if (e.target.checked) {
+                                                                        setFormData({ ...formData, services: [...formData.services, tag] });
+                                                                    } else {
+                                                                        setFormData({ ...formData, services: formData.services.filter(s => s !== tag) });
+                                                                    }
+                                                                }}
+                                                                className="w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 transition-all cursor-pointer disabled:cursor-not-allowed"
+                                                            />
+                                                        </div>
+                                                        <span className={`text-sm font-bold transition-colors ${isChecked ? 'text-indigo-900' : 'text-gray-500 group-hover:text-gray-700'}`}>
+                                                            {type}
+                                                        </span>
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                        <p className="text-[10px] text-gray-400 mt-2 ml-1 italic">Tentukan tipe tiket yang diizinkan untuk departemen ini. Jika tidak ada yang dipilih, maka semua akan aktif secara default.</p>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-semibold text-gray-700 mb-1.5">SLA Priority Change Mode</label>
