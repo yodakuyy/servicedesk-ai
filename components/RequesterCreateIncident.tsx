@@ -217,27 +217,32 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 assignedGroupId = autoAssignResult.groupId;
                 assignedAgentId = autoAssignResult.agentId;
             } else {
+                // Fallback to Category default group
+                // We let the Database Trigger handle Round Robin and Supervisor-first logic
+                // based on the category's assignment_strategy and the group's settings.
                 let targetGroupId = null;
-                let strategy = 'manual';
                 let currentCatId: string | null = category_id;
                 let depth = 0;
 
                 while (currentCatId && !targetGroupId && depth < 5) {
-                    const { data: catData } = await supabase.from('ticket_categories').select('default_group_id, parent_id, assignment_strategy').eq('id', currentCatId).single();
+                    const { data: catData } = await supabase
+                        .from('ticket_categories')
+                        .select('default_group_id, parent_id')
+                        .eq('id', currentCatId)
+                        .single();
+
                     if (catData?.default_group_id) {
                         targetGroupId = catData.default_group_id;
-                        strategy = catData.assignment_strategy || 'manual';
-                    } else { currentCatId = catData?.parent_id || null; depth++; }
+                    } else { 
+                        currentCatId = catData?.parent_id || null; 
+                        depth++; 
+                    }
                 }
 
                 if (targetGroupId) {
                     assignedGroupId = targetGroupId;
-                    if (strategy === 'round_robin') {
-                        assignedAgentId = await getRoundRobinAgent(targetGroupId);
-                    } else {
-                        const { data: groupData } = await supabase.from('groups').select('assign_tasks_first, supervisor_id').eq('id', targetGroupId).single();
-                        if (groupData?.assign_tasks_first && groupData.supervisor_id) assignedAgentId = groupData.supervisor_id;
-                    }
+                    // We DO NOT set assignedAgentId here. 
+                    // The database trigger will handle the assignment based on category strategy.
                 }
             }
 

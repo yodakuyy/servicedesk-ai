@@ -1,5 +1,8 @@
 -- Add status column to profiles if it doesn't exist
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Available';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Active';
+
+-- Migration: Update existing 'Available' status to 'Active'
+UPDATE public.profiles SET status = 'Active' WHERE status = 'Available';
 
 -- Create out_of_office table
 CREATE TABLE IF NOT EXISTS public.out_of_office (

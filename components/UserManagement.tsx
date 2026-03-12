@@ -1308,10 +1308,12 @@ const UserManagement: React.FC = () => {
                 const isInternalSpecial = email === 'super.admin@xmail.com' || email.includes('@xmail.com');
                 
                 const roleName = (userRole?.role_name || userRole?.name || 'N/A').toLowerCase();
-                const isRequester = roleName === 'requester';
+                const roleId = String(user.role_id);
+                // User is a requester if role_id is 4 OR role name contains 'requester'
+                const isRequester = roleId === '4' || roleName.includes('requester');
 
                 // User is external ONLY if they are a Requester AND have an external email
-                // If they are Admin/Agent, they are always Internal regardless of email
+                // If they are Admin (1), Agent (2/3/5), etc., they are always Internal
                 const isExternal = isRequester && !isModenaEmail && !isInternalSpecial;
 
                 return {

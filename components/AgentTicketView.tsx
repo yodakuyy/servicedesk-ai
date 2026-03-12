@@ -274,7 +274,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
             (statusFilter === 'Pending'
                 ? ticket.ticket_statuses?.status_name.toLowerCase().includes('pending')
                 : ticket.ticket_statuses?.status_name === statusFilter);
-        const matchesPriority = priorityFilter === 'all' || ticket.priority?.toLowerCase() === priorityFilter.toLowerCase();
+        const matchesPriority = priorityFilter === 'all' || 
+            (priorityFilter === 'critical' 
+                ? (ticket.priority?.toLowerCase() === 'critical' || ticket.priority?.toLowerCase() === 'urgent')
+                : ticket.priority?.toLowerCase() === priorityFilter.toLowerCase());
         const matchesAgent =
             agentFilter === 'all' ||
             (agentFilter === 'unassigned' && !ticket.assigned_to) ||
@@ -1258,12 +1261,33 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
             // Always update ticket updated_at to bump it to top of list
             await supabase.from('tickets').update({ updated_at: new Date().toISOString() }).eq('id', selectedTicketId);
 
-            // Auto-update status to Pending (Zero Touch Workflow)
-            // If agent replies and status is either Open or In Progress, move to Pending
-            if (['Open', 'In Progress'].includes(selectedTicket.ticket_statuses?.status_name)) {
-                const pendingStatus = availableStatuses.find(s => s.status_name === 'Pending - Waiting For Requester');
-                if (pendingStatus) {
-                    await handleStatusUpdate(pendingStatus.status_id, true);
+            // Auto-update status (Zero Touch Workflow) - Respecting Workflow Mapping
+            const currentStatusName = selectedTicket.ticket_statuses?.status_name;
+            const openStatusNames = ['Open', 'In Progress', 'Analysis', 'Review', 'Drafting', 'Draft'];
+            
+            if (openStatusNames.includes(currentStatusName)) {
+                // 1. Get IDs of allowed target statuses from the workflow mapping
+                const hasDefinedWorkflow = workflowTransitions && workflowTransitions.length > 0;
+                const allowedToStatusIds = workflowTransitions
+                    .filter(t => t.from_status_id === selectedTicket.status_id)
+                    .map(t => t.to_status_id);
+
+                // 2. Identify a logical "waiting for requester" status that is actually allowed
+                const targetStatus = availableStatuses.find(s => {
+                    const name = (s.status_name || '').toLowerCase();
+                    const isAllowedByWorkflow = !hasDefinedWorkflow || allowedToStatusIds.includes(s.status_id);
+                    
+                    // Possible names for "waiting" states across different departments
+                    const isWaitingType = name === 'pending - waiting for requester' || 
+                                         name.includes('waiting for requester') || 
+                                         name === 'review by user' ||
+                                         name === 'pending';
+                                           
+                    return isAllowedByWorkflow && isWaitingType;
+                });
+
+                if (targetStatus && targetStatus.status_id !== selectedTicket.status_id) {
+                    await handleStatusUpdate(targetStatus.status_id, true);
                 }
             }
 
@@ -1558,12 +1582,19 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .from('tickets')
                 .select(`
                     *,
+                    is_category_verified,
                     ticket_statuses!fk_tickets_status (status_name),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
-                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
-                    group:groups!assignment_group_id (name)
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name, roles(role_name)),
+                    group:groups!assignment_group_id (
+                        id, name, company_id,
+                        company:company_id(company_name),
+                        group_sla_policies(sla_policy_id),
+                        business_hours(weekly_schedule)
+                    ),
+                    ticket_attachments (*)
                 `)
                 .eq('id', selectedTicketId)
                 .single();
@@ -1669,12 +1700,19 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .from('tickets')
                 .select(`
                     *,
+                    is_category_verified,
                     ticket_statuses!fk_tickets_status (status_name),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
-                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
-                    group:groups!assignment_group_id (id, name, company_id)
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name, roles(role_name)),
+                    group:groups!assignment_group_id (
+                        id, name, company_id,
+                        company:company_id(company_name),
+                        group_sla_policies(sla_policy_id),
+                        business_hours(weekly_schedule)
+                    ),
+                    ticket_attachments (*)
                 `)
                 .eq('id', selectedTicketId)
                 .single();
@@ -1835,12 +1873,19 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .from('tickets')
                 .select(`
                     *,
+                    is_category_verified,
                     ticket_statuses!fk_tickets_status (status_name),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name, roles(role_name)),
-                    group:groups!assignment_group_id (id, name, company_id)
+                    group:groups!assignment_group_id (
+                        id, name, company_id,
+                        company:company_id(company_name),
+                        group_sla_policies(sla_policy_id),
+                        business_hours(weekly_schedule)
+                    ),
+                    ticket_attachments (*)
                 `)
                 .eq('id', selectedTicketId)
                 .single();
@@ -1920,12 +1965,19 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .from('tickets')
                 .select(`
                     *,
+                    is_category_verified,
                     ticket_statuses!fk_tickets_status (status_name),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
-                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
-                    group:groups!assignment_group_id (id, name, company_id)
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name, roles(role_name)),
+                    group:groups!assignment_group_id (
+                        id, name, company_id,
+                        company:company_id(company_name),
+                        group_sla_policies(sla_policy_id),
+                        business_hours(weekly_schedule)
+                    ),
+                    ticket_attachments (*)
                 `)
                 .eq('id', selectedTicketId)
                 .single();
@@ -2392,10 +2444,10 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     className="w-full bg-white border border-gray-200 rounded px-2 py-1.5 text-[10px] font-bold text-gray-600 focus:ring-1 focus:ring-indigo-500/20 outline-none cursor-pointer"
                                 >
                                     <option value="all">All Priorities</option>
-                                    <option value="low">Low</option>
-                                    <option value="medium">Medium</option>
+                                    <option value="critical">Critical / Urgent</option>
                                     <option value="high">High</option>
-                                    <option value="urgent">Urgent</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="low">Low</option>
                                 </select>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
@@ -3337,7 +3389,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                             }`}>
                                                             {(() => {
                                                                 const p = selectedTicket.priority?.toLowerCase() || 'low';
-                                                                if (p === 'critical') return 'P1 - Critical';
+                                                                if (p === 'critical' || p === 'urgent') return 'P1 - Critical';
                                                                 if (p === 'high') return 'P2 - High';
                                                                 if (p === 'medium') return 'P3 - Medium';
                                                                 return 'P4 - Low';
@@ -3369,11 +3421,30 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                             </button>
                                                         </div>
                                                         <div className="grid grid-cols-2 gap-2">
-                                                            {['Critical', 'High', 'Medium', 'Low'].map(p => (
+                                                            {(() => {
+                                                                const allPriorities = ['Critical', 'High', 'Medium', 'Low'];
+                                                                const linkedSlaIds = selectedTicket.group?.group_sla_policies?.map((ug: any) => ug.sla_policy_id) || [];
+                                                                const activePolicyIds = new Set(slaPolicies.map((p: any) => p.id));
+                                                                
+                                                                // Filter based on SLA targets defined for the group's policies (must be active)
+                                                                if (linkedSlaIds.length > 0) {
+                                                                    const groupTargets = slaTargets.filter(t => 
+                                                                        linkedSlaIds.includes(t.sla_policy_id) && 
+                                                                        activePolicyIds.has(t.sla_policy_id)
+                                                                    );
+                                                                    if (groupTargets.length > 0) {
+                                                                        return allPriorities.filter(p => {
+                                                                            const slaP = p === 'Critical' ? 'Urgent' : p;
+                                                                            return groupTargets.some(t => t.priority.toLowerCase() === slaP.toLowerCase());
+                                                                        });
+                                                                    }
+                                                                }
+                                                                return allPriorities;
+                                                            })().map(p => (
                                                                 <button
                                                                     key={p}
                                                                     onClick={() => handlePriorityUpdate(p)}
-                                                                    className={`px-3 py-2 text-[11px] font-black rounded-lg border transition-all ${selectedTicket.priority?.toLowerCase() === p.toLowerCase()
+                                                                    className={`px-3 py-2 text-[11px] font-black rounded-lg border transition-all ${selectedTicket.priority?.toLowerCase() === p.toLowerCase() || (p === 'Critical' && selectedTicket.priority?.toLowerCase() === 'urgent')
                                                                         ? 'bg-indigo-600 text-white border-indigo-600'
                                                                         : p === 'Critical' ? 'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100'
                                                                             : p === 'High' ? 'bg-orange-50 text-orange-600 border-orange-200 hover:bg-orange-100'

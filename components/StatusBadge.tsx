@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type UserStatus = 'Available' | 'OOO' | 'Busy' | 'Inactive';
+export type UserStatus = 'Active' | 'OOO' | 'Busy' | 'Inactive';
 
 interface StatusBadgeProps {
     status: UserStatus | string;
@@ -11,9 +11,8 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, showLabel = true }) =
     const getStatusConfig = (s: string) => {
         switch (s.toLowerCase()) {
             case 'active':
-                return { color: 'bg-green-500', label: 'Active', icon: '🟢' };
             case 'available':
-                return { color: 'bg-green-500', label: 'Available', icon: '🟢' };
+                return { color: 'bg-green-500', label: 'Active', icon: '🟢' };
             case 'ooo':
             case 'out of office':
                 return { color: 'bg-red-500', label: 'Out of Office', icon: '🔴' };

@@ -372,22 +372,22 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                 assignedGroupId = autoAssignResult.groupId;
                 assignedAgentId = autoAssignResult.agentId;
             } else {
-                // Fallback to Category default group and assignment strategy
+                // Fallback to Category default group
+                // We let the Database Trigger handle Round Robin and Supervisor-first logic
+                // based on the category's assignment_strategy and the group's settings.
                 let targetGroupId = null;
-                let strategy = 'manual';
                 let currentCatId: string | null = selectedCategoryId;
                 let depth = 0;
 
                 while (currentCatId && !targetGroupId && depth < 5) {
                     const { data: catData } = await supabase
                         .from('ticket_categories')
-                        .select('default_group_id, parent_id, assignment_strategy, default_priority')
+                        .select('default_group_id, parent_id, default_priority')
                         .eq('id', currentCatId)
                         .single();
 
                     if (catData?.default_group_id) {
                         targetGroupId = catData.default_group_id;
-                        strategy = catData.assignment_strategy || 'manual';
                         if (catData.default_priority) finalPriority = catData.default_priority.toLowerCase();
                     } else {
                         if (catData?.default_priority && finalPriority === 'medium') {
@@ -400,20 +400,11 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
 
                 if (targetGroupId) {
                     assignedGroupId = targetGroupId;
-                    if (strategy === 'round_robin') {
-                        assignedAgentId = await getRoundRobinAgent(targetGroupId);
-                    } else {
-                        // Check if group has "assign_tasks_first" setting
-                        const { data: groupData } = await supabase
-                            .from('groups')
-                            .select('assign_tasks_first, supervisor_id')
-                            .eq('id', targetGroupId)
-                            .single();
-
-                        if (groupData?.assign_tasks_first && groupData.supervisor_id) {
-                            assignedAgentId = groupData.supervisor_id;
-                        }
-                    }
+                    // We DO NOT set assignedAgentId here. 
+                    // The database trigger public.tr_func_auto_assign_pic will:
+                    // 1. Check if category is 'round_robin' or 'manual'
+                    // 2. If RR, check if group wants supervisor first
+                    // 3. Assign accordingly.
                 }
             }
 

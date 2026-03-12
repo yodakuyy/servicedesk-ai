@@ -19,6 +19,7 @@ interface OOORequest {
    created_at: string;
    tickets_reassigned?: number;
    agent_name?: string;
+   created_by_name?: string;
 }
 
 interface TeamMember {
@@ -54,7 +55,7 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
 
    // Supervisor Filter States
    const [searchQuery, setSearchQuery] = useState('');
-   const [statusFilter, setStatusFilter] = useState<'All' | 'Available' | 'Out Of Office'>('All');
+   const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Out Of Office'>('All');
 
    // History Filter States
    const [historyFilters, setHistoryFilters] = useState({
@@ -124,8 +125,8 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
 
             // Auto-revert status if expired but still marked as OOO
             if (!activeData && (userProfile.status?.toUpperCase() === 'OOO' || userProfile.status === 'Out Of Office')) {
-               await supabase.from('profiles').update({ status: 'Available' }).eq('id', userProfile.id);
-               const updatedProfile = { ...userProfile, status: 'Available' };
+               await supabase.from('profiles').update({ status: 'Active' }).eq('id', userProfile.id);
+               const updatedProfile = { ...userProfile, status: 'Active' };
                localStorage.setItem('profile', JSON.stringify(updatedProfile));
                setUserProfile(updatedProfile);
             }
@@ -175,10 +176,10 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
 
                let ooo_until = undefined;
                let ooo_days = undefined;
-               let memberStatus = m.status || 'Available';
+               let memberStatus = m.status || 'Active';
 
-               if (memberStatus.toLowerCase() === 'active') memberStatus = 'Available';
-               if (memberStatus.toLowerCase() === 'available') memberStatus = 'Available';
+               if (memberStatus.toLowerCase() === 'active') memberStatus = 'Active';
+               if (memberStatus.toLowerCase() === 'available') memberStatus = 'Active';
 
                if (memberStatus.toUpperCase() === 'OOO' || memberStatus === 'Out Of Office') {
                   const { data: oooItem } = await supabase
@@ -198,10 +199,10 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
                         const diffTime = Math.abs(endDate.getTime() - new Date().getTime());
                         ooo_days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                      } else {
-                        memberStatus = 'Available';
+                        memberStatus = 'Active';
                         const syncStatus = async () => {
                            try {
-                              await supabase.from('profiles').update({ status: 'Available' }).eq('id', m.id);
+                              await supabase.from('profiles').update({ status: 'Active' }).eq('id', m.id);
                               if (oooItem) {
                                  await supabase.from('out_of_office').update({ status: 'Ended', ended_at: new Date().toISOString() }).eq('id', oooItem.id);
                               }
@@ -212,8 +213,8 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
                         syncStatus();
                      }
                   } else {
-                     memberStatus = 'Available';
-                     supabase.from('profiles').update({ status: 'Available' }).eq('id', m.id).then(({ error }) => {
+                     memberStatus = 'Active';
+                     supabase.from('profiles').update({ status: 'Active' }).eq('id', m.id).then(({ error }) => {
                         if (error) console.error('Error syncing profile status:', error);
                      });
                   }
@@ -315,7 +316,7 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
    const handleEndOOO = async (reqId: string, userId: string) => {
       const result = await Swal.fire({
          title: 'End OOO Early?',
-         text: "This will set your status back to Available.",
+         text: "This will set your status back to Active.",
          icon: 'question',
          showCancelButton: true,
          confirmButtonText: 'Yes, End Now',
@@ -336,13 +337,13 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
 
             await supabase
                .from('profiles')
-               .update({ status: 'Available' })
+               .update({ status: 'Active' })
                .eq('id', userId);
 
             Swal.fire({
                icon: 'success',
                title: 'OOO Ended',
-               text: 'You are now marked as Available.',
+               text: 'You are now marked as Active.',
             });
 
             setIsModalOpen(false);
@@ -356,7 +357,7 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
    const handleCancelOOO = async (reqId: string, userId: string) => {
       const result = await Swal.fire({
          title: 'Cancel OOO Record?',
-         text: "This will void the record and set status back to Available.",
+         text: "This will void the record and set status back to Active.",
          icon: 'warning',
          showCancelButton: true,
          confirmButtonText: 'Yes, Cancel Record',
@@ -373,11 +374,11 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
 
             await supabase
                .from('profiles')
-               .update({ status: 'Available' })
+               .update({ status: 'Active' })
                .eq('id', userId);
 
             if (userId === userProfile.id) {
-               const updatedProfile = { ...userProfile, status: 'Available' };
+               const updatedProfile = { ...userProfile, status: 'Active' };
                localStorage.setItem('profile', JSON.stringify(updatedProfile));
                setUserProfile(updatedProfile);
             }
@@ -528,7 +529,7 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
                      <div className="space-y-4">
                         <div className="flex items-center gap-8">
                            <span className="text-sm text-gray-500 w-40">Status</span>
-                           <StatusBadge status={activeOOO ? 'Out Of Office' : 'Available'} />
+                           <StatusBadge status={activeOOO ? 'Out Of Office' : 'Active'} />
                         </div>
                         <div className="flex items-center gap-8">
                            <span className="text-sm text-gray-500 w-40">Current Out Of Office</span>
@@ -685,7 +686,7 @@ const OutOfOffice: React.FC<OutOfOfficeProps> = ({ viewMode = 'agent' }) => {
                   <div className="flex gap-4">
                      {/* Quick Filters */}
                      <div className="flex bg-gray-100 p-1 rounded-xl">
-                        {(['All', 'Available', 'Out Of Office'] as const).map((s) => (
+                        {(['All', 'Active', 'Out Of Office'] as const).map((s) => (
                            <button
                               key={s}
                               onClick={() => setStatusFilter(s)}
