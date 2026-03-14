@@ -304,19 +304,21 @@ const WorkflowMapping: React.FC = () => {
                 // 2a. Fetch template statuses from NEW TABLE: workflow_template_statuses
                 const { data: templateStatuses, error: statusErr } = await supabase
                     .from('workflow_template_statuses')
-                    .select('status_id, sort_order')
+                    .select('status_id, sort_order, auto_reply_transition_to_status_id, require_reason_on_entry')
                     .eq('workflow_template_id', selectedTemplateId);
 
                 if (statusErr) throw statusErr;
 
                 // 2b. Insert statuses into department workflow (workflow_statuses table)
                 // Note: workflow_statuses.workflow_template_id references workflow_templates, not department_workflows
-                // So we use selectedTemplateId (the actual template ID)
+                // Wait, it is department ID. We must map it precisely.
                 if (templateStatuses && templateStatuses.length > 0) {
                     const statusInserts = templateStatuses.map(s => ({
-                        workflow_template_id: selectedTemplateId, // FK to workflow_templates
+                        workflow_template_id: newWorkflow.workflow_id, // FK to department_workflows
                         status_id: s.status_id,
-                        sort_order: s.sort_order
+                        sort_order: s.sort_order,
+                        auto_reply_transition_to_status_id: s.auto_reply_transition_to_status_id,
+                        require_reason_on_entry: s.require_reason_on_entry
                     }));
 
                     const { data: insertedStatuses, error: insertErr } = await supabase
@@ -478,7 +480,7 @@ const WorkflowMapping: React.FC = () => {
                         workflow_template_status_id,
                         workflow_template_id,
                         status_id,
-                        ticket_statuses (
+                        ticket_statuses:status_id (
                             status_name,
                             status_code,
                             status_category,
@@ -505,7 +507,7 @@ const WorkflowMapping: React.FC = () => {
                         workflow_status_id,
                         workflow_template_id,
                         status_id,
-                        ticket_statuses (
+                        ticket_statuses:status_id (
                             status_name,
                             status_code,
                             status_category,
@@ -574,7 +576,7 @@ const WorkflowMapping: React.FC = () => {
                         sort_order,
                         position_x,
                         position_y,
-                        ticket_statuses (
+                        ticket_statuses:status_id (
                             status_name,
                             status_code,
                             status_category,
@@ -606,7 +608,7 @@ const WorkflowMapping: React.FC = () => {
                         workflow_status_id,
                         workflow_template_id,
                         status_id,
-                        ticket_statuses (
+                        ticket_statuses:status_id (
                             status_name,
                             status_code,
                             status_category,

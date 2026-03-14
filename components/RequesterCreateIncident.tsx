@@ -134,6 +134,10 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
         return 'medium';
     };
 
+    const isValidEmail = (email: string) => {
+        return /\S+@\S+\.\S+/.test(email);
+    };
+
     const getEffectivePriority = (selectedCatId: string) => {
         let currentPathId: string | null = selectedCatId;
         while (currentPathId) {
@@ -189,6 +193,19 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
         setErrorMessage(null);
 
         if (!openStatusId) { setErrorMessage("System error: Status missing."); setIsSubmitting(false); return; }
+
+        if (affectedUser === 'someone_else') {
+            if (!someoneElseDetails.fullName.trim() || !someoneElseDetails.email.trim()) {
+                setErrorMessage("Full Name and Email Address are required for someone else.");
+                setIsSubmitting(false);
+                return;
+            }
+            if (!isValidEmail(someoneElseDetails.email)) {
+                setErrorMessage("Please enter a valid email format (e.g., user@example.com).");
+                setIsSubmitting(false);
+                return;
+            }
+        }
 
         let category_id = categoryId || null;
         let service_id = null;
@@ -330,8 +347,15 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
 
                     {affectedUser === 'someone_else' && (
                         <div className="grid grid-cols-2 gap-4 pt-4 animate-in slide-in-from-top-2">
-                            <input placeholder="Email Address" type="email" required value={someoneElseDetails.email} onChange={e => setSomeoneElseDetails(p => ({ ...p, email: e.target.value }))} className="p-3 bg-gray-50 border-none rounded-xl text-sm focus:ring-2 focus:ring-indigo-500" />
-                            <input placeholder="Full Name" type="text" required value={someoneElseDetails.fullName} onChange={e => setSomeoneElseDetails(p => ({ ...p, fullName: e.target.value }))} className="p-3 bg-gray-50 border-none rounded-xl text-sm focus:ring-2 focus:ring-indigo-500" />
+                            <div className="space-y-1">
+                                <input placeholder="Email Address *" type="email" required value={someoneElseDetails.email} onChange={e => setSomeoneElseDetails(p => ({ ...p, email: e.target.value }))} className={`w-full p-3 bg-gray-50 border-none rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 ${someoneElseDetails.email && !isValidEmail(someoneElseDetails.email) ? 'ring-2 ring-red-500/50' : ''}`} />
+                                {someoneElseDetails.email && !isValidEmail(someoneElseDetails.email) && (
+                                    <p className="text-[10px] text-red-500 font-bold px-1">Invalid email format</p>
+                                )}
+                            </div>
+                            <div className="space-y-1">
+                                <input placeholder="Full Name *" type="text" required value={someoneElseDetails.fullName} onChange={e => setSomeoneElseDetails(p => ({ ...p, fullName: e.target.value }))} className="w-full p-3 bg-gray-50 border-none rounded-xl text-sm focus:ring-2 focus:ring-indigo-500" />
+                            </div>
                         </div>
                     )}
                 </section>
@@ -472,7 +496,17 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                     )
                 }
 
-                <button type="submit" disabled={isSubmitting || !subject || !description || !categoryId} className="w-full p-5 bg-indigo-600 text-white rounded-3xl font-black text-xl shadow-2xl shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:bg-gray-400 transition-all flex items-center justify-center gap-3">
+                <button 
+                    type="submit" 
+                    disabled={
+                        isSubmitting || 
+                        !subject || 
+                        !description || 
+                        !categoryId || 
+                        (affectedUser === 'someone_else' && (!someoneElseDetails.fullName || !someoneElseDetails.email || !isValidEmail(someoneElseDetails.email)))
+                    } 
+                    className="w-full p-5 bg-indigo-600 text-white rounded-3xl font-black text-xl shadow-2xl shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:bg-gray-400 transition-all flex items-center justify-center gap-3"
+                >
                     {isSubmitting ? 'Submitting...' : 'Submit Ticket'} <Send size={24} />
                 </button>
             </form >

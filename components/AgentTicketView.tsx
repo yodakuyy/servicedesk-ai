@@ -1375,23 +1375,77 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
         // Find status name
         const statusObj = availableStatuses.find(s => s.status_id === newStatusId);
-        const newStatusName = statusObj?.status_name;
+        const newStatusName = statusObj?.status_name || '';
         let remark = '';
+        let requireReason = false;
 
-        // specialized handling for Pending / Resolved / Canceled
-        if (!skipRemark && (newStatusName.toLowerCase().includes('pending') || newStatusName === 'Resolved' || newStatusName === 'Canceled')) {
+        // Check if workflow requires reason on entry
+        if (selectedTicket?.group?.company_id) {
+            try {
+                const { data: wf } = await supabase
+                    .from('department_workflows')
+                    .select('workflow_id, workflow_name')
+                    .eq('department_id', selectedTicket.group.company_id)
+                    .eq('is_active', true)
+                    .single();
+
+                if (wf) {
+                    let templateId = null;
+                    if (wf.workflow_name?.includes('|template:')) {
+                        templateId = wf.workflow_name.split('|template:')[1];
+                    }
+
+                    if (templateId) {
+                        const { data: ws } = await supabase
+                            .from('workflow_template_statuses')
+                            .select('require_reason_on_entry')
+                            .eq('workflow_template_id', templateId)
+                            .eq('status_id', newStatusId)
+                            .single();
+                        
+                        if (ws?.require_reason_on_entry) {
+                            requireReason = true;
+                        }
+                    } else {
+                        const { data: ws } = await supabase
+                            .from('workflow_statuses')
+                            .select('require_reason_on_entry')
+                            .eq('workflow_template_id', wf.workflow_id)
+                            .eq('status_id', newStatusId)
+                            .single();
+                        
+                        if (ws?.require_reason_on_entry) {
+                            requireReason = true;
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('Error checking workflow status rule:', err);
+            }
+        }
+
+        // specialized handling for Pending / Resolved / Canceled or workflow required reason
+        if (!skipRemark && (requireReason || newStatusName.toLowerCase().includes('pending') || newStatusName === 'Resolved' || newStatusName === 'Canceled')) {
             // @ts-ignore
             const Swal = (await import('sweetalert2')).default;
             const { value: text } = await Swal.fire({
                 title: `${newStatusName} Remark`,
+                html: `<p class="text-sm text-gray-500 mb-2">Please provide a reason or remark for setting the status to <strong>${newStatusName}</strong>.</p>`,
                 input: 'textarea',
-                inputLabel: `Please provide a reason or remark for setting status to ${newStatusName}`,
                 inputPlaceholder: 'Type your remark here...',
                 showCancelButton: true,
                 confirmButtonText: 'Update Status',
+                confirmButtonColor: '#4f46e5', // indigo-600
+                cancelButtonColor: '#9ca3af', // gray-400
+                customClass: {
+                    title: 'text-xl font-bold text-gray-800',
+                    input: 'border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500 w-[90%] mx-auto',
+                    confirmButton: 'font-bold shadow-sm rounded-lg',
+                    cancelButton: 'font-bold shadow-sm rounded-lg'
+                },
                 inputValidator: (value) => {
-                    if (!value) {
-                        return 'You need to write a remark!'
+                    if (!value?.trim()) {
+                        return 'You must provide a remark to proceed!'
                     }
                 }
             });

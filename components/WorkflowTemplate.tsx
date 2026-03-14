@@ -17,7 +17,8 @@ import {
     Settings,
     MoreVertical,
     AlertTriangle,
-    Info
+    Info,
+    Zap
 } from 'lucide-react';
 
 // --- Interfaces ---
@@ -51,6 +52,8 @@ interface WorkflowNode {
     isFinal: boolean;
     x: number;
     y: number;
+    autoReplyStatusId?: string;
+    requireReason?: boolean;
 }
 
 interface WorkflowTransition {
@@ -213,6 +216,7 @@ const WorkflowBuilder = ({
     const [isDrawingMode, setIsDrawingMode] = useState(false);
     const [drawingStartNodeId, setDrawingStartNodeId] = useState<string | null>(null);
     const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+    const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
     useEffect(() => {
         fetchData();
@@ -234,7 +238,9 @@ const WorkflowBuilder = ({
                     ticket_statuses:status_id (status_name, status_code, status_category, sla_behavior, is_final),
                     sort_order,
                     position_x,
-                    position_y
+                    position_y,
+                    auto_reply_transition_to_status_id,
+                    require_reason_on_entry
                 `)
                 .eq('workflow_template_id', templateId)
                 .order('sort_order');
@@ -263,7 +269,9 @@ const WorkflowBuilder = ({
                     slaBehavior: ws.ticket_statuses?.sla_behavior || 'run',
                     isFinal: ws.ticket_statuses?.is_final || false,
                     x: ws.position_x ?? (50 + (index % 4) * 220), // Use saved position or fallback
-                    y: ws.position_y ?? (50 + Math.floor(index / 4) * 150)
+                    y: ws.position_y ?? (50 + Math.floor(index / 4) * 150),
+                    autoReplyStatusId: ws.auto_reply_transition_to_status_id || undefined,
+                    requireReason: ws.require_reason_on_entry || false
                 }));
             }
 
@@ -503,101 +511,111 @@ const WorkflowBuilder = ({
                         {/* Render Transitions (Curved Lines) */}
                         <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
                             <defs>
-                                {/* Define arrow markers for each color */}
-                                {['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#94a3b8'].map((color, i) => (
-                                    <marker
-                                        key={`arrow-${i}`}
-                                        id={`arrowhead-${i}`}
-                                        markerWidth="10"
-                                        markerHeight="7"
-                                        refX="9"
-                                        refY="3.5"
-                                        orient="auto"
-                                    >
-                                        <polygon points="0 0, 10 3.5, 0 7" fill={color} />
-                                    </marker>
-                                ))}
+                                <marker
+                                    id="arrowhead-clean"
+                                    markerWidth="10"
+                                    markerHeight="7"
+                                    refX="9"
+                                    refY="3.5"
+                                    orient="auto"
+                                >
+                                    <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
+                                </marker>
+                                <marker
+                                    id="arrowhead-special"
+                                    markerWidth="10"
+                                    markerHeight="7"
+                                    refX="9"
+                                    refY="3.5"
+                                    orient="auto"
+                                >
+                                    <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1" />
+                                </marker>
                             </defs>
                             {transitions.map((t, index) => {
                                 const from = nodes.find(n => n.id === t.fromNodeId);
                                 const to = nodes.find(n => n.id === t.toNodeId);
                                 if (!from || !to) return null;
 
-                                // Color palette for transitions
-                                const colors = ['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899'];
-                                const color = colors[index % colors.length];
-                                const arrowId = `arrowhead-${index % 5}`;
+                                // Check if this is a two-way (bidirectional) transition
+                                const isBidirectional = transitions.some(
+                                    rev => rev.fromNodeId === t.toNodeId && rev.toNodeId === t.fromNodeId
+                                );
+                                
+                                // Check if this is an auto-action transition
+                                const isAuto = from.autoReplyStatusId === to.statusId;
 
-                                // Calculate edge points (not center)
-                                const NODE_WIDTH = 180;
-                                const NODE_HEIGHT = 60;
+                                const isSpecial = isBidirectional || isAuto;
+
+                                // Color palette for transitions - indigo for special, gray for normal
+                                const color = isSpecial ? '#6366f1' : '#94a3b8'; // Indigo / Slate 400
+                                const arrowId = isSpecial ? 'arrowhead-special' : 'arrowhead-clean';
+
+                                // Node dimensions
+                                const NODE_WIDTH = 160;
+                                const NODE_HEIGHT = 65;
 
                                 // Determine direction and connection points
                                 let startX, startY, endX, endY;
                                 const dx = to.x - from.x;
                                 const dy = to.y - from.y;
 
-                                // Connect from right edge to left edge if going right
                                 if (Math.abs(dx) > Math.abs(dy)) {
                                     if (dx > 0) {
-                                        // Going right
                                         startX = from.x + NODE_WIDTH;
-                                        startY = from.y + NODE_HEIGHT / 2;
-                                        endX = to.x;
-                                        endY = to.y + NODE_HEIGHT / 2;
+                                        endX = to.x - 3; // arrowhead offset
                                     } else {
-                                        // Going left
                                         startX = from.x;
-                                        startY = from.y + NODE_HEIGHT / 2;
-                                        endX = to.x + NODE_WIDTH;
-                                        endY = to.y + NODE_HEIGHT / 2;
+                                        endX = to.x + NODE_WIDTH + 3;
+                                    }
+                                    startY = from.y + NODE_HEIGHT / 2;
+                                    endY = to.y + NODE_HEIGHT / 2;
+                                } else {
+                                    if (dy > 0) {
+                                        startY = from.y + NODE_HEIGHT;
+                                        endY = to.y - 3;
+                                    } else {
+                                        startY = from.y;
+                                        endY = to.y + NODE_HEIGHT + 3;
+                                    }
+                                    startX = from.x + NODE_WIDTH / 2;
+                                    endX = to.x + NODE_WIDTH / 2;
+                                }
+
+                                const midX = startX + (endX - startX) / 2;
+                                const midY = startY + (endY - startY) / 2;
+
+                                let pathD = '';
+                                if (Math.abs(dx) > Math.abs(dy)) {
+                                    if (dx > 0) {
+                                        // Rightwards
+                                        pathD = `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX} ${endY}`;
+                                    } else {
+                                        // Leftwards (loop back)
+                                        const yOffset = dy > 0 ? 35 : -35;
+                                        pathD = `M ${startX} ${startY} L ${startX - 20} ${startY} L ${startX - 20} ${startY + yOffset} L ${endX + 20} ${startY + yOffset} L ${endX + 20} ${endY} L ${endX} ${endY}`;
                                     }
                                 } else {
                                     if (dy > 0) {
-                                        // Going down
-                                        startX = from.x + NODE_WIDTH / 2;
-                                        startY = from.y + NODE_HEIGHT;
-                                        endX = to.x + NODE_WIDTH / 2;
-                                        endY = to.y;
+                                        // Downwards
+                                        pathD = `M ${startX} ${startY} L ${startX} ${midY} L ${endX} ${midY} L ${endX} ${endY}`;
                                     } else {
-                                        // Going up
-                                        startX = from.x + NODE_WIDTH / 2;
-                                        startY = from.y;
-                                        endX = to.x + NODE_WIDTH / 2;
-                                        endY = to.y + NODE_HEIGHT;
+                                        // Upwards (loop back)
+                                        const xOffset = dx > 0 ? 35 : -35;
+                                        pathD = `M ${startX} ${startY} L ${startX} ${startY - 20} L ${startX + xOffset} ${startY - 20} L ${startX + xOffset} ${endY + 20} L ${endX} ${endY + 20} L ${endX} ${endY}`;
                                     }
                                 }
 
-                                // Calculate bezier control points for curved line
-                                const midX = (startX + endX) / 2;
-                                const midY = (startY + endY) / 2;
-
-                                // Add curve based on direction
-                                let ctrl1X, ctrl1Y, ctrl2X, ctrl2Y;
-                                if (Math.abs(dx) > Math.abs(dy)) {
-                                    // Horizontal dominant - curve vertically
-                                    ctrl1X = startX + (endX - startX) * 0.4;
-                                    ctrl1Y = startY;
-                                    ctrl2X = startX + (endX - startX) * 0.6;
-                                    ctrl2Y = endY;
-                                } else {
-                                    // Vertical dominant - curve horizontally
-                                    ctrl1X = startX;
-                                    ctrl1Y = startY + (endY - startY) * 0.4;
-                                    ctrl2X = endX;
-                                    ctrl2Y = startY + (endY - startY) * 0.6;
-                                }
-
-                                const pathD = `M ${startX} ${startY} C ${ctrl1X} ${ctrl1Y}, ${ctrl2X} ${ctrl2Y}, ${endX} ${endY}`;
-
                                 return (
-                                    <g key={t.id} className="transition-group">
-                                        {/* Main curved path */}
+                                    <g key={t.id} className={`transition-group ${isSpecial ? 'z-20 relative' : ''}`}>
+                                        {/* Main Orthogonal Path */}
                                         <path
                                             d={pathD}
                                             fill="none"
                                             stroke={color}
-                                            strokeWidth="2.5"
+                                            strokeWidth="2"
+                                            strokeLinejoin="round"
+                                            strokeDasharray={isAuto ? "6,4" : "none"}
                                             markerEnd={`url(#${arrowId})`}
                                             className="transition-all"
                                         />
@@ -607,6 +625,7 @@ const WorkflowBuilder = ({
                                             fill="none"
                                             stroke="transparent"
                                             strokeWidth="20"
+                                            strokeLinejoin="round"
                                             className="pointer-events-auto cursor-pointer"
                                         />
                                         {/* Delete button at midpoint */}
@@ -657,13 +676,13 @@ const WorkflowBuilder = ({
                             let slaBadgeText = '';
 
                             if (node.slaBehavior === 'run') {
-                                nodeColors = 'bg-green-50 border-green-300';
+                                nodeColors = 'border-green-500';
                                 slaBadgeText = 'Running';
                             } else if (node.slaBehavior === 'pause') {
-                                nodeColors = 'bg-yellow-50 border-yellow-300';
+                                nodeColors = 'border-amber-500';
                                 slaBadgeText = 'Paused';
                             } else {
-                                nodeColors = 'bg-red-50 border-red-300';
+                                nodeColors = 'border-red-500';
                                 slaBadgeText = 'Stopped';
                             }
 
@@ -678,12 +697,14 @@ const WorkflowBuilder = ({
                                         if (isDrawingMode) {
                                             if (!drawingStartNodeId) setDrawingStartNodeId(node.id);
                                             else handleNodeClick(node.id);
+                                        } else {
+                                            setSelectedNodeId(node.id);
                                         }
                                     }}
                                     style={{ left: node.x, top: node.y }}
-                                    className={`absolute w-[180px] z-10 rounded-xl shadow-sm border-2 transition-all group
+                                    className={`absolute w-[160px] bg-white z-10 rounded-lg shadow-sm border border-gray-200 border-l-4 transition-all group
                                     ${nodeColors}
-                                    ${drawingStartNodeId === node.id ? 'ring-2 ring-indigo-500 ring-offset-2' : ''}
+                                    ${(drawingStartNodeId === node.id || selectedNodeId === node.id) ? 'ring-2 ring-indigo-500 ring-offset-2' : ''}
                                     ${isDrawingMode ? 'cursor-crosshair' : 'cursor-move hover:shadow-md'}
                                 `}
                                 >
@@ -696,32 +717,32 @@ const WorkflowBuilder = ({
 
                                     {/* Final Badge */}
                                     {node.isFinal && (
-                                        <div className="absolute -top-3 right-3 px-2 py-0.5 bg-red-600 text-white text-[10px] font-bold rounded">
+                                        <div className="absolute -top-3 right-3 px-2 py-0.5 bg-gray-600 text-white text-[10px] font-bold rounded">
                                             Final
                                         </div>
                                     )}
 
-                                    <div className="p-3 pt-4">
-                                        <div className="flex justify-between items-start">
-                                            <div className="flex items-center gap-2">
-                                                <GripVertical size={12} className="text-gray-300 opacity-50" />
-                                                <span className="font-bold text-sm text-gray-800">{node.statusName}</span>
+                                    <div className="p-2.5">
+                                        <div className="flex justify-between items-start mb-1">
+                                            <div className="flex items-center gap-1.5">
+                                                <GripVertical size={14} className="text-gray-300 opacity-50" />
+                                                <span className="font-semibold text-xs text-gray-800 leading-tight">{node.statusName}</span>
                                             </div>
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); handleRemoveNode(node.id); }}
-                                                className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                                             >
                                                 <X size={14} />
                                             </button>
                                         </div>
-                                        <div className="flex items-center gap-2 mt-2">
+                                        <div className="flex items-center gap-1.5 pl-5">
                                             {/* Category Badge */}
-                                            <span className="text-[10px] capitalize font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+                                            <span className="text-[9px] capitalize px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
                                                 {node.category}
                                             </span>
                                             {/* SLA Badge (optional, smaller) */}
                                             {node.slaBehavior === 'pause' && (
-                                                <span className="text-[9px] uppercase font-bold text-yellow-600">
+                                                <span className="text-[9px] uppercase font-bold text-amber-600">
                                                     ⏸ Paused
                                                 </span>
                                             )}
@@ -744,9 +765,26 @@ const WorkflowBuilder = ({
                             </div>
                         )}
 
+                        {/* Legend */}
+                        <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg p-3 shadow-sm flex flex-col gap-2 text-xs z-20 pointer-events-none">
+                            <div className="font-semibold text-gray-600 mb-1 uppercase tracking-wider text-[10px]">Line Legend</div>
+                            <div className="flex items-center gap-2 text-gray-600 font-medium">
+                                <div className="w-6 h-0.5 bg-slate-400"></div>
+                                <span>Standard (Manual)</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-gray-600 font-medium">
+                                <div className="w-6 h-0.5 bg-indigo-500"></div>
+                                <span>Bidirectional</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-gray-600 font-medium">
+                                <div className="w-6 h-0.5 border-t-2 border-dashed border-indigo-500"></div>
+                                <span>Auto-Action on Reply</span>
+                            </div>
+                        </div>
+
                         {/* Bottom Info Banner */}
-                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg px-4 py-2 shadow-sm flex items-center gap-2 text-gray-600 text-sm">
-                            <span className="text-yellow-500">💡</span>
+                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg px-4 py-2 shadow-sm flex items-center gap-2 text-gray-600 text-sm z-20 pointer-events-none">
+                            <span className="text-amber-500">💡</span>
                             <span>
                                 <strong>Template Mode:</strong> Everything shown here is for reference only. Actual workflows will be configured when this template is applied in{' '}
                                 <span className="text-indigo-600 font-medium">Workflow Mapping</span>.
@@ -754,6 +792,135 @@ const WorkflowBuilder = ({
                         </div>
                     </div>
                 </div>
+
+                {/* Right Sidebar - Status Settings */}
+                {selectedNodeId && (
+                    <div className="w-80 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 animate-in slide-in-from-right-8 duration-300">
+                        {(() => {
+                            const node = nodes.find(n => n.id === selectedNodeId);
+                            if (!node) return null;
+
+                            return (
+                                <>
+                                    <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                                        <h3 className="font-bold text-gray-800">Status Settings</h3>
+                                        <button 
+                                            onClick={() => setSelectedNodeId(null)}
+                                            className="p-1 hover:bg-gray-200 rounded text-gray-500 transition-colors"
+                                        >
+                                            <X size={16} />
+                                        </button>
+                                    </div>
+                                    <div className="p-5 flex-1 overflow-y-auto space-y-6">
+                                        {/* Basic Info */}
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Basic Info</label>
+                                            <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                                <div className="font-semibold text-gray-800 mb-1">{node.statusName}</div>
+                                                <div className="flex gap-2">
+                                                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-200 text-gray-600">
+                                                        {node.category}
+                                                    </span>
+                                                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-white border text-gray-600">
+                                                        SLA: {node.slaBehavior}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Auto-Action Rules */}
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                                <Zap size={14} className="text-amber-500" />
+                                                Auto-Action Rules
+                                            </label>
+                                            
+                                            <div className="space-y-4">
+                                                {/* Auto-Action on Reply */}
+                                                <div className="border border-indigo-100 rounded-lg overflow-hidden">
+                                                    <div className="bg-indigo-50 px-3 py-2 border-b border-indigo-100">
+                                                        <span className="text-sm font-semibold text-indigo-800">1. On User Reply</span>
+                                                    </div>
+                                                    <div className="p-3 bg-white">
+                                                        <p className="text-xs text-gray-500 mb-3">
+                                                            Select the target status when the Requester/User replies to the ticket while in this status.
+                                                        </p>
+                                                        <select
+                                                            className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                                            value={node.autoReplyStatusId || ''}
+                                                            onChange={(e) => {
+                                                                const newNodes = nodes.map(n => 
+                                                                    n.id === selectedNodeId ? { ...n, autoReplyStatusId: e.target.value } : n
+                                                                );
+                                                                setNodes(newNodes);
+                                                            }}
+                                                        >
+                                                            <option value="">-- No Action (Manual) --</option>
+                                                            {nodes
+                                                                .filter(n => n.id !== selectedNodeId)
+                                                                .map(n => (
+                                                                    <option key={n.id} value={n.statusId}>
+                                                                        Move to: {n.statusName}
+                                                                    </option>
+                                                                ))
+                                                            }
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                {/* You can add more rules here later if needed */}
+                                            </div>
+                                        </div>
+
+                                        {/* Entry Rules */}
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                                <AlertTriangle size={14} className="text-rose-500" />
+                                                Entry Rules (On Status Change)
+                                            </label>
+                                            
+                                            <div className="space-y-4">
+                                                <div className="border border-rose-100 rounded-lg overflow-hidden bg-white">
+                                                    <div className="bg-rose-50 px-3 py-2 border-b border-rose-100">
+                                                        <span className="text-sm font-semibold text-rose-800">Prompt Agent Message</span>
+                                                    </div>
+                                                    <div className="p-3">
+                                                        <label className="flex items-start gap-2 cursor-pointer">
+                                                            <input 
+                                                                type="checkbox" 
+                                                                className="mt-1 rounded text-rose-600 focus:ring-rose-500"
+                                                                checked={node.requireReason || false}
+                                                                onChange={(e) => {
+                                                                    const newNodes = nodes.map(n => 
+                                                                        n.id === selectedNodeId ? { ...n, requireReason: e.target.checked } : n
+                                                                    );
+                                                                    setNodes(newNodes);
+                                                                }}
+                                                            />
+                                                            <div>
+                                                                <span className="text-sm font-medium text-gray-800">Require specific message/instruction</span>
+                                                                <p className="text-xs text-gray-500 mt-1">
+                                                                    If enabled, when an agent moves the ticket TO this status, a popup will force them to type an instruction message for the user.
+                                                                </p>
+                                                            </div>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="p-4 border-t border-gray-200 bg-gray-50">
+                                        <button 
+                                            onClick={() => setSelectedNodeId(null)}
+                                            className="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium shadow-sm"
+                                        >
+                                            Done
+                                        </button>
+                                    </div>
+                                </>
+                            );
+                        })()}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -861,7 +1028,9 @@ const WorkflowTemplate = () => {
                 status_id: n.statusId,
                 sort_order: idx + 1,
                 position_x: Math.round(n.x),
-                position_y: Math.round(n.y)
+                position_y: Math.round(n.y),
+                auto_reply_transition_to_status_id: n.autoReplyStatusId || null,
+                require_reason_on_entry: n.requireReason || false
             }));
 
             const { data: insertedStatuses, error: statusError } = await supabase

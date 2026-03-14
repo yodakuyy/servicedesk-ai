@@ -1266,7 +1266,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
       if (isRequester) {
         // Requester uses the dedicated RequesterTicketManager
-        return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} />;
+        return <RequesterTicketManager userProfile={userProfile} initialTicketId={selectedTicketId} ticketTypeFilter="incident" />;
       } else {
         // Agent/SPV uses the unified AgentTicketView with 'submitted' filter
         return <AgentTicketView userProfile={userProfile} initialQueueFilter="submitted" />;
@@ -1898,6 +1898,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               const menuViewMap: { [key: string]: any } = {
                 'dashboard': 'dashboard',
                 'usertickets': 'user-dashboard',
+                'incident': 'incidents',
                 'incidents': 'incidents',
                 'allincidents': 'incidents',
                 'mydashboard': 'my-dashboard',
@@ -1905,6 +1906,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 'myincidents': 'my-incidents',
                 'userincidents': 'my-incidents',
                 'mytickets': 'my-incidents',
+                'servicerequest': 'service-requests',
                 'servicerequests': 'service-requests',
                 'allservicerequests': 'service-requests',
                 'myservicerequest': 'my-service-request',
@@ -1931,13 +1933,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               if (normalizedName === 'mydashboard' || normalizedName === 'mydashbord') displayLabel = 'My Dashboard';
               if (normalizedName === 'myincidents' || normalizedName === 'userincidents') displayLabel = 'My Incidents';
               if (normalizedName === 'myservicerequest' || normalizedName === 'myservicerequests') displayLabel = 'My Service Request';
-              if (normalizedName === 'allincidents' || normalizedName === 'incidents') displayLabel = 'Incidents';
+              if (normalizedName === 'allincidents' || normalizedName === 'incidents' || normalizedName === 'incident') displayLabel = 'Incidents';
               if (normalizedName === 'knowledgebase') displayLabel = 'Knowledge Base';
               if (normalizedName === 'helpcenter') displayLabel = 'Help Center';
               if (normalizedName === 'outofoffice') displayLabel = 'Out of Office';
               if (normalizedName === 'escalatedtickets') displayLabel = 'Escalated Tickets';
               if (normalizedName === 'changerequest') displayLabel = 'Change Requests';
-              if (normalizedName === 'allservicerequests' || normalizedName === 'servicerequests') displayLabel = 'Service Requests';
+              if (normalizedName === 'allservicerequests' || normalizedName === 'servicerequests' || normalizedName === 'servicerequest') displayLabel = 'Service Requests';
 
               const getMenuIcon = () => {
                 if (normalizedName === 'dashboard') return LayoutDashboard;

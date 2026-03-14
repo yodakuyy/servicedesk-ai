@@ -46,7 +46,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                         *,
                         ticket_statuses!fk_tickets_status (status_name),
                         agent:profiles!fk_tickets_assigned_agent (full_name),
-                        group:groups!assignment_group_id (name),
+                        group:groups!assignment_group_id (name, company_id),
                         ticket_attachments (*)
                     `)
                     .eq('id', ticketId)
@@ -97,10 +97,64 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
 
             // Auto-revert to In Progress if Resolved or Pending
             const currentStatus = ticket.ticket_statuses?.status_name;
+            const currentStatusId = ticket.status_id;
             const updates: any = { updated_at: new Date().toISOString() };
             let shouldLogActivity = false;
+            let logActionText = 'Requester replied - Ticket Reopened';
 
-            if (currentStatus === 'Resolved' || currentStatus.toLowerCase().includes('pending')) {
+            // 1. Check Workflow Config first
+            let workflowAutoReplyStatusId = null;
+            if (ticket.group?.company_id) {
+                try {
+                    const { data: wf } = await supabase
+                        .from('department_workflows')
+                        .select('workflow_id, workflow_name')
+                        .eq('department_id', ticket.group.company_id)
+                        .eq('is_active', true)
+                        .single();
+
+                    if (wf) {
+                        let templateId = null;
+                        if (wf.workflow_name?.includes('|template:')) {
+                            templateId = wf.workflow_name.split('|template:')[1];
+                        }
+
+                        if (templateId) {
+                            const { data: ws } = await supabase
+                                .from('workflow_template_statuses')
+                                .select('auto_reply_transition_to_status_id')
+                                .eq('workflow_template_id', templateId)
+                                .eq('status_id', currentStatusId)
+                                .single();
+                            
+                            if (ws?.auto_reply_transition_to_status_id) {
+                                workflowAutoReplyStatusId = ws.auto_reply_transition_to_status_id;
+                            }
+                        } else {
+                            const { data: ws } = await supabase
+                                .from('workflow_statuses')
+                                .select('auto_reply_transition_to_status_id')
+                                .eq('workflow_template_id', wf.workflow_id)
+                                .eq('status_id', currentStatusId)
+                                .single();
+                            
+                            if (ws?.auto_reply_transition_to_status_id) {
+                                workflowAutoReplyStatusId = ws.auto_reply_transition_to_status_id;
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error('Error checking workflow auto-reply rule:', err);
+                }
+            }
+
+            if (workflowAutoReplyStatusId) {
+                 // Use workflow rule
+                 updates.status_id = workflowAutoReplyStatusId;
+                 shouldLogActivity = true;
+                 logActionText = 'Requester replied - Status automatically updated by workflow rule';
+            } else if (currentStatus === 'Resolved' || currentStatus.toLowerCase().includes('pending')) {
+                // 2. Fallback to default logic
                 // Fetch In Progress ID
                 const { data: statusData } = await supabase
                     .from('ticket_statuses')
@@ -111,6 +165,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                 if (statusData) {
                     updates.status_id = statusData.status_id;
                     shouldLogActivity = true;
+                    logActionText = 'Requester replied - Ticket Reopened';
                 }
             }
 
@@ -125,7 +180,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                 await supabase.from('ticket_activity_log').insert({
                     ticket_id: ticketId,
                     actor_id: user.id,
-                    action: 'Requester replied - Ticket Reopened'
+                    action: logActionText
                 });
             }
 
@@ -136,7 +191,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     *,
                     ticket_statuses!fk_tickets_status (status_name),
                     agent:profiles!fk_tickets_assigned_agent (full_name),
-                    group:groups!assignment_group_id (name)
+                    group:groups!assignment_group_id (name, company_id)
                 `)
                 .eq('id', ticketId)
                 .single();

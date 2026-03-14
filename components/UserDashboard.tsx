@@ -86,24 +86,10 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                 if (!isAllowedByDept) return false;
             }
         }
-
-        // 2. Check Role-based Menu Access
-        if (!accessibleMenus || accessibleMenus.length === 0) return true; // Default while loading
-        
-        const menuViewMap: { [key: string]: string[] } = {
-            'my-tickets': ['usertickets', 'mytickets', 'myincidents', 'userincidents', 'allincidents', 'incidents', 'incidentlist'],
-            'service-requests': ['servicerequests', 'allservicerequests', 'myservicerequest', 'myservicerequests', 'myrequests'],
-            'escalated-tickets': ['escalatedtickets', 'changerequest'],
-            'help-center': ['helpcenter']
-        };
-
-        const targetKeys = menuViewMap[view];
-        if (!targetKeys) return true;
-
-        return accessibleMenus.some(menu => {
-            const normalizedName = (menu.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-            return targetKeys.includes(normalizedName);
-        });
+        // If it passes department checks, it's accessible. 
+        // We do not strictly bind UserDashboard shortcut cards to role-based sidebar menus, 
+        // because requesters must be able to submit tickets using the department's configured modules.
+        return true;
     };
 
     // Chatbot States

@@ -265,6 +265,40 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
         });
       });
 
+      // 🚀 AUTO-ENABLE SERVICE MENUS:
+      // If the department has specific modules enabled (Incident, etc.), we force those menus to be visible
+      // in the sidebar for this session, even if the user's base role (like Role 4/Requester) doesn't strictly have them.
+      if (effectiveServices.length > 0) {
+        const allowedModules = effectiveServices.map(s => s.toLowerCase());
+        const standardModules = [
+          { type: 'incident', keywords: ['incident', 'myticket'] },
+          { type: 'service request', keywords: ['servicerequest', 'myrequest'] },
+          { type: 'change request', keywords: ['changerequest', 'escalated'] }
+        ];
+
+        standardModules.forEach(mod => {
+          if (allowedModules.includes(mod.type)) {
+            // Find ALL menus that seem to belong to this service module
+            (menus || []).forEach(m => {
+              const menuLabel = (m.label || m.name || m.menu_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+              if (mod.keywords.some(k => menuLabel.includes(k))) {
+                const existing = permissionsMap.get(String(m.id));
+                // Only force if not already explicitly denied (optional, but here we force view)
+                if (!existing || !existing.can_view) {
+                  permissionsMap.set(String(m.id), {
+                    menu_id: m.id,
+                    can_view: true,
+                    can_create: true,
+                    sort_order: existing?.sort_order || m.order_no || 100,
+                    source: 'AUTO_SERVICE'
+                  });
+                }
+              }
+            });
+          }
+        });
+      }
+
       // Build accessible menus - only include menus with can_view permission
       // AND filter by department-specific services if they are defined
       const accessibleMenus = Array.from(permissionsMap.values())
