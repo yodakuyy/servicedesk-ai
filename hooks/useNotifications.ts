@@ -9,6 +9,7 @@ export interface Notification {
     type: 'info' | 'warning' | 'success' | 'error' | 'ticket_new' | 'ticket_reply' | 'ticket_assigned' | 'sla_warning' | 'escalation' | 'user_confirmed';
     reference_type: string | null;
     reference_id: string | null;
+    company_id: number | null;
     is_read: boolean;
     created_at: string;
     read_at: string | null;
@@ -302,9 +303,9 @@ export function formatRelativeTime(dateString: string): string {
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Baru saja';
-    if (diffMins < 60) return `${diffMins} menit lalu`;
-    if (diffHours < 24) return `${diffHours} jam lalu`;
-    if (diffDays < 7) return `${diffDays} hari lalu`;
-    return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
 }

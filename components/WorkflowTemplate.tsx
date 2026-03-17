@@ -1094,7 +1094,7 @@ const WorkflowTemplate = () => {
                 console.log('Note: Could not delete transitions:', transErr.message);
             }
 
-            const { error: statusErr } = await supabase.from('workflow_statuses').delete().eq('workflow_template_id', deleteTargetId);
+            const { error: statusErr } = await supabase.from('workflow_statuses').delete().eq('workflow_id', deleteTargetId);
             if (statusErr) {
                 console.log('Note: Could not delete statuses:', statusErr.message);
             }

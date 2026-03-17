@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { processAutoCloseRules, previewAutoClose } from '../lib/autoClose';
+import Swal from 'sweetalert2';
 
 interface AutoCloseRule {
     id: string;
@@ -162,103 +163,30 @@ const AutoCloseRules: React.FC = () => {
 
             if (error) {
                 console.error('Error fetching rules:', error);
-                setRules(getMockRules());
+                setRules([]);
+                // Optionally show an error alert here
             } else if (rulesData) {
                 setRules(rulesData);
+                
+                // Calculate stats
+                const activeCount = rulesData.filter(r => r.is_active).length;
+                setStats({
+                    activeRules: activeCount,
+                    ticketsClosedToday: rulesData.reduce((acc, curr) => acc + (curr.tickets_closed || 0), 0),
+                    avgCloseTime: Math.round((Math.random() * 3 + 2) * 10) / 10 // Keeping mock avg time for now as it's not a direct column
+                });
             }
-
-            // Calculate stats
-            const activeCount = (rulesData || getMockRules()).filter(r => r.is_active).length;
-            setStats({
-                activeRules: activeCount,
-                ticketsClosedToday: Math.floor(Math.random() * 30) + 10,
-                avgCloseTime: Math.round((Math.random() * 3 + 2) * 10) / 10
-            });
 
         } catch (error) {
             console.error('Error fetching data:', error);
-            setRules(getMockRules());
+            setRules([]);
         } finally {
             setLoading(false);
         }
     };
 
-    const getMockRules = (): AutoCloseRule[] => [
-        {
-            id: '1',
-            name: 'Pending Timeout',
-            description: 'Auto-close tickets that have been pending for too long',
-            condition_type: 'status',
-            condition_value: 'Pending',
-            after_days: 7,
-            after_hours: 0,
-            notify_user: true,
-            notify_agent: true,
-            add_note: true,
-            note_text: 'Ticket auto-closed due to no response for 7 days.',
-            is_active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            tickets_closed: 28
-        },
-        {
-            id: '2',
-            name: 'Resolved Auto-Close',
-            description: 'Auto-close resolved tickets after confirmation period',
-            condition_type: 'status',
-            condition_value: 'Resolved',
-            after_days: 3,
-            after_hours: 0,
-            notify_user: true,
-            notify_agent: false,
-            add_note: true,
-            note_text: 'Ticket auto-closed after 3 days in Resolved status.',
-            is_active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            tickets_closed: 156
-        },
-        {
-            id: '3',
-            name: 'User Confirmed Closure',
-            description: 'Immediately close when user confirms resolution',
-            condition_type: 'user_confirmed',
-            condition_value: 'true',
-            after_days: 0,
-            after_hours: 1,
-            notify_user: false,
-            notify_agent: true,
-            add_note: true,
-            note_text: 'Ticket closed after user confirmation.',
-            is_active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            tickets_closed: 89
-        },
-        {
-            id: '4',
-            name: 'No Response Closure',
-            description: 'Close tickets with no customer response',
-            condition_type: 'no_response',
-            condition_value: 'customer',
-            after_days: 5,
-            after_hours: 0,
-            notify_user: true,
-            notify_agent: false,
-            add_note: true,
-            note_text: 'Ticket auto-closed due to no customer response.',
-            is_active: false,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            tickets_closed: 45
-        }
-    ];
 
     const handleToggleActive = async (rule: AutoCloseRule) => {
-        setRules(prev => prev.map(r =>
-            r.id === rule.id ? { ...r, is_active: !r.is_active } : r
-        ));
-
         try {
             const { error } = await supabase
                 .from('auto_close_rules')
@@ -266,11 +194,15 @@ const AutoCloseRules: React.FC = () => {
                 .eq('id', rule.id);
 
             if (error) throw error;
-        } catch (error) {
-            setRules(prev => prev.map(r =>
-                r.id === rule.id ? { ...r, is_active: rule.is_active } : r
-            ));
+            fetchData();
+        } catch (error: any) {
             console.error('Error updating rule:', error);
+            Swal.fire({
+                title: 'Gagal!',
+                text: 'Gagal mengupdate status rule: ' + (error.message || 'Silakan cek database'),
+                icon: 'error',
+                confirmButtonColor: '#4f46e5'
+            });
         }
     };
 
@@ -345,22 +277,14 @@ const AutoCloseRules: React.FC = () => {
 
             fetchData();
             setIsModalOpen(false);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error saving rule:', error);
-            if (editingRule) {
-                setRules(prev => prev.map(r =>
-                    r.id === editingRule.id ? { ...r, ...ruleData } : r
-                ));
-            } else {
-                const newRule: AutoCloseRule = {
-                    id: Date.now().toString(),
-                    ...ruleData,
-                    created_at: new Date().toISOString(),
-                    tickets_closed: 0
-                };
-                setRules(prev => [...prev, newRule]);
-            }
-            setIsModalOpen(false);
+            Swal.fire({
+                title: 'Gagal!',
+                text: `Gagal menyimpan rule: ${error.message || 'Cek koneksi database'}`,
+                icon: 'error',
+                confirmButtonColor: '#4f46e5'
+            });
         }
     };
 

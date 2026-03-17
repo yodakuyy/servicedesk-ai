@@ -168,7 +168,7 @@ const WorkflowMapping: React.FC = () => {
             const { error: statusError } = await supabase
                 .from('workflow_statuses')
                 .delete()
-                .eq('workflow_template_id', selectedDepartment);
+                .eq('workflow_id', selectedDepartment);
 
             if (statusError) throw statusError;
 
@@ -314,7 +314,7 @@ const WorkflowMapping: React.FC = () => {
                 // Wait, it is department ID. We must map it precisely.
                 if (templateStatuses && templateStatuses.length > 0) {
                     const statusInserts = templateStatuses.map(s => ({
-                        workflow_template_id: newWorkflow.workflow_id, // FK to department_workflows
+                        workflow_id: newWorkflow.workflow_id, // FK to department_workflows
                         status_id: s.status_id,
                         sort_order: s.sort_order,
                         auto_reply_transition_to_status_id: s.auto_reply_transition_to_status_id,
@@ -323,7 +323,7 @@ const WorkflowMapping: React.FC = () => {
 
                     const { data: insertedStatuses, error: insertErr } = await supabase
                         .from('workflow_statuses')
-                        .upsert(statusInserts, { onConflict: 'workflow_template_id,status_id', ignoreDuplicates: true })
+                        .upsert(statusInserts, { onConflict: 'workflow_id,status_id', ignoreDuplicates: true })
                         .select();
 
                     if (insertErr) throw insertErr;
@@ -505,7 +505,7 @@ const WorkflowMapping: React.FC = () => {
                     .from('workflow_statuses')
                     .select(`
                         workflow_status_id,
-                        workflow_template_id,
+                        workflow_id,
                         status_id,
                         ticket_statuses:status_id (
                             status_name,
@@ -515,7 +515,7 @@ const WorkflowMapping: React.FC = () => {
                             sla_behavior
                         )
                     `)
-                    .eq('workflow_template_id', workflowId);
+                    .eq('workflow_id', workflowId);
 
                 if (error) throw error;
                 data = legacyData || [];
@@ -606,7 +606,7 @@ const WorkflowMapping: React.FC = () => {
                     .from('workflow_statuses')
                     .select(`
                         workflow_status_id,
-                        workflow_template_id,
+                        workflow_id,
                         status_id,
                         ticket_statuses:status_id (
                             status_name,
@@ -616,7 +616,7 @@ const WorkflowMapping: React.FC = () => {
                             sla_behavior
                         )
                     `)
-                    .eq('workflow_template_id', selectedDepartment);
+                    .eq('workflow_id', selectedDepartment);
 
                 if (error) throw error;
                 statusData = data || [];
@@ -837,7 +837,7 @@ const WorkflowMapping: React.FC = () => {
             const { data, error } = await supabase
                 .from('workflow_statuses')
                 .insert({
-                    workflow_template_id: selectedDepartment,
+                    workflow_id: selectedDepartment,
                     status_id: draggedStatus.status_id,
                     sort_order: nodes.length + 1
                 })
@@ -1118,7 +1118,7 @@ const WorkflowMapping: React.FC = () => {
                     .upsert(
                         nodes.map(node => ({
                             workflow_status_id: node.id,
-                            workflow_template_id: selectedDepartment,
+                            workflow_id: selectedDepartment,
                             status_id: node.statusId,
                             position_x: Math.round(node.x),
                             position_y: Math.round(node.y),

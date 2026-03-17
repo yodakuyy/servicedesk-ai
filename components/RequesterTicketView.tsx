@@ -134,7 +134,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                             const { data: ws } = await supabase
                                 .from('workflow_statuses')
                                 .select('auto_reply_transition_to_status_id')
-                                .eq('workflow_template_id', wf.workflow_id)
+                                .eq('workflow_id', wf.workflow_id)
                                 .eq('status_id', currentStatusId)
                                 .single();
                             

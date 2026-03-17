@@ -200,7 +200,7 @@ const ToastItem: React.FC<{ toast: Toast; onRemove: () => void; index: number }>
                     )}
                     {toast.referenceType === 'ticket' && (
                         <p className={`text-xs ${colors.subtext} mt-1.5 flex items-center gap-1`}>
-                            <ExternalLink size={12} /> Klik untuk membuka tiket
+                            <ExternalLink size={12} /> Click to view ticket
                         </p>
                     )}
                 </div>

@@ -69,6 +69,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
         pauseAt?: string;
         recommendation?: string;
     }>({ percentage: 0, timeElapsed: '0h 0m', timeRemaining: '0h 0m', hasResponse: false });
+    const [holidays, setHolidays] = useState<any[]>([]);
     const [isAiLoading, setIsAiLoading] = useState(false);
     const [aiConfidence, setAiConfidence] = useState<'high' | 'medium' | 'low'>('low');
     const [isApplyingSummary, setIsApplyingSummary] = useState(false);
@@ -145,11 +146,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
         let currentDate = new Date(startDate);
 
         while (remainingMinutes > 0) {
+            const dateStr = currentDate.toISOString().split('T')[0];
+            const isHoliday = holidays.some(h => h.holiday_date === dateStr);
+
             const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             const dayName = dayNames[currentDate.getDay()];
             const dayConfig = schedule.find((d: any) => d.day === dayName);
 
-            if (!dayConfig || !dayConfig.isActive) {
+            if (!dayConfig || !dayConfig.isActive || isHoliday) {
                 currentDate.setDate(currentDate.getDate() + 1);
                 currentDate.setHours(0, 0, 0, 0);
                 continue;
@@ -214,11 +218,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
         let currentDate = new Date(startDate);
 
         while (currentDate < endDate) {
+            const dateStr = currentDate.toISOString().split('T')[0];
+            const isHoliday = holidays.some(h => h.holiday_date === dateStr);
+
             const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             const dayName = dayNames[currentDate.getDay()];
             const dayConfig = schedule.find((d: any) => d.day === dayName);
 
-            if (!dayConfig || !dayConfig.isActive) {
+            if (!dayConfig || !dayConfig.isActive || isHoliday) {
                 currentDate.setDate(currentDate.getDate() + 1);
                 currentDate.setHours(0, 0, 0, 0);
                 continue;
@@ -402,12 +409,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
         fetchCategories();
 
         const fetchSLAData = async () => {
-            const [policiesRes, targetsRes] = await Promise.all([
+            const [policiesRes, targetsRes, holidaysRes] = await Promise.all([
                 supabase.from('sla_policies').select('*').eq('is_active', true),
-                supabase.from('sla_targets').select('*')
+                supabase.from('sla_targets').select('*'),
+                supabase.from('holidays').select('*')
             ]);
             if (policiesRes.data) setSlaPolicies(policiesRes.data);
             if (targetsRes.data) setSlaTargets(targetsRes.data);
+            if (holidaysRes.data) setHolidays(holidaysRes.data);
         };
         fetchSLAData();
     }, [userProfile]);
@@ -1410,7 +1419,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         const { data: ws } = await supabase
                             .from('workflow_statuses')
                             .select('require_reason_on_entry')
-                            .eq('workflow_template_id', wf.workflow_id)
+                            .eq('workflow_id', wf.workflow_id)
                             .eq('status_id', newStatusId)
                             .single();
                         
@@ -3135,7 +3144,12 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         {/* Real SLA Bar */}
                         {(() => {
                             const schedule = selectedTicket.group?.business_hours?.weekly_schedule || [];
-                            const firstResponseTime = messages.find(m => !m.is_internal && m.sender_id !== selectedTicket.requester_id)?.created_at;
+                            // Fix: Don't count system auto-replies as first response
+                            const firstResponseTime = messages.find(m => 
+                                !m.is_internal && 
+                                m.sender_id !== selectedTicket.requester_id && 
+                                m.sender_role !== 'system'
+                            )?.created_at;
 
                             const linkedSlaIds = selectedTicket.group?.group_sla_policies?.map((ug: any) => ug.sla_policy_id) || [];
                             const matchingPolicy = slaPolicies.find(policy => {
@@ -3368,9 +3382,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                     <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
                                                         {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} WIB
                                                     </span>
-                                                    {isAgent ? (
+                                                    {msg.sender_role === 'agent' ? (
                                                         <span className="bg-indigo-50 text-indigo-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-indigo-100 flex items-center gap-1">
                                                             Agent
+                                                        </span>
+                                                    ) : msg.sender_role === 'system' ? (
+                                                        <span className="bg-amber-50 text-amber-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-amber-100 flex items-center gap-1">
+                                                            System
                                                         </span>
                                                     ) : (
                                                         <span className="bg-slate-100 text-slate-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">

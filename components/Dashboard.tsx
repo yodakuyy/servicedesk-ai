@@ -39,6 +39,7 @@ import {
   BarChart3
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import Swal from 'sweetalert2';
 import IncidentList from './IncidentList';
 import KnowledgeBase from './KnowledgeBase';
 import OutOfOffice from './OutOfOffice';
@@ -135,12 +136,14 @@ const NotificationPanelWrapper: React.FC<{
   deleteNotification: (id: string) => Promise<void>;
   clearAll: () => Promise<void>;
   onClose: () => void;
-  onNavigate?: (referenceType: string, referenceId: string) => void;
-}> = ({ notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll, onClose, onNavigate }) => {
+  onNavigate?: (referenceType: string, referenceId: string, companyId?: number | null) => void;
+  currentCompanyId?: number | null;
+}> = ({ notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll, onClose, onNavigate, currentCompanyId }) => {
   return (
     <NotificationPanel
       notifications={notifications}
       unreadCount={unreadCount}
+      currentCompanyId={currentCompanyId}
       onMarkAsRead={markAsRead}
       onMarkAllAsRead={markAllAsRead}
       onDelete={deleteNotification}
@@ -2145,7 +2148,45 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           <div className="flex items-center gap-4">
             <div className="relative" ref={notificationRef}>
               <button onClick={() => setShowNotificationPanel(!showNotificationPanel)} className={`relative p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all ${showNotificationPanel ? 'text-indigo-600 bg-indigo-50' : ''}`}><Bell size={22} /><NotificationBadge unreadCount={unreadCount} /></button>
-              {showNotificationPanel && <NotificationPanelWrapper notifications={notifications} unreadCount={unreadCount} markAsRead={markAsRead} markAllAsRead={markAllAsRead} deleteNotification={deleteNotification} clearAll={clearAll} onClose={() => setShowNotificationPanel(false)} onNavigate={(refType, refId) => { if (refType === 'ticket') { setSelectedTicketId(refId); setCurrentView('incidents'); } }} />}
+              {showNotificationPanel && (
+                <NotificationPanelWrapper
+                  notifications={notifications}
+                  unreadCount={unreadCount}
+                  markAsRead={markAsRead}
+                  markAllAsRead={markAllAsRead}
+                  deleteNotification={deleteNotification}
+                  clearAll={clearAll}
+                  onClose={() => setShowNotificationPanel(false)}
+                  onNavigate={async (refType, refId, targetDeptId) => {
+                    if (refType === 'ticket') {
+                      // Check if the ticket belongs to a different department
+                      if (targetDeptId && Number(targetDeptId) !== Number(userProfile?.company_id)) {
+                        const { isConfirmed } = await Swal.fire({
+                          title: 'Switch Department?',
+                          text: 'This ticket belongs to another department. You need to switch departments to view it.',
+                          icon: 'question',
+                          showCancelButton: true,
+                          confirmButtonText: 'Yes, Switch Now',
+                          cancelButtonText: 'Cancel',
+                          confirmButtonColor: '#4f46e5'
+                        });
+
+                        if (isConfirmed) {
+                          // Update profile in localStorage and reload to apply new department context
+                          const updatedProfile = { ...userProfile, company_id: targetDeptId };
+                          localStorage.setItem('profile', JSON.stringify(updatedProfile));
+                          // We also need to clear specific department caches if any
+                          window.location.reload();
+                        }
+                      } else {
+                        setSelectedTicketId(refId);
+                        setCurrentView('incidents');
+                      }
+                    }
+                  }}
+                  currentCompanyId={userProfile?.company_id}
+                />
+              )}
             </div>
             <button onClick={() => setCurrentView('profile')} className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all"><User size={22} /></button>
           </div>

@@ -18,17 +18,19 @@ import { Notification, formatRelativeTime, getNotificationColor } from '../hooks
 interface NotificationPanelProps {
     notifications: Notification[];
     unreadCount: number;
+    currentCompanyId?: number | null;
     onMarkAsRead: (id: string) => void;
     onMarkAllAsRead: () => void;
     onDelete: (id: string) => void;
     onClearAll: () => void;
     onClose: () => void;
-    onNavigate?: (referenceType: string, referenceId: string) => void;
+    onNavigate?: (referenceType: string, referenceId: string, companyId?: number | null) => void;
 }
 
 const NotificationPanel: React.FC<NotificationPanelProps> = ({
     notifications,
     unreadCount,
+    currentCompanyId,
     onMarkAsRead,
     onMarkAllAsRead,
     onDelete,
@@ -64,7 +66,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
             onMarkAsRead(notif.id);
         }
         if (notif.reference_type && notif.reference_id && onNavigate) {
-            onNavigate(notif.reference_type, notif.reference_id);
+            onNavigate(notif.reference_type, notif.reference_id, notif.company_id);
             onClose();
         }
     };
@@ -78,9 +80,9 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
                         <Bell size={18} className="text-white" />
                     </div>
                     <div>
-                        <h3 className="text-white font-bold text-sm">Notifikasi</h3>
+                        <h3 className="text-white font-bold text-sm">Notifications</h3>
                         <p className="text-white/70 text-xs">
-                            {unreadCount > 0 ? `${unreadCount} belum dibaca` : 'Semua sudah dibaca'}
+                            {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
                         </p>
                     </div>
                 </div>
@@ -100,13 +102,13 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
                         disabled={unreadCount === 0}
                         className="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:text-gray-400 disabled:cursor-not-allowed flex items-center gap-1"
                     >
-                        <Check size={14} /> Tandai semua dibaca
+                        <Check size={14} /> Mark all as read
                     </button>
                     <button
                         onClick={onClearAll}
                         className="text-xs font-medium text-gray-500 hover:text-red-600 flex items-center gap-1 transition-colors"
                     >
-                        <Trash2 size={14} /> Hapus semua
+                        <Trash2 size={14} /> Clear all
                     </button>
                 </div>
             )}
@@ -118,77 +120,88 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
                         <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                             <Bell size={28} className="text-gray-300" />
                         </div>
-                        <p className="text-gray-500 font-medium">Tidak ada notifikasi</p>
-                        <p className="text-gray-400 text-sm mt-1">Anda akan melihat notifikasi di sini</p>
+                        <p className="text-gray-500 font-medium">No notifications yet</p>
+                        <p className="text-gray-400 text-sm mt-1">New updates will appear here</p>
                     </div>
                 ) : (
                     <div className="divide-y divide-gray-50">
-                        {notifications.map((notif) => (
-                            <div
-                                key={notif.id}
-                                className={`px-4 py-3.5 hover:bg-gray-50/80 transition-colors cursor-pointer group relative border-l-2 ${!notif.is_read ? 'bg-blue-50 border-indigo-500' : 'bg-white border-transparent'
-                                    }`}
-                                onClick={() => handleNotificationClick(notif)}
-                            >
-                                <div className="flex gap-3">
-                                    {/* Icon */}
-                                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${getNotificationColor(notif.type)}`}>
-                                        {getIcon(notif.type)}
-                                    </div>
-
-                                    {/* Content */}
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-start justify-between gap-2">
-                                            <p className={`text-sm ${!notif.is_read ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'}`}>
-                                                {notif.title}
-                                            </p>
-                                            {!notif.is_read && (
-                                                <span className="w-2 h-2 bg-indigo-500 rounded-full flex-shrink-0 mt-1.5 animate-pulse" />
-                                            )}
+                        {notifications.map((notif) => {
+                            const isDifferentDept = currentCompanyId && notif.company_id && Number(notif.company_id) !== Number(currentCompanyId);
+                            
+                            return (
+                                <div
+                                    key={notif.id}
+                                    className={`px-4 py-3.5 hover:bg-gray-50/80 transition-colors cursor-pointer group relative border-l-2 ${!notif.is_read ? 'bg-blue-50 border-indigo-500' : 'bg-white border-transparent'
+                                        }`}
+                                    onClick={() => handleNotificationClick(notif)}
+                                >
+                                    <div className="flex gap-3">
+                                        {/* Icon */}
+                                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${getNotificationColor(notif.type)}`}>
+                                            {getIcon(notif.type)}
                                         </div>
-                                        {notif.message && (
-                                            <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{notif.message}</p>
-                                        )}
-                                        <div className="flex items-center gap-2 mt-1.5">
-                                            <span className="text-[10px] text-gray-400 font-medium">
-                                                {formatRelativeTime(notif.created_at)}
-                                            </span>
-                                            {notif.reference_type === 'ticket' && (
-                                                <span className="text-[10px] text-indigo-500 flex items-center gap-0.5">
-                                                    <ExternalLink size={10} /> Buka tiket
+
+                                        {/* Content */}
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-start justify-between gap-2">
+                                                <div className="flex flex-col">
+                                                    <p className={`text-sm ${!notif.is_read ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'}`}>
+                                                        {notif.title}
+                                                    </p>
+                                                    {isDifferentDept && (
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-700 uppercase tracking-tighter w-fit mt-0.5">
+                                                            Other Dept
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {!notif.is_read && (
+                                                    <span className="w-2 h-2 bg-indigo-500 rounded-full flex-shrink-0 mt-1.5 animate-pulse" />
+                                                )}
+                                            </div>
+                                            {notif.message && (
+                                                <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{notif.message}</p>
+                                            )}
+                                            <div className="flex items-center gap-2 mt-1.5">
+                                                <span className="text-[10px] text-gray-400 font-medium">
+                                                    {formatRelativeTime(notif.created_at)}
                                                 </span>
-                                            )}
+                                                {notif.reference_type === 'ticket' && (
+                                                    <span className="text-[10px] text-indigo-500 flex items-center gap-0.5">
+                                                        <ExternalLink size={10} /> View ticket
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
 
-                                {/* Hover Actions */}
-                                <div className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                                    {!notif.is_read && (
+                                    {/* Hover Actions */}
+                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                                        {!notif.is_read && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onMarkAsRead(notif.id);
+                                                }}
+                                                className="p-1.5 bg-white rounded-lg shadow-sm border border-gray-200 hover:bg-indigo-50 hover:border-indigo-200 transition-colors"
+                                                title="Mark as read"
+                                            >
+                                                <Check size={14} className="text-indigo-600" />
+                                            </button>
+                                        )}
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                onMarkAsRead(notif.id);
+                                                onDelete(notif.id);
                                             }}
-                                            className="p-1.5 bg-white rounded-lg shadow-sm border border-gray-200 hover:bg-indigo-50 hover:border-indigo-200 transition-colors"
-                                            title="Tandai sudah dibaca"
+                                            className="p-1.5 bg-white rounded-lg shadow-sm border border-gray-200 hover:bg-red-50 hover:border-red-200 transition-colors"
+                                            title="Delete notification"
                                         >
-                                            <Check size={14} className="text-indigo-600" />
+                                            <Trash2 size={14} className="text-red-500" />
                                         </button>
-                                    )}
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            onDelete(notif.id);
-                                        }}
-                                        className="p-1.5 bg-white rounded-lg shadow-sm border border-gray-200 hover:bg-red-50 hover:border-red-200 transition-colors"
-                                        title="Hapus notifikasi"
-                                    >
-                                        <Trash2 size={14} className="text-red-500" />
-                                    </button>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>
@@ -197,7 +210,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
             {notifications.length > 10 && (
                 <div className="px-4 py-3 bg-gray-50 border-t border-gray-100 text-center">
                     <button className="text-xs font-medium text-indigo-600 hover:text-indigo-800">
-                        Lihat semua notifikasi
+                        View all notifications
                     </button>
                 </div>
             )}
