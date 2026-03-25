@@ -74,6 +74,7 @@ import AnnouncementManagement from './AnnouncementManagement';
 import PortalHighlights from './PortalHighlights';
 import { useNotifications } from '../hooks/useNotifications';
 import { useRealtimeToast } from '../hooks/useRealtimeToast';
+import { processAutoCloseRules } from '../lib/autoClose';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -370,6 +371,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       }
     };
 
+    const checkAutoClose = async () => {
+      try {
+        const result = await processAutoCloseRules();
+        if (result.closed > 0) {
+          console.log(`Auto-Close: Processed ${result.closed} tickets.`);
+        }
+      } catch (err) {
+        console.error('Error processing auto-close rules:', err);
+      }
+    };
+
     // Only run for supervisors/admins (role_id 1 or 2)
     const isSupervisorOrAdmin = userProfile?.role_id === 1 || userProfile?.role_id === 2 ||
       userProfile?.role_id === '1' || userProfile?.role_id === '2';
@@ -377,9 +389,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     if (userProfile?.id && isSupervisorOrAdmin) {
       // Run immediately on load
       checkSLAEscalations();
+      checkAutoClose();
 
       // Then run every 5 minutes
-      const intervalId = setInterval(checkSLAEscalations, 5 * 60 * 1000);
+      const intervalId = setInterval(() => {
+        checkSLAEscalations();
+        checkAutoClose();
+      }, 5 * 60 * 1000);
 
       return () => clearInterval(intervalId);
     }
@@ -487,17 +503,75 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         else if (myGroupIds.length > 0) openTicketsQuery = openTicketsQuery.in('assignment_group_id', myGroupIds);
         const { data: openTicketsFullList } = await openTicketsQuery;
 
-        // 4. OVERDUE TICKETS (Enhanced Logic with Priority-based SLA & Paused Time)
-        // We fetch active tickets created > 4 hours ago (minimum SLA is 4h for Urgent)
+        // 4. OVERDUE TICKETS (Business Hours + Holidays Aware)
+        // Fetch holidays and business hours for proper calculation
+        const [holidaysRes, bhRes] = await Promise.all([
+          supabase.from('holidays').select('holiday_date'),
+          supabase.from('business_hours').select('id, weekly_schedule')
+        ]);
+        const dashHolidays = holidaysRes.data || [];
+        const dashBusinessHours = bhRes.data || [];
+        const defaultSchedule = dashBusinessHours.length > 0 ? dashBusinessHours[0].weekly_schedule : null;
+
+        // Helper: Calculate business elapsed minutes (same logic as AgentTicketView)
+        const calcBusinessElapsed = (startDate: Date, endDate: Date, schedule: any[]) => {
+          if (!schedule || schedule.length === 0) return Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60));
+          let elapsedMinutes = 0;
+          let currentDate = new Date(startDate);
+          while (currentDate < endDate) {
+            const dateStr = currentDate.toISOString().split('T')[0];
+            const isHoliday = dashHolidays.some((h: any) => h.holiday_date && h.holiday_date.startsWith(dateStr));
+            const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const dayName = dayNames[currentDate.getDay()];
+            const dayConfig = schedule.find((d: any) => d.day === dayName);
+            if (!dayConfig || !dayConfig.isActive || isHoliday) {
+              currentDate.setDate(currentDate.getDate() + 1);
+              currentDate.setHours(0, 0, 0, 0);
+              continue;
+            }
+            const [startH, startM] = dayConfig.startTime.split(':').map(Number);
+            const [endH, endM] = dayConfig.endTime.split(':').map(Number);
+            const workStart = new Date(currentDate); workStart.setHours(startH, startM, 0, 0);
+            const workEnd = new Date(currentDate); workEnd.setHours(endH, endM, 0, 0);
+            let segmentStart = currentDate < workStart ? workStart : currentDate;
+            let segmentEnd = endDate < workEnd ? endDate : workEnd;
+            if (segmentStart < segmentEnd) {
+              if (dayConfig.breakActive) {
+                const [bsH, bsM] = dayConfig.breakStartTime.split(':').map(Number);
+                const [beH, beM] = dayConfig.breakEndTime.split(':').map(Number);
+                const bStart = new Date(segmentStart); bStart.setHours(bsH, bsM, 0, 0);
+                const bEnd = new Date(segmentStart); bEnd.setHours(beH, beM, 0, 0);
+                if (segmentStart < bStart && segmentEnd > bEnd) {
+                  elapsedMinutes += (bStart.getTime() - segmentStart.getTime()) / 60000;
+                  elapsedMinutes += (segmentEnd.getTime() - bEnd.getTime()) / 60000;
+                } else if (segmentEnd <= bStart || segmentStart >= bEnd) {
+                  elapsedMinutes += (segmentEnd.getTime() - segmentStart.getTime()) / 60000;
+                } else if (segmentStart < bStart) {
+                  elapsedMinutes += (bStart.getTime() - segmentStart.getTime()) / 60000;
+                } else if (segmentEnd > bEnd) {
+                  elapsedMinutes += (segmentEnd.getTime() - bEnd.getTime()) / 60000;
+                }
+              } else {
+                elapsedMinutes += (segmentEnd.getTime() - segmentStart.getTime()) / 60000;
+              }
+            }
+            currentDate.setDate(currentDate.getDate() + 1);
+            currentDate.setHours(0, 0, 0, 0);
+          }
+          return Math.floor(elapsedMinutes);
+        };
+
         const fourHoursAgo = new Date();
         fourHoursAgo.setHours(fourHoursAgo.getHours() - 4);
 
         let overdueQuery = supabase
           .from('tickets')
           .select(`
-            id, ticket_number, subject, priority, created_at, updated_at, total_paused_minutes,
+            id, ticket_number, subject, priority, created_at, updated_at, total_paused_minutes, paused_at,
+            assignment_group_id,
             requester:profiles!fk_tickets_requester(full_name),
-            assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
+            assigned_agent:profiles!fk_tickets_assigned_agent(full_name),
+            group:groups!assignment_group_id(business_hour_id, business_hours(weekly_schedule))
           `)
           // Exclude Pending/Waiting tickets from Overdue
           .in('status_id', activeStatusIds.filter(id => !pendingStatusIds.includes(id)))
@@ -508,19 +582,33 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         else if (myGroupIds.length > 0) overdueQuery = overdueQuery.in('assignment_group_id', myGroupIds);
         const { data: potentialOverdue } = await overdueQuery;
 
-        // Filter based on Priority SLA
+        // Filter based on Priority SLA using BUSINESS HOURS (not wall clock)
         const overdueTicketsFullList = (potentialOverdue || []).filter((t: any) => {
           const created = new Date(t.created_at);
           const now = new Date();
 
-          // Calculate active time (Elapsed - Paused)
-          const elapsedMinutes = (now.getTime() - created.getTime()) / (1000 * 60);
+          // Get the group's business hours schedule, or use default
+          const groupSchedule = t.group?.business_hours?.[0]?.weekly_schedule || 
+                                t.group?.business_hours?.weekly_schedule || 
+                                defaultSchedule;
+
+          // Calculate business elapsed minutes (holidays + business hours aware)
+          let activeMinutes = calcBusinessElapsed(created, now, groupSchedule);
+
+          // Subtract paused time
           const pausedMinutes = t.total_paused_minutes || 0;
-          const activeMinutes = Math.max(0, elapsedMinutes - pausedMinutes);
+          activeMinutes = Math.max(0, activeMinutes - pausedMinutes);
+
+          // If currently paused, subtract current pause duration
+          if (t.paused_at) {
+            const pausedSince = new Date(t.paused_at);
+            const currentPauseMinutes = calcBusinessElapsed(pausedSince, now, groupSchedule);
+            activeMinutes = Math.max(0, activeMinutes - currentPauseMinutes);
+          }
+
           const activeHours = activeMinutes / 60;
 
           // SLA Map (Hours)
-          // Urgent: 4h, High: 8h, Medium: 48h (2 days), Low: 120h (5 days)
           let limit = 24; // Default Fallback
           const p = (t.priority || '').toLowerCase();
 
@@ -2179,8 +2267,27 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                           window.location.reload();
                         }
                       } else {
-                        setSelectedTicketId(refId);
-                        setCurrentView('incidents');
+                        // Determine correct view based on ticket_type
+                        try {
+                          const { supabase } = await import('../lib/supabase');
+                          const { data: ticketData } = await supabase
+                            .from('tickets')
+                            .select('ticket_type')
+                            .eq('id', refId)
+                            .single();
+                          
+                          const ticketType = (ticketData?.ticket_type || 'incident').toLowerCase().replace(/\s+/g, '_');
+                          let targetView: string = 'incidents';
+                          if (ticketType === 'service_request') targetView = 'service-requests';
+                          else if (ticketType === 'change_request') targetView = 'change-requests';
+
+                          setSelectedTicketId(refId);
+                          setCurrentView(targetView as any);
+                        } catch {
+                          // Fallback to incidents if query fails
+                          setSelectedTicketId(refId);
+                          setCurrentView('incidents');
+                        }
                       }
                     }
                   }}

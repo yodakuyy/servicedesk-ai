@@ -1315,33 +1315,31 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .order('created_at', { ascending: false });
             if (logs) setActivityLogs(logs);
 
-            // Refetch ticket details to keep SLA and timers in sync
-            if (selectedTicket.ticket_statuses?.status_name !== 'Open') {
-                const { data: updatedTicket } = await supabase
-                    .from('tickets')
-                    .select(`
-                        *,
-                        is_category_verified,
-                        ticket_statuses!fk_tickets_status (status_name),
-                        ticket_categories (name),
-                        services (name),
-                        requester:profiles!fk_tickets_requester (full_name, email),
-                        assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
-                        group:groups!assignment_group_id (
-                            id, name, company_id,
-                            company:company_id(company_name),
-                            group_sla_policies(sla_policy_id),
-                            business_hours(weekly_schedule)
-                        ),
-                        ticket_attachments (*)
-                    `)
-                    .eq('id', selectedTicketId)
-                    .single();
+            // Refetch ticket details to keep status, SLA and timers in sync
+            const { data: updatedTicket } = await supabase
+                .from('tickets')
+                .select(`
+                    *,
+                    is_category_verified,
+                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_categories (name),
+                    services (name),
+                    requester:profiles!fk_tickets_requester (full_name, email),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name),
+                    group:groups!assignment_group_id (
+                        id, name, company_id,
+                        company:company_id(company_name),
+                        group_sla_policies(sla_policy_id),
+                        business_hours(weekly_schedule)
+                    ),
+                    ticket_attachments (*)
+                `)
+                .eq('id', selectedTicketId)
+                .single();
 
-                if (updatedTicket) {
-                    setSelectedTicket(updatedTicket);
-                    setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
-                }
+            if (updatedTicket) {
+                setSelectedTicket(updatedTicket);
+                setTickets(prev => prev.map(t => t.id === selectedTicketId ? updatedTicket : t));
             }
 
             // Success feedback (optional, toast is better)
@@ -3407,7 +3405,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                     )}
                                                 </div>
                                                 <div className={`p-4 rounded-2xl text-[14px] leading-relaxed font-medium shadow-sm transition-all conversation-content
-                                                     ${msg.content?.includes('status-update-remark')
+                                                     ${msg.content?.includes('system-auto-note')
+                                                        ? 'bg-amber-50 border-2 border-amber-200 text-amber-900'
+                                                        : msg.content?.includes('status-update-remark')
                                                         ? 'bg-emerald-50/10 border-2 border-emerald-100/50 text-slate-700'
                                                         : isInternal
                                                             ? 'bg-amber-50/40 border-2 border-amber-100/50 text-amber-900'

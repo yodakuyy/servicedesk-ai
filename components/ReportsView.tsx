@@ -12,7 +12,10 @@ import {
 } from 'recharts';
 import { supabase } from '../lib/supabase';
 
-// Helper for Business Hours Calculation
+// Helper for Business Hours Calculation (with holidays support)
+let _reportHolidays: any[] = [];
+const setReportHolidays = (holidays: any[]) => { _reportHolidays = holidays; };
+
 const calculateBusinessElapsed = (startDate: Date, endDate: Date, schedule: any[]) => {
     if (!schedule || schedule.length === 0) return Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60));
 
@@ -20,11 +23,14 @@ const calculateBusinessElapsed = (startDate: Date, endDate: Date, schedule: any[
     let currentDate = new Date(startDate);
 
     while (currentDate < endDate) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+        const isHoliday = _reportHolidays.some((h: any) => h.holiday_date && h.holiday_date.startsWith(dateStr));
+
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const dayName = dayNames[currentDate.getDay()];
         const dayConfig = schedule.find((d: any) => d.day === dayName);
 
-        if (!dayConfig || !dayConfig.isActive) {
+        if (!dayConfig || !dayConfig.isActive || isHoliday) {
             currentDate.setDate(currentDate.getDate() + 1);
             currentDate.setHours(0, 0, 0, 0);
             continue;
@@ -97,6 +103,11 @@ const ReportsView: React.FC = () => {
     const [recentTickets, setRecentTickets] = useState<any[]>([]);
     const [breachedTickets, setBreachedTickets] = useState<any[]>([]);
     const [isBreachModalOpen, setIsBreachModalOpen] = useState(false);
+    const [criticalTickets, setCriticalTickets] = useState<any[]>([]);
+    const [unassignedTickets, setUnassignedTickets] = useState<any[]>([]);
+    const [staleTickets, setStaleTickets] = useState<any[]>([]);
+    const [overloadedAgents, setOverloadedAgents] = useState<any[]>([]);
+    const [anomalyModal, setAnomalyModal] = useState<'critical' | 'unassigned' | 'stale' | 'workload' | null>(null);
     const [exportSearch, setExportSearch] = useState('');
     const [exportStatus, setExportStatus] = useState('All');
     const [slaPolicies, setSlaPolicies] = useState<any[]>([]);
@@ -256,12 +267,15 @@ const ReportsView: React.FC = () => {
                 pQuery = pQuery.eq('company_id', currentUser.company_id);
             }
 
-            const [pRes, tRes, cRes, sRes] = await Promise.all([
+            const [pRes, tRes, cRes, sRes, hRes] = await Promise.all([
                 pQuery,
                 supabase.from('sla_targets').select('*'),
                 supabase.from('ticket_categories').select('id, name, parent_id'),
-                supabase.from('ticket_statuses').select('status_id, status_name')
+                supabase.from('ticket_statuses').select('status_id, status_name'),
+                supabase.from('holidays').select('holiday_date, name')
             ]);
+            // Set holidays for business hours calculation
+            setReportHolidays(hRes.data || []);
             if (pRes.data) setSlaPolicies(pRes.data);
             if (tRes.data) setSlaTargets(tRes.data);
             const categories = cRes.data || [];
@@ -398,25 +412,38 @@ const ReportsView: React.FC = () => {
 
                 const slaMetPct = validTickets.length > 0 ? (((validTickets.length - overdueCount) / validTickets.length) * 100).toFixed(1) : '100';
 
-                // Calculate Additional Anomalies
-                const unassignedCount = validTickets.filter((t: any) => {
+                // Calculate Additional Anomalies (with ticket lists for drill-down)
+                const unassignedList = validTickets.filter((t: any) => {
                     const aName = t.assigned_agent?.full_name || t.assigned_agent?.[0]?.full_name;
                     const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase();
                     return !aName && !['resolved', 'closed', 'canceled'].includes(sName);
-                }).length;
+                });
+                const unassignedCount = unassignedList.length;
+                setUnassignedTickets(unassignedList);
 
-                const criticalCount = validTickets.filter((t: any) => {
+                const criticalList = validTickets.filter((t: any) => {
                     const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase();
                     const prio = (t.priority || '').toLowerCase();
                     return prio.includes('critical') && !['resolved', 'closed', 'canceled'].includes(sName);
-                }).length;
+                });
+                const criticalCount = criticalList.length;
+                setCriticalTickets(criticalList);
 
-                const staleCount = validTickets.filter((t: any) => {
+                // Stale: use business hours for elapsed time (not wall clock)
+                const staleList = validTickets.filter((t: any) => {
                     const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase();
-                    const lastUpdate = new Date(t.updated_at || t.created_at).getTime();
-                    const diffHrs = (new Date().getTime() - lastUpdate) / 3600000;
-                    return diffHrs > 12 && !['resolved', 'closed', 'canceled'].includes(sName);
-                }).length;
+                    if (['resolved', 'closed', 'canceled'].includes(sName)) return false;
+                    const rawGroup = t.group;
+                    const groupObj = Array.isArray(rawGroup) ? rawGroup[0] : rawGroup;
+                    const rawBH = groupObj?.business_hours;
+                    const bhObj = Array.isArray(rawBH) ? rawBH[0] : rawBH;
+                    const schedule = bhObj?.weekly_schedule || [];
+                    const lastUpdate = new Date(t.updated_at || t.created_at);
+                    const bizElapsed = calculateBusinessElapsed(lastUpdate, new Date(), schedule);
+                    return (bizElapsed / 60) > 12; // 12 business hours
+                });
+                const staleCount = staleList.length;
+                setStaleTickets(staleList);
 
                 setStats({
                     total: validTickets.length,
@@ -454,6 +481,9 @@ const ReportsView: React.FC = () => {
                     total: data.total
                 })).sort((a, b) => b.total - a.total).slice(0, 5);
                 setAgentPerformance(agentChartData);
+                // Save overloaded agents for workload anomaly drill-down
+                const allAgentData = Object.entries(agentMap).map(([name, data]) => ({ name, ...data }));
+                setOverloadedAgents(allAgentData.filter(a => a.total > 10));
 
                 // C. SLA Distribution
                 setSlaStatusData([
@@ -1253,24 +1283,28 @@ const ReportsView: React.FC = () => {
                                     status={stats.critical > 0 ? 'error' : 'success'}
                                     message={stats.critical > 0 ? `${stats.critical} Critical tickets need immediate response.` : 'No active critical priority tickets found.'}
                                     time="Urgent"
+                                    onClick={stats.critical > 0 ? () => setAnomalyModal('critical') : undefined}
                                 />
                                 <AlertRow
                                     type="Assignment Status"
                                     status={stats.unassigned > 0 ? 'error' : 'success'}
                                     message={stats.unassigned > 0 ? `${stats.unassigned} tickets are waiting for assignment.` : 'All active tickets have been assigned to agents.'}
                                     time="Attention"
+                                    onClick={stats.unassigned > 0 ? () => setAnomalyModal('unassigned') : undefined}
                                 />
                                 <AlertRow
                                     type="Stale Updates"
                                     status={stats.stale > 0 ? 'error' : 'success'}
-                                    message={stats.stale > 0 ? `${stats.stale} tickets haven't been touched for 12h+.` : 'All active tickets have recent activity.'}
+                                    message={stats.stale > 0 ? `${stats.stale} tickets haven't been touched for 12 business hours+.` : 'All active tickets have recent activity.'}
                                     time="Delayed"
+                                    onClick={stats.stale > 0 ? () => setAnomalyModal('stale') : undefined}
                                 />
                                 <AlertRow
                                     type="Agent Workload"
                                     status={agentPerformance.some(a => a.total > 10) ? 'error' : 'success'}
                                     message={agentPerformance.some(a => a.total > 10) ? 'High volume detected on some agents (>10 tickets).' : 'Agent workload is currently within healthy limits.'}
                                     time="Active"
+                                    onClick={overloadedAgents.length > 0 ? () => setAnomalyModal('workload') : undefined}
                                 />
                             </div>
                         </div>
@@ -2005,6 +2039,132 @@ const ReportsView: React.FC = () => {
                             <div className="px-8 py-4 bg-slate-50/50 border-t border-slate-100 flex justify-end">
                                 <button
                                     onClick={() => setIsBreachModalOpen(false)}
+                                    className="px-6 py-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Anomaly Detail Modal */}
+            {
+                anomalyModal && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+                        <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-4xl overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col max-h-[85vh] border border-slate-100">
+                            {/* Header */}
+                            <div className="px-8 py-6 border-b border-slate-50 flex items-center justify-between bg-white">
+                                <div>
+                                    <h3 className="font-black text-slate-900 text-xl uppercase tracking-tight">
+                                        {anomalyModal === 'critical' && 'Critical Priority Tickets'}
+                                        {anomalyModal === 'unassigned' && 'Unassigned Tickets'}
+                                        {anomalyModal === 'stale' && 'Stale Tickets'}
+                                        {anomalyModal === 'workload' && 'Overloaded Agents'}
+                                    </h3>
+                                    <p className="text-sm font-bold text-slate-400 mt-1">
+                                        {anomalyModal === 'critical' && `${criticalTickets.length} critical tickets requiring immediate attention`}
+                                        {anomalyModal === 'unassigned' && `${unassignedTickets.length} tickets waiting for agent assignment`}
+                                        {anomalyModal === 'stale' && `${staleTickets.length} tickets with no activity for 12+ business hours`}
+                                        {anomalyModal === 'workload' && `${overloadedAgents.length} agents handling more than 10 tickets`}
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => setAnomalyModal(null)}
+                                    className="w-10 h-10 flex items-center justify-center bg-slate-50 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-2xl transition-all"
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            {/* Body */}
+                            <div className="flex-1 overflow-y-auto p-0 bg-white">
+                                {/* Critical / Unassigned / Stale — Show Ticket Table */}
+                                {(anomalyModal === 'critical' || anomalyModal === 'unassigned' || anomalyModal === 'stale') && (
+                                    <table className="w-full text-left border-collapse">
+                                        <thead className="sticky top-0 bg-slate-50/80 backdrop-blur-md z-10">
+                                            <tr>
+                                                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Ticket</th>
+                                                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Agent</th>
+                                                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center">Priority</th>
+                                                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-right">Status</th>
+                                                {anomalyModal === 'stale' && (
+                                                    <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-right">Last Update</th>
+                                                )}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {(anomalyModal === 'critical' ? criticalTickets : anomalyModal === 'unassigned' ? unassignedTickets : staleTickets).map((t: any) => {
+                                                const aName = t.assigned_agent?.full_name || t.assigned_agent?.[0]?.full_name || 'Unassigned';
+                                                const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name) || 'Open';
+                                                const lastUpdate = new Date(t.updated_at || t.created_at);
+                                                const timeAgo = Math.floor((new Date().getTime() - lastUpdate.getTime()) / 3600000);
+
+                                                return (
+                                                    <tr key={t.id} className="hover:bg-slate-50/50 transition-colors group">
+                                                        <td className="px-8 py-4 border-b border-slate-50">
+                                                            <div className="flex flex-col">
+                                                                <span className="text-sm font-black text-slate-900 group-hover:text-indigo-600 transition-colors uppercase">{t.ticket_number}</span>
+                                                                <span className="text-xs font-bold text-slate-400 truncate max-w-[200px]">{t.subject}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-8 py-4 border-b border-slate-50 text-xs font-bold text-slate-600">{aName}</td>
+                                                        <td className="px-8 py-4 border-b border-slate-50 text-center">
+                                                            <span className={`px-2.5 py-1 text-[9px] font-black uppercase rounded-lg border 
+                                                                ${(t.priority || '').toLowerCase().includes('critical') ? 'bg-rose-50 text-rose-600 border-rose-100' :
+                                                                    (t.priority || '').toLowerCase().includes('high') ? 'bg-orange-50 text-orange-600 border-orange-100' :
+                                                                        (t.priority || '').toLowerCase().includes('medium') ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                                                                            'bg-blue-50 text-blue-600 border-blue-100'}`}>
+                                                                {t.priority || 'N/A'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-8 py-4 border-b border-slate-50 text-right">
+                                                            <span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-[9px] font-black uppercase rounded-lg">{sName}</span>
+                                                        </td>
+                                                        {anomalyModal === 'stale' && (
+                                                            <td className="px-8 py-4 border-b border-slate-50 text-right text-xs font-black text-rose-600">
+                                                                {timeAgo}h ago
+                                                            </td>
+                                                        )}
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                )}
+
+                                {/* Workload — Show Agent Table */}
+                                {anomalyModal === 'workload' && (
+                                    <table className="w-full text-left border-collapse">
+                                        <thead className="sticky top-0 bg-slate-50/80 backdrop-blur-md z-10">
+                                            <tr>
+                                                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Agent</th>
+                                                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center">Incident</th>
+                                                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center">Request</th>
+                                                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center">Change</th>
+                                                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-right">Total</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {overloadedAgents.map((agent: any, idx: number) => (
+                                                <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                                                    <td className="px-8 py-4 border-b border-slate-50 text-sm font-black text-slate-900">{agent.name}</td>
+                                                    <td className="px-8 py-4 border-b border-slate-50 text-center text-xs font-bold text-slate-500">{agent.incident}</td>
+                                                    <td className="px-8 py-4 border-b border-slate-50 text-center text-xs font-bold text-slate-500">{agent.request}</td>
+                                                    <td className="px-8 py-4 border-b border-slate-50 text-center text-xs font-bold text-slate-500">{agent.change}</td>
+                                                    <td className="px-8 py-4 border-b border-slate-50 text-right text-sm font-black text-rose-600">{agent.total}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
+
+                            {/* Footer */}
+                            <div className="px-8 py-4 bg-slate-50/50 border-t border-slate-100 flex justify-end">
+                                <button
+                                    onClick={() => setAnomalyModal(null)}
                                     className="px-6 py-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95"
                                 >
                                     Close

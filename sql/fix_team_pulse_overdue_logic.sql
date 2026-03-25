@@ -1,9 +1,9 @@
 -- =================================================================
--- FIX: Team Pulse RPC Overdue Logic (V2 - Robust)
+-- FIX: Team Pulse RPC - Business Hours + Holidays Aware Overdue
 -- =================================================================
--- This script updates the 'get_team_pulse' function to use dynamic
--- SLA thresholds, case-insensitive priorities, and excludes 
--- Pending/Waiting statuses from overdue calculation.
+-- Updates get_team_pulse() to use calculate_business_minutes_sql()
+-- for overdue calculation instead of wall clock.
+-- This ensures holidays and business hours are respected.
 -- =================================================================
 
 CREATE OR REPLACE FUNCTION public.get_team_pulse()
@@ -53,8 +53,11 @@ BEGIN
          WHERE LOWER(s.status_name::TEXT) IN ('resolved', 'closed')
      )
      AND t.updated_at::date = CURRENT_DATE)::bigint as resolved_today_count,
-    -- Target: Overdue Tickets (Exclude Pending/Waiting)
+    -- Target: Overdue Tickets using BUSINESS HOURS (not wall clock)
+    -- Uses calculate_business_minutes_sql() which respects holidays + business hours
     (SELECT COUNT(*) FROM public.tickets t 
+     LEFT JOIN public.groups g ON t.assignment_group_id = g.id
+     LEFT JOIN public.business_hours bh ON g.business_hour_id = bh.id
      WHERE t.assigned_to = p.id 
      AND t.status_id IN (
          SELECT s.status_id FROM public.ticket_statuses s 
@@ -63,13 +66,23 @@ BEGIN
            AND LOWER(s.status_name::TEXT) NOT LIKE '%waiting%'
      )
      AND (
-        -- Dynamic SLA based on priority (Case-Insensitive)
-        (LOWER(t.priority::TEXT) IN ('urgent', 'critical') AND t.created_at < (NOW() - INTERVAL '4 hours')) OR
-        (LOWER(t.priority::TEXT) = 'high' AND t.created_at < (NOW() - INTERVAL '8 hours')) OR
-        (LOWER(t.priority::TEXT) = 'medium' AND t.created_at < (NOW() - INTERVAL '48 hours')) OR
-        (LOWER(t.priority::TEXT) = 'low' AND t.created_at < (NOW() - INTERVAL '120 hours')) OR
-        -- Fallback default 24h
-        (LOWER(COALESCE(t.priority::TEXT, '')) NOT IN ('urgent', 'critical', 'high', 'medium', 'low') AND t.created_at < (NOW() - INTERVAL '24 hours'))
+        -- Calculate business elapsed minutes, subtract paused time
+        GREATEST(0, 
+            calculate_business_minutes_sql(t.created_at, NOW(), bh.weekly_schedule)
+            - COALESCE(t.total_paused_minutes, 0)
+            - CASE WHEN t.paused_at IS NOT NULL 
+                   THEN calculate_business_minutes_sql(t.paused_at, NOW(), bh.weekly_schedule) 
+                   ELSE 0 END
+        ) > (
+            -- SLA limit in minutes based on priority
+            CASE 
+                WHEN LOWER(t.priority::TEXT) IN ('urgent', 'critical') THEN 240   -- 4 hours
+                WHEN LOWER(t.priority::TEXT) = 'high' THEN 480                     -- 8 hours
+                WHEN LOWER(t.priority::TEXT) = 'medium' THEN 2880                  -- 48 hours
+                WHEN LOWER(t.priority::TEXT) = 'low' THEN 7200                     -- 120 hours
+                ELSE 1440                                                           -- 24 hours default
+            END
+        )
      )
     )::bigint as overdue_count
   FROM public.profiles p
@@ -93,3 +106,5 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_team_pulse() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_team_pulse() TO anon;
 GRANT EXECUTE ON FUNCTION public.get_team_pulse() TO service_role;
+
+SELECT 'Team Pulse RPC updated with business hours + holidays aware overdue!' as status;

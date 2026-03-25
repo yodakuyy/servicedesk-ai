@@ -36,6 +36,8 @@ interface AutoCloseRule {
     add_note: boolean;
     note_text?: string;
     is_active: boolean;
+    target_status_id?: string;
+    use_business_hours?: boolean;
 }
 
 /**
@@ -49,12 +51,67 @@ function getCutoffDate(days: number, hours: number): Date {
 }
 
 /**
+ * Calculate business minutes elapsed between two dates using schedule + holidays
+ */
+function calcBusinessMinutesElapsed(startDate: Date, endDate: Date, schedule: any[], holidays: any[]): number {
+    if (!schedule || schedule.length === 0) return Math.floor((endDate.getTime() - startDate.getTime()) / 60000);
+    let elapsed = 0;
+    let cur = new Date(startDate);
+    while (cur < endDate) {
+        const dateStr = cur.toISOString().split('T')[0];
+        const isHoliday = holidays.some((h: any) => h.holiday_date && h.holiday_date.startsWith(dateStr));
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const dayConfig = schedule.find((d: any) => d.day === dayNames[cur.getDay()]);
+        if (!dayConfig || !dayConfig.isActive || isHoliday) {
+            cur.setDate(cur.getDate() + 1); cur.setHours(0, 0, 0, 0); continue;
+        }
+        const [sH, sM] = dayConfig.startTime.split(':').map(Number);
+        const [eH, eM] = dayConfig.endTime.split(':').map(Number);
+        const ws = new Date(cur); ws.setHours(sH, sM, 0, 0);
+        const we = new Date(cur); we.setHours(eH, eM, 0, 0);
+        const segS = cur < ws ? ws : cur;
+        const segE = endDate < we ? endDate : we;
+        if (segS < segE) {
+            if (dayConfig.breakActive) {
+                const [bSH, bSM] = dayConfig.breakStartTime.split(':').map(Number);
+                const [bEH, bEM] = dayConfig.breakEndTime.split(':').map(Number);
+                const bS = new Date(segS); bS.setHours(bSH, bSM, 0, 0);
+                const bE = new Date(segS); bE.setHours(bEH, bEM, 0, 0);
+                if (segS < bS && segE > bE) { elapsed += (bS.getTime() - segS.getTime()) / 60000 + (segE.getTime() - bE.getTime()) / 60000; }
+                else if (segE <= bS || segS >= bE) { elapsed += (segE.getTime() - segS.getTime()) / 60000; }
+                else if (segS < bS) { elapsed += (bS.getTime() - segS.getTime()) / 60000; }
+                else if (segE > bE) { elapsed += (segE.getTime() - bE.getTime()) / 60000; }
+            } else { elapsed += (segE.getTime() - segS.getTime()) / 60000; }
+        }
+        cur.setDate(cur.getDate() + 1); cur.setHours(0, 0, 0, 0);
+    }
+    return Math.floor(elapsed);
+}
+
+/**
  * Get tickets that match a specific rule's conditions
  */
 async function getMatchingTickets(rule: AutoCloseRule): Promise<any[]> {
-    const cutoffDate = getCutoffDate(rule.after_days, rule.after_hours);
+    const ruleMinutes = (rule.after_days * 24 * 60) + (rule.after_hours * 60);
+
+    let cutoffDate: Date;
+    if (rule.use_business_hours) {
+        const widerCutoff = new Date();
+        widerCutoff.setDate(widerCutoff.getDate() - Math.max(rule.after_days * 3, 7));
+        widerCutoff.setHours(widerCutoff.getHours() - rule.after_hours);
+        cutoffDate = widerCutoff;
+    } else {
+        cutoffDate = getCutoffDate(rule.after_days, rule.after_hours);
+    }
 
     try {
+        // First, get IDs of all "final" statuses to exclude them
+        const { data: finalStatuses } = await supabase
+            .from('ticket_statuses')
+            .select('status_id')
+            .eq('is_final', true);
+        const finalStatusIds = (finalStatuses || []).map(s => s.status_id);
+
         let query = supabase
             .from('tickets')
             .select(`
@@ -66,56 +123,83 @@ async function getMatchingTickets(rule: AutoCloseRule): Promise<any[]> {
                 assigned_to,
                 assignment_group_id,
                 updated_at,
-                ticket_statuses:status_id(status_name, status_code, is_final)
+                ticket_statuses:status_id(status_name, status_code, is_final),
+                group:groups!assignment_group_id(
+                    business_hours(weekly_schedule)
+                )
             `)
-            .eq('ticket_statuses.is_final', false) // Only non-closed tickets
             .lte('updated_at', cutoffDate.toISOString());
+
+        // Exclude final/closed statuses
+        if (finalStatusIds.length > 0) {
+            query = query.not('status_id', 'in', `(${finalStatusIds.join(',')})`);
+        }
 
         // Apply condition based on rule type
         switch (rule.condition_type) {
             case 'status':
-                // Close tickets in a specific status
+                // condition_value is the status NAME (string), look up its UUID
                 if (rule.condition_value) {
-                    // condition_value should be status_id
-                    query = query.eq('status_id', parseInt(rule.condition_value));
+                    const { data: matchedStatus } = await supabase
+                        .from('ticket_statuses')
+                        .select('status_id')
+                        .ilike('status_name', rule.condition_value.trim())
+                        .single();
+                    if (matchedStatus) {
+                        query = query.eq('status_id', matchedStatus.status_id);
+                    } else {
+                        console.warn(`Auto-Close: No status found matching "${rule.condition_value}"`);
+                        return [];
+                    }
                 }
                 break;
 
             case 'pending':
-                // Close tickets in any "pending" status
-                // We need to find pending statuses first
                 const { data: pendingStatuses } = await supabase
                     .from('ticket_statuses')
                     .select('status_id')
                     .ilike('status_name', '%pending%');
-
                 if (pendingStatuses && pendingStatuses.length > 0) {
                     query = query.in('status_id', pendingStatuses.map(s => s.status_id));
                 }
                 break;
 
             case 'no_response':
-                // Close tickets where last activity was not from requester
-                // This is more complex - we check tickets with no recent requester replies
-                // For simplicity, we'll use updated_at as proxy
                 break;
 
             case 'user_confirmed':
-                // This is typically handled separately when user clicks "confirm"
-                // Skip for automated processing
                 return [];
         }
 
         const { data: tickets, error } = await query;
 
         if (error) {
-            console.error(`Error fetching tickets for rule "${rule.name}":`, error);
+            console.error(`Auto-Close: Error fetching tickets for rule "${rule.name}":`, error);
             return [];
+        }
+
+        console.log(`Auto-Close: Rule "${rule.name}" found ${tickets?.length || 0} candidate tickets`);
+
+        // If using business hours, filter by actual business minutes elapsed
+        if (rule.use_business_hours && tickets && tickets.length > 0) {
+            const { data: holidays } = await supabase.from('holidays').select('holiday_date');
+            const holidayList = holidays || [];
+
+            return tickets.filter((t: any) => {
+                const rawGroup = t.group;
+                const groupObj = Array.isArray(rawGroup) ? rawGroup[0] : rawGroup;
+                const rawBH = groupObj?.business_hours;
+                const bhObj = Array.isArray(rawBH) ? rawBH[0] : rawBH;
+                const schedule = bhObj?.weekly_schedule || [];
+                const lastUpdate = new Date(t.updated_at);
+                const bizMinutes = calcBusinessMinutesElapsed(lastUpdate, new Date(), schedule, holidayList);
+                return bizMinutes >= ruleMinutes;
+            });
         }
 
         return tickets || [];
     } catch (error) {
-        console.error(`Error in getMatchingTickets for rule "${rule.name}":`, error);
+        console.error(`Auto-Close: Error in getMatchingTickets for rule "${rule.name}":`, error);
         return [];
     }
 }
@@ -126,14 +210,18 @@ async function getMatchingTickets(rule: AutoCloseRule): Promise<any[]> {
 async function closeTicket(
     ticketId: string,
     rule: AutoCloseRule,
-    closedStatusId: number
+    closedStatusId: string
 ): Promise<{ success: boolean; error?: string }> {
     try {
-        // 1. Update ticket status to closed
+        // Use target_status_id from rule if set, otherwise default to closed
+        const targetStatusId = rule.target_status_id || closedStatusId;
+        const isResolve = rule.target_status_id && rule.target_status_id !== closedStatusId;
+
+        // 1. Update ticket status
         const { error: updateError } = await supabase
             .from('tickets')
             .update({
-                status_id: closedStatusId,
+                status_id: targetStatusId,
                 updated_at: new Date().toISOString()
             })
             .eq('id', ticketId);
@@ -142,37 +230,65 @@ async function closeTicket(
             return { success: false, error: updateError.message };
         }
 
-        // 2. Add system note if configured
+        // 3. Log activity
+        await supabase.from('ticket_activity_log').insert({
+            ticket_id: ticketId,
+            action: isResolve 
+                ? `Ticket auto-resolved by rule "${rule.name}"` 
+                : `Ticket auto-closed by rule "${rule.name}"`
+        });
+
+        // 4. Fetch ticket details (needed for note sender_id + notifications)
+        const { data: ticket } = await supabase
+            .from('tickets')
+            .select('requester_id, assigned_to, ticket_number, subject')
+            .eq('id', ticketId)
+            .single();
+
+        // 5. Add system note to conversation (visible to user) if configured
         if (rule.add_note && rule.note_text) {
-            await supabase
-                .from('ticket_replies')
-                .insert({
-                    ticket_id: ticketId,
-                    content: rule.note_text,
-                    is_internal: true,
-                    reply_type: 'system',
-                    created_at: new Date().toISOString()
-                });
+            // Determine best sender: assigned agent → dept admin → requester
+            let systemSenderId = ticket?.assigned_to || ticket?.requester_id;
+
+            // If no assigned agent, try to find a dept admin from the ticket's company
+            if (!ticket?.assigned_to && ticket?.requester_id) {
+                const { data: deptAdmin } = await supabase
+                    .from('profiles')
+                    .select('id')
+                    .eq('is_department_admin', true)
+                    .limit(1)
+                    .single();
+                if (deptAdmin) systemSenderId = deptAdmin.id;
+            }
+
+            if (systemSenderId) {
+                const { error: noteError } = await supabase
+                    .from('ticket_messages')
+                    .insert({
+                        ticket_id: ticketId,
+                        sender_id: systemSenderId,
+                        sender_role: 'system',
+                        content: `<div class="system-auto-note">${rule.note_text}</div>`,
+                        is_internal: false,
+                        created_at: new Date().toISOString()
+                    });
+                if (noteError) {
+                    console.error('Auto-Close: Failed to insert note:', noteError);
+                }
+            }
         }
 
-        // 3. Send notifications if configured
-        if (rule.notify_user || rule.notify_agent) {
-            // Get ticket details for notification
-            const { data: ticket } = await supabase
-                .from('tickets')
-                .select('requester_id, assigned_to, ticket_number, subject')
-                .eq('id', ticketId)
-                .single();
-
-            if (ticket) {
+        // 6. Send notifications if configured
+        if ((rule.notify_user || rule.notify_agent) && ticket) {
                 const notifications = [];
+                const actionWord = isResolve ? 'resolved' : 'closed';
 
                 if (rule.notify_user && ticket.requester_id) {
                     notifications.push({
                         user_id: ticket.requester_id,
-                        title: 'Ticket Auto-Closed',
-                        message: `Ticket ${ticket.ticket_number} has been automatically closed due to inactivity.`,
-                        type: 'ticket_closed',
+                        title: isResolve ? 'Ticket Auto-Resolved' : 'Ticket Auto-Closed',
+                        message: `Ticket ${ticket.ticket_number} has been automatically ${actionWord} due to no response. ${isResolve ? 'If you still need help, please reply to reopen the ticket.' : ''}`,
+                        type: isResolve ? 'ticket_resolved' : 'ticket_closed',
                         reference_type: 'ticket',
                         reference_id: ticketId,
                         is_read: false
@@ -182,9 +298,9 @@ async function closeTicket(
                 if (rule.notify_agent && ticket.assigned_to) {
                     notifications.push({
                         user_id: ticket.assigned_to,
-                        title: 'Ticket Auto-Closed',
-                        message: `Ticket ${ticket.ticket_number} has been automatically closed by rule "${rule.name}".`,
-                        type: 'ticket_closed',
+                        title: isResolve ? 'Ticket Auto-Resolved' : 'Ticket Auto-Closed',
+                        message: `Ticket ${ticket.ticket_number} has been automatically ${actionWord} by rule "${rule.name}".`,
+                        type: isResolve ? 'ticket_resolved' : 'ticket_closed',
                         reference_type: 'ticket',
                         reference_id: ticketId,
                         is_read: false
@@ -194,7 +310,6 @@ async function closeTicket(
                 if (notifications.length > 0) {
                     await supabase.from('notifications').insert(notifications);
                 }
-            }
         }
 
         return { success: true };

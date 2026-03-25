@@ -40,6 +40,8 @@ interface AutoCloseRule {
     created_at: string;
     updated_at: string;
     tickets_closed?: number;
+    target_status_id?: string;
+    use_business_hours?: boolean;
 }
 
 interface TicketStatus {
@@ -74,6 +76,8 @@ const AutoCloseRules: React.FC = () => {
         add_note: boolean;
         note_text: string;
         is_active: boolean;
+        target_status_id: string;
+        use_business_hours: boolean;
     }>({
         name: '',
         description: '',
@@ -85,7 +89,9 @@ const AutoCloseRules: React.FC = () => {
         notify_agent: false,
         add_note: false,
         note_text: '',
-        is_active: true
+        is_active: true,
+        target_status_id: '',
+        use_business_hours: false
     });
 
     // Pagination
@@ -220,7 +226,9 @@ const AutoCloseRules: React.FC = () => {
                 notify_agent: rule.notify_agent,
                 add_note: rule.add_note,
                 note_text: rule.note_text || '',
-                is_active: rule.is_active
+                is_active: rule.is_active,
+                target_status_id: rule.target_status_id || '',
+                use_business_hours: rule.use_business_hours || false
             });
         } else {
             setEditingRule(null);
@@ -235,7 +243,9 @@ const AutoCloseRules: React.FC = () => {
                 notify_agent: false,
                 add_note: false,
                 note_text: '',
-                is_active: true
+                is_active: true,
+                target_status_id: '',
+                use_business_hours: false
             });
         }
         setIsModalOpen(true);
@@ -256,6 +266,8 @@ const AutoCloseRules: React.FC = () => {
             add_note: formData.add_note,
             note_text: formData.note_text || null,
             is_active: formData.is_active,
+            target_status_id: formData.target_status_id || null,
+            use_business_hours: formData.use_business_hours || false,
             updated_at: new Date().toISOString()
         };
 
@@ -786,6 +798,55 @@ const AutoCloseRules: React.FC = () => {
                                         <span className="text-sm text-gray-600">hours</span>
                                     </div>
                                 </div>
+                            </div>
+
+                            {/* Time Calculation Mode */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Time Calculation</label>
+                                <div className="flex gap-3">
+                                    <label className={`flex-1 flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors border-2 ${!formData.use_business_hours ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 bg-gray-50 hover:bg-gray-100'}`}>
+                                        <input
+                                            type="radio"
+                                            name="time_calc"
+                                            checked={!formData.use_business_hours}
+                                            onChange={() => setFormData(prev => ({ ...prev, use_business_hours: false }))}
+                                            className="w-4 h-4 text-indigo-600"
+                                        />
+                                        <div>
+                                            <p className="font-medium text-gray-800 text-sm">Standard Hours</p>
+                                            <p className="text-[11px] text-gray-500">Counts 24/7 including holidays</p>
+                                        </div>
+                                    </label>
+                                    <label className={`flex-1 flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors border-2 ${formData.use_business_hours ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 bg-gray-50 hover:bg-gray-100'}`}>
+                                        <input
+                                            type="radio"
+                                            name="time_calc"
+                                            checked={formData.use_business_hours}
+                                            onChange={() => setFormData(prev => ({ ...prev, use_business_hours: true }))}
+                                            className="w-4 h-4 text-indigo-600"
+                                        />
+                                        <div>
+                                            <p className="font-medium text-gray-800 text-sm">Business Hours</p>
+                                            <p className="text-[11px] text-gray-500">Only counts working hours & skips holidays</p>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+
+                            {/* Target Status */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Target Status</label>
+                                <p className="text-xs text-gray-500 mb-2">Choose what status the ticket will change to. Leave as default to use "Closed".</p>
+                                <select
+                                    value={formData.target_status_id}
+                                    onChange={(e) => setFormData(prev => ({ ...prev, target_status_id: e.target.value }))}
+                                    className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                >
+                                    <option value="">Default (Closed)</option>
+                                    {statuses.map(s => (
+                                        <option key={s.status_id} value={s.status_id}>{s.status_name}</option>
+                                    ))}
+                                </select>
                             </div>
 
                             {/* Notifications */}
