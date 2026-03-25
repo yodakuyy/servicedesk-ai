@@ -241,9 +241,27 @@ async function closeTicket(
         // 4. Fetch ticket details (needed for note sender_id + notifications)
         const { data: ticket } = await supabase
             .from('tickets')
-            .select('requester_id, assigned_to, ticket_number, subject')
+            .select(`
+                requester_id, 
+                assigned_to, 
+                ticket_number, 
+                subject,
+                assignment_group_id,
+                group:groups!assignment_group_id(
+                    company_id,
+                    company:companies!company_id(company_name)
+                )
+            `)
             .eq('id', ticketId)
             .single();
+        
+        // Extract department name (e.g., "DIT")
+        const rawGroup = (ticket as any)?.group;
+        const groupObj = Array.isArray(rawGroup) ? rawGroup[0] : rawGroup;
+        const rawCompany = groupObj?.company;
+        const companyObj = Array.isArray(rawCompany) ? rawCompany[0] : rawCompany;
+        const deptName = companyObj?.company_name || '';
+        const deptPrefix = deptName ? `[${deptName}] ` : '';
 
         // 5. Add system note to conversation (visible to user) if configured
         if (rule.add_note && rule.note_text) {
@@ -286,7 +304,7 @@ async function closeTicket(
                 if (rule.notify_user && ticket.requester_id) {
                     notifications.push({
                         user_id: ticket.requester_id,
-                        title: isResolve ? 'Ticket Auto-Resolved' : 'Ticket Auto-Closed',
+                        title: `${deptPrefix}${isResolve ? 'Ticket Auto-Resolved' : 'Ticket Auto-Closed'}`,
                         message: `Ticket ${ticket.ticket_number} has been automatically ${actionWord} due to no response. ${isResolve ? 'If you still need help, please reply to reopen the ticket.' : ''}`,
                         type: isResolve ? 'ticket_resolved' : 'ticket_closed',
                         reference_type: 'ticket',
@@ -298,7 +316,7 @@ async function closeTicket(
                 if (rule.notify_agent && ticket.assigned_to) {
                     notifications.push({
                         user_id: ticket.assigned_to,
-                        title: isResolve ? 'Ticket Auto-Resolved' : 'Ticket Auto-Closed',
+                        title: `${deptPrefix}${isResolve ? 'Ticket Auto-Resolved' : 'Ticket Auto-Closed'}`,
                         message: `Ticket ${ticket.ticket_number} has been automatically ${actionWord} by rule "${rule.name}".`,
                         type: isResolve ? 'ticket_resolved' : 'ticket_closed',
                         reference_type: 'ticket',

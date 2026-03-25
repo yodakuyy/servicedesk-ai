@@ -1709,7 +1709,8 @@ const UserManagement: React.FC = () => {
                                         <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Emp No</th>
                                         <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Employee Name</th>
                                         <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
-                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Department (Cost Center)</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Department</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Position</th>
                                         <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
                                         <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                                     </tr>
@@ -1718,7 +1719,7 @@ const UserManagement: React.FC = () => {
                                     {loadingIdentity ? (
                                         Array.from({ length: 5 }).map((_, i) => (
                                             <tr key={i} className="animate-pulse">
-                                                <td colSpan={6} className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-full"></div></td>
+                                                <td colSpan={7} className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-full"></div></td>
                                             </tr>
                                         ))
                                     ) : identityUsers.length > 0 ? (
@@ -1735,6 +1736,9 @@ const UserManagement: React.FC = () => {
                                                             <span className="font-medium text-gray-800">{cleanCostCenter(iUser.cost_center)}</span>
                                                             <span className="text-[10px] text-gray-400 font-mono italic">{iUser.cost_center}</span>
                                                         </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-sm text-gray-600">
+                                                        <span className="font-medium text-gray-800">{iUser.employee_position || 'N/A'}</span>
                                                     </td>
                                                     <td className="px-6 py-4">
                                                         <span className="px-2.5 py-1 bg-green-50 text-green-700 rounded-full text-xs font-medium border border-green-100">
