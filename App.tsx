@@ -79,7 +79,10 @@ const App: React.FC = () => {
   if (currentView === 'kb-portal') {
     return (
       <ToastProvider>
-        <RequesterKBPortal />
+        <RequesterKBPortal onClose={() => {
+          window.location.hash = '';
+          setCurrentView('login');
+        }} />
       </ToastProvider>
     );
   }

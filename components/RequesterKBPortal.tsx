@@ -5,7 +5,7 @@ import {
     Search, Book, ChevronRight, ThumbsUp, ThumbsDown,
     ArrowLeft, Clock, Tag, Folder, HelpCircle,
     Loader2, MessageCircle, Ticket, CheckCircle,
-    Sparkles, TrendingUp, BookOpen
+    Sparkles, TrendingUp, BookOpen, Eye
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 // @ts-ignore
@@ -24,6 +24,7 @@ interface Article {
     category_id: string;
     category_name?: string;
     updated_at: string;
+    view_count: number;
     tags?: string[];
 }
 
@@ -35,7 +36,7 @@ interface Category {
     children?: Category[];
 }
 
-const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId: propCompanyId }) => {
+const RequesterKBPortal: React.FC<{ companyId?: number | null; onClose?: () => void }> = ({ companyId: propCompanyId, onClose }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [articles, setArticles] = useState<Article[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
@@ -49,26 +50,27 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
 
     useEffect(() => {
         const initialize = async () => {
-            // Priority 1: Use propCompanyId if provided
-            if (propCompanyId !== undefined) {
-                setCurrentCompanyId(propCompanyId);
-                fetchCategories(propCompanyId);
-                fetchPopularArticles(propCompanyId);
-                return;
-            }
+            setLoading(true);
+            try {
+                // Priority 1: Use propCompanyId if provided
+                if (propCompanyId !== undefined) {
+                    setCurrentCompanyId(propCompanyId);
+                    await Promise.all([
+                        fetchCategories(propCompanyId),
+                        fetchPopularArticles(propCompanyId)
+                    ]);
+                    return;
+                }
 
-            // Priority 2: Fetch from profile if no prop provided
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                const { data: profile } = await supabase
-                    .from('profiles')
-                    .select('groups!user_groups(company_id)')
-                    .eq('id', user.id)
-                    .single();
+                // Priority 2: Fetch from profile if no prop provided
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user) {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('groups!user_groups(company_id)')
+                        .eq('id', user.id)
+                        .single();
 
-                if (profile) {
-                    // @ts-ignore
-                    const companyId = profile.groups?.[0]?.company_id;
                     const { data: profileFull } = await supabase
                         .from('profiles')
                         .select('role_id')
@@ -76,15 +78,23 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
                         .single();
 
                     const isAdmin = profileFull?.role_id === 1 || profileFull?.role_id === '1';
-                    const effectiveCompanyId = isAdmin ? null : (companyId || null);
+                    const effectiveCompanyId = isAdmin ? null : (profile?.groups?.[0]?.company_id || null);
 
                     setCurrentCompanyId(effectiveCompanyId);
-                    fetchCategories(effectiveCompanyId);
-                    fetchPopularArticles(effectiveCompanyId);
+                    await Promise.all([
+                        fetchCategories(effectiveCompanyId),
+                        fetchPopularArticles(effectiveCompanyId)
+                    ]);
+                } else {
+                    await Promise.all([
+                        fetchCategories(null),
+                        fetchPopularArticles(null)
+                    ]);
                 }
-            } else {
-                fetchCategories(null);
-                fetchPopularArticles(null);
+            } catch (error) {
+                console.error('KB Portal Initialization Error:', error);
+            } finally {
+                setLoading(false);
             }
         };
         initialize();
@@ -112,13 +122,19 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
                 .order('name');
 
             if (categoriesData) {
-                // Get article count per category (only public + published)
-                const { data: articleCounts } = await supabase
+                let countQuery = supabase
                     .from('kb_articles')
                     .select('category_id')
                     .eq('visibility', 'public')
-                    .eq('status', 'published')
-                    .eq('company_id', companyId);
+                    .eq('status', 'published');
+                
+                if (companyId) {
+                    countQuery = countQuery.or(`company_id.eq.${companyId},company_id.is.null`);
+                } else {
+                    countQuery = countQuery.is('company_id', null);
+                }
+
+                const { data: articleCounts } = await countQuery;
 
                 const countMap: { [key: string]: number } = {};
                 articleCounts?.forEach(a => {
@@ -142,6 +158,8 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
                     .filter(c => c.article_count > 0 || c.children?.some(ch => ch.article_count > 0));
 
                 setCategories(rootCategories);
+            } else {
+                setCategories([]);
             }
         } catch (error) {
             console.error('Error fetching categories:', error);
@@ -154,15 +172,22 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
         try {
             // For now, just get the 5 most recent published public articles
             // In future, could use kb_article_feedback or view count
-            const { data } = await supabase
+            let popQuery = supabase
                 .from('kb_articles')
                 .select(`
-                    id, title, summary, content, category_id, updated_at,
+                    id, title, summary, content, category_id, updated_at, view_count,
                     kb_categories!inner(name)
                 `)
                 .eq('visibility', 'public')
-                .eq('status', 'published')
-                .eq('company_id', companyId)
+                .eq('status', 'published');
+            
+            if (companyId) {
+                popQuery = popQuery.or(`company_id.eq.${companyId},company_id.is.null`);
+            } else {
+                popQuery = popQuery.is('company_id', null);
+            }
+
+            const { data } = await popQuery
                 .order('updated_at', { ascending: false })
                 .limit(5);
 
@@ -181,16 +206,23 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
     const searchArticles = async (query: string) => {
         setSearchLoading(true);
         try {
-            const { data } = await supabase
+            let searchQueryBuilder = supabase
                 .from('kb_articles')
                 .select(`
-                    id, title, summary, content, category_id, updated_at,
+                    id, title, summary, content, category_id, updated_at, view_count,
                     kb_categories!inner(name)
                 `)
                 .eq('visibility', 'public')
                 .eq('status', 'published')
-                .eq('company_id', currentCompanyId)
-                .or(`title.ilike.%${query}%,summary.ilike.%${query}%`)
+                .or(`title.ilike.%${query}%,summary.ilike.%${query}%`);
+            
+            if (currentCompanyId) {
+                searchQueryBuilder = searchQueryBuilder.or(`company_id.eq.${currentCompanyId},company_id.is.null`);
+            } else {
+                searchQueryBuilder = searchQueryBuilder.is('company_id', null);
+            }
+
+            const { data } = await searchQueryBuilder
                 .order('updated_at', { ascending: false })
                 .limit(20);
 
@@ -211,17 +243,25 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
     const fetchArticlesByType = async (type: string) => {
         setSearchLoading(true);
         try {
-            const { data } = await supabase
+            let typeQuery = supabase
                 .from('kb_articles')
                 .select(`
-                    id, title, summary, content, category_id, updated_at,
+                    id, title, summary, content, category_id, updated_at, view_count,
                     kb_categories!inner(name)
                 `)
                 .eq('visibility', 'public')
                 .eq('status', 'published')
-                .eq('company_id', currentCompanyId)
-                .eq('article_type', type)
-                .order('title', { ascending: true });
+                .eq('article_type', type);
+            
+            if (currentCompanyId) {
+                typeQuery = typeQuery.or(`company_id.eq.${currentCompanyId},company_id.is.null`);
+            } else {
+                typeQuery = typeQuery.is('company_id', null);
+            }
+
+            const { data } = await typeQuery
+                .order('view_count', { ascending: false })
+                .limit(20);
 
             if (data) {
                 const articlesWithCategory = data.map((a: any) => ({
@@ -250,16 +290,23 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
 
             const categoryIds = [categoryId, ...(childCategories?.map(c => c.id) || [])];
 
-            const { data } = await supabase
+            let catArtQuery = supabase
                 .from('kb_articles')
                 .select(`
-                    id, title, summary, content, category_id, updated_at,
+                    id, title, summary, content, category_id, updated_at, view_count,
                     kb_categories!inner(name)
                 `)
                 .eq('visibility', 'public')
                 .eq('status', 'published')
-                .eq('company_id', currentCompanyId)
-                .in('category_id', categoryIds)
+                .in('category_id', categoryIds);
+            
+            if (companyId) {
+                catArtQuery = catArtQuery.or(`company_id.eq.${companyId},company_id.is.null`);
+            } else {
+                catArtQuery = catArtQuery.is('company_id', null);
+            }
+
+            const { data } = await catArtQuery
                 .order('updated_at', { ascending: false });
 
             if (data) {
@@ -278,16 +325,34 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
 
     const fetchArticleDetail = async (article: Article) => {
         try {
+            // Optimistically show the article
+            setSelectedArticle(article);
+            
+            const newCount = (article.view_count || 0) + 1;
+
+            // Increment view count in DB
+            await supabase
+                .from('kb_articles')
+                .update({ view_count: newCount })
+                .eq('id', article.id);
+
+            // Sync with local articles list
+            setArticles(prev => prev.map(a => a.id === article.id ? { ...a, view_count: newCount } : a));
+            
+            // Sync with local popularArticles list
+            setPopularArticles(prev => prev.map(a => a.id === article.id ? { ...a, view_count: newCount } : a));
+
             // Fetch tags
             const { data: tagsData } = await supabase
                 .from('kb_article_tags')
                 .select('tag')
                 .eq('article_id', article.id);
 
-            setSelectedArticle({
-                ...article,
-                tags: tagsData?.map(t => t.tag) || []
-            });
+            setSelectedArticle(prev => prev ? {
+                ...prev,
+                tags: tagsData?.map(t => t.tag) || [],
+                view_count: newCount
+            } : null);
         } catch (error) {
             console.error('Error fetching article detail:', error);
             setSelectedArticle(article);
@@ -366,6 +431,10 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
                                 <span className="flex items-center gap-1">
                                     <Clock size={14} />
                                     Updated {formatDate(selectedArticle.updated_at)}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                    <Eye size={14} />
+                                    {selectedArticle.view_count || 0} {selectedArticle.view_count === 1 ? 'view' : 'views'}
                                 </span>
                             </div>
                             {selectedArticle.tags && selectedArticle.tags.length > 0 && (
@@ -477,7 +546,10 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
                                         <p className="text-sm text-gray-500">Our support team is here for you</p>
                                     </div>
                                 </div>
-                                <button className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors">
+                                <button 
+                                    onClick={onClose}
+                                    className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors"
+                                >
                                     <Ticket size={18} />
                                     Create Ticket
                                 </button>
@@ -497,11 +569,20 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
                 <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500"></div>
                 <div className="absolute inset-0 opacity-50" style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")" }}></div>
 
-                <div className="relative max-w-4xl mx-auto px-6 py-16 text-center">
-                    <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/20 backdrop-blur-sm rounded-full text-white/90 text-sm font-medium mb-6">
-                        <BookOpen size={16} />
-                        Knowledge Base
-                    </div>
+                    <div className="max-w-4xl mx-auto px-6 pt-8 text-center relative z-10">
+                        {onClose && (
+                            <button
+                                onClick={onClose}
+                                className="inline-flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-full text-white text-sm font-medium mb-8 transition-colors border border-white/20"
+                            >
+                                <ArrowLeft size={16} />
+                                Back to Login
+                            </button>
+                        )}
+                        <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/20 backdrop-blur-sm rounded-full text-white/90 text-sm font-medium mb-6">
+                            <BookOpen size={16} />
+                            Knowledge Base
+                        </div>
                     <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
                         How can we help you?
                     </h1>
@@ -561,9 +642,15 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
                                             {article.summary && (
                                                 <p className="text-gray-600 text-sm line-clamp-2">{article.summary}</p>
                                             )}
-                                            <div className="flex items-center gap-2 mt-3 text-xs text-gray-500">
-                                                <Clock size={12} />
-                                                <span>Updated {formatDate(article.updated_at)}</span>
+                                            <div className="flex items-center gap-3 mt-3 text-xs text-gray-500">
+                                                <div className="flex items-center gap-1">
+                                                    <Clock size={12} />
+                                                    <span>Updated {formatDate(article.updated_at)}</span>
+                                                </div>
+                                                <div className="flex items-center gap-1">
+                                                    <Eye size={12} />
+                                                    <span>{article.view_count || 0} {article.view_count === 1 ? 'view' : 'views'}</span>
+                                                </div>
                                             </div>
                                         </div>
                                         <ChevronRight size={20} className="text-gray-300 group-hover:text-indigo-500 transition-colors mt-2" />
@@ -642,48 +729,6 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
                             </div>
                         </div>
 
-                        {/* Browse by Category */}
-                        <div className="mb-12">
-                            <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-                                <Folder size={22} className="text-indigo-600" />
-                                Browse by Category
-                            </h2>
-                            {loading ? (
-                                <div className="flex items-center justify-center py-12">
-                                    <Loader2 size={32} className="animate-spin text-indigo-500" />
-                                </div>
-                            ) : categories.length > 0 ? (
-                                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {categories.map(category => (
-                                        <button
-                                            key={category.id}
-                                            onClick={() => setSelectedCategory(category.id)}
-                                            className="p-6 bg-white rounded-xl border border-gray-100 hover:border-indigo-200 hover:shadow-lg transition-all text-left group"
-                                        >
-                                            <div className="flex items-start justify-between">
-                                                <div>
-                                                    <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                                                        <Book size={22} className="text-white" />
-                                                    </div>
-                                                    <h3 className="font-semibold text-gray-900 group-hover:text-indigo-600 transition-colors mb-1">
-                                                        {category.name}
-                                                    </h3>
-                                                    <p className="text-sm text-gray-500">
-                                                        {(category.article_count || 0) + (category.children?.reduce((sum, c) => sum + (c.article_count || 0), 0) || 0)} articles
-                                                    </p>
-                                                </div>
-                                                <ChevronRight size={20} className="text-gray-300 group-hover:text-indigo-500 transition-colors" />
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
-                                    <p className="text-gray-500">No categories available yet</p>
-                                </div>
-                            )}
-                        </div>
-
                         {/* Popular Articles */}
                         {popularArticles.length > 0 && (
                             <div>
@@ -705,7 +750,12 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null }> = ({ companyId:
                                                 <h3 className="font-semibold text-gray-900 group-hover:text-indigo-600 transition-colors truncate">
                                                     {article.title}
                                                 </h3>
-                                                <p className="text-sm text-gray-500">{article.category_name}</p>
+                                                <div className="flex items-center gap-2 text-sm text-gray-500">
+                                                    <span>{article.category_name}</span>
+                                                    <span>•</span>
+                                                    <Eye size={14} className="text-gray-400" />
+                                                    <span>{article.view_count || 0}</span>
+                                                </div>
                                             </div>
                                             <ChevronRight size={20} className="text-gray-300 group-hover:text-indigo-500 transition-colors shrink-0" />
                                         </button>

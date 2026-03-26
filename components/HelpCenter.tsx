@@ -7,7 +7,7 @@ import {
     ArrowLeft, Clock, ChevronRight, Loader2, ThumbsUp, ThumbsDown,
     CheckCircle, Sparkles, BookOpen, Tag, Folder, Grid3X3, List,
     Plus, Ticket, ChevronDown, Megaphone, AlertTriangle, Smartphone, Mail,
-    Building2
+    Building2, Eye
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 // @ts-ignore
@@ -25,7 +25,9 @@ interface Article {
     };
     category_id: string;
     category_name?: string;
+    published_at?: string;
     updated_at: string;
+    view_count: number;
     tags?: string[];
 }
 
@@ -167,10 +169,13 @@ const HelpCenter: React.FC = () => {
             // Filter active and relevant
             const filtered = policiesData.filter(p => {
                 const isActive = p.is_active === true;
-                const isMyCompany = !companyId || !p.company_id || p.company_id === companyId;
-                const isDIT = p.name?.toLowerCase().includes('dit');
-                const isStandard = p.name?.toLowerCase().includes('standard');
-                return isActive && (isMyCompany || isDIT || isStandard);
+                // If companyId is provided, show policies for that company OR global policies (null company_id)
+                // If no companyId (guest), show all active global policies
+                const isRelevant = !companyId 
+                    ? !p.company_id // Guests see global policies only
+                    : (!p.company_id || p.company_id === companyId); // Logged in users see their company + global
+                    
+                return isActive && isRelevant;
             });
 
             console.log(`HelpCenter: ${filtered.length} policies passed relevance filter.`);
@@ -283,7 +288,7 @@ const HelpCenter: React.FC = () => {
                 .or(`title.ilike.%${query}%,summary.ilike.%${query}%`);
 
             if (currentCompanyId) {
-                queryBuilder = queryBuilder.eq('company_id', currentCompanyId);
+                queryBuilder = queryBuilder.or(`company_id.eq.${currentCompanyId},company_id.is.null`);
             }
 
             const { data } = await queryBuilder.limit(10);
@@ -318,13 +323,13 @@ const HelpCenter: React.FC = () => {
 
                     let artQuery = supabase
                         .from('kb_articles')
-                        .select('*, kb_categories(name)')
+                        .select('*, kb_categories(name), view_count')
                         .eq('visibility', 'public')
                         .eq('status', 'published')
                         .eq('article_type', articleType);
 
                     if (currentCompanyId) {
-                        artQuery = artQuery.eq('company_id', currentCompanyId);
+                        artQuery = artQuery.or(`company_id.eq.${currentCompanyId},company_id.is.null`);
                     }
 
                     const { data: articlesData } = await artQuery.order('title', { ascending: true });
@@ -345,9 +350,32 @@ const HelpCenter: React.FC = () => {
                             article_count: articlesData.length
                         });
 
-                        // Auto-select first article if available for better UX
-                        if (formattedArticles.length > 0) {
-                            setSelectedArticle(formattedArticles[0]);
+                        // Smart Navigation: If only 1 article, skip split view and go FULL SCREEN
+                        if (formattedArticles.length === 1) {
+                            const firstArticle = formattedArticles[0];
+                            // Increment view count in DB
+                            const newCount = (firstArticle.view_count || 0) + 1;
+                            supabase
+                                .from('kb_articles')
+                                .update({ view_count: newCount })
+                                .eq('id', firstArticle.id)
+                                .then(() => {});
+
+                            // Fetch tags
+                            const { data: tagsData } = await supabase
+                                .from('kb_article_tags')
+                                .select('tag')
+                                .eq('article_id', firstArticle.id);
+
+                            setSelectedArticle({
+                                ...firstArticle,
+                                tags: tagsData?.map(t => t.tag) || [],
+                                view_count: newCount
+                            });
+                            setView('detail'); // FULL SCREEN!
+                        } else if (formattedArticles.length > 1) {
+                            // Multiple articles: Stay in split view but don't auto-select (user preference)
+                            setSelectedArticle(null);
                         }
                     }
                     setLoading(false);
@@ -358,13 +386,13 @@ const HelpCenter: React.FC = () => {
                 if (articleType === 'faq') {
                     let faqQuery = supabase
                         .from('kb_articles')
-                        .select('*')
+                        .select('*, view_count')
                         .eq('visibility', 'public')
                         .eq('status', 'published')
                         .eq('article_type', articleType);
 
                     if (currentCompanyId) {
-                        faqQuery = faqQuery.eq('company_id', currentCompanyId);
+                        faqQuery = faqQuery.or(`company_id.eq.${currentCompanyId},company_id.is.null`);
                     }
 
                     const { data: articlesData } = await faqQuery.order('title', { ascending: true });
@@ -385,7 +413,7 @@ const HelpCenter: React.FC = () => {
                     .select('id, name, parent_id, description');
 
                 if (currentCompanyId) {
-                    catQuery = catQuery.eq('company_id', currentCompanyId);
+                    catQuery = catQuery.or(`company_id.eq.${currentCompanyId},company_id.is.null`);
                 }
 
                 const { data: allCategories } = await catQuery;
@@ -400,7 +428,7 @@ const HelpCenter: React.FC = () => {
                     .eq('article_type', articleType);
 
                 if (currentCompanyId) {
-                    artQuery = artQuery.eq('company_id', currentCompanyId);
+                    artQuery = artQuery.or(`company_id.eq.${currentCompanyId},company_id.is.null`);
                 }
 
                 const { data: articlesData } = await artQuery;
@@ -522,7 +550,7 @@ const HelpCenter: React.FC = () => {
             let artFetchQuery = supabase
                 .from('kb_articles')
                 .select(`
-                    id, title, summary, content, category_id, updated_at,
+                    id, title, summary, content, category_id, updated_at, view_count,
                     kb_categories!inner(name)
                 `)
                 .eq('visibility', 'public')
@@ -531,7 +559,7 @@ const HelpCenter: React.FC = () => {
                 .in('category_id', categoryIds);
 
             if (currentCompanyId) {
-                artFetchQuery = artFetchQuery.eq('company_id', currentCompanyId);
+                artFetchQuery = artFetchQuery.or(`company_id.eq.${currentCompanyId},company_id.is.null`);
             }
 
             const { data } = await artFetchQuery.order('title');
@@ -543,9 +571,17 @@ const HelpCenter: React.FC = () => {
                 }));
                 setArticles(articlesWithCategory);
 
-                // Auto-select first article
-                if (articlesWithCategory.length > 0) {
+                // Smart Navigation: If only 1 article, skip split view and go FULL SCREEN
+                if (articlesWithCategory.length === 1) {
                     const firstArticle = articlesWithCategory[0];
+                    // Increment view count in DB
+                    const newCount = (firstArticle.view_count || 0) + 1;
+                    supabase
+                        .from('kb_articles')
+                        .update({ view_count: newCount })
+                        .eq('id', firstArticle.id)
+                        .then(() => {});
+
                     // Fetch tags for first article
                     const { data: tagsData } = await supabase
                         .from('kb_article_tags')
@@ -554,8 +590,13 @@ const HelpCenter: React.FC = () => {
 
                     setSelectedArticle({
                         ...firstArticle,
-                        tags: tagsData?.map(t => t.tag) || []
+                        tags: tagsData?.map(t => t.tag) || [],
+                        view_count: newCount
                     });
+                    setView('detail'); // FULL SCREEN!
+                } else if (articlesWithCategory.length > 1) {
+                    // Multiple articles: Stay in split view but don't auto-select (user preference)
+                    setSelectedArticle(null);
                 }
             }
         } catch (error) {
@@ -567,6 +608,14 @@ const HelpCenter: React.FC = () => {
 
     const handleArticleClick = async (article: Article) => {
         try {
+            // Increment view count in DB
+            const newCount = (article.view_count || 0) + 1;
+            await supabase
+                .from('kb_articles')
+                .update({ view_count: newCount })
+                .eq('id', article.id);
+
+            // Fetch tags
             const { data: tagsData } = await supabase
                 .from('kb_article_tags')
                 .select('tag')
@@ -574,8 +623,10 @@ const HelpCenter: React.FC = () => {
 
             setSelectedArticle({
                 ...article,
-                tags: tagsData?.map(t => t.tag) || []
+                tags: tagsData?.map(t => t.tag) || [],
+                view_count: newCount
             });
+            setView('detail');
 
             // Only switch to full detail view if NOT in split-view mode (articles view)
             if (view !== 'articles') {
@@ -627,8 +678,22 @@ const HelpCenter: React.FC = () => {
 
     const goBack = () => {
         if (view === 'detail') {
-            setView('articles');
-            setSelectedArticle(null);
+            // If only 1 article total, go back to categories (skipping split view)
+            if (articles.length === 1) {
+                if (selectedSection === 'Getting Started') {
+                    setView('home');
+                    setSelectedSection(null);
+                    setSelectedCategory(null);
+                    setArticles([]);
+                } else {
+                    setView('categories');
+                    setSelectedCategory(null);
+                    setArticles([]);
+                }
+            } else {
+                setView('articles');
+                setSelectedArticle(null);
+            }
         } else if (view === 'articles') {
             if (selectedSection === 'Getting Started') {
                 setView('home');
@@ -684,7 +749,7 @@ const HelpCenter: React.FC = () => {
             description: 'Learn about our policies and SLAs',
             color: 'text-green-500',
             bgColor: 'bg-green-50',
-            hasKB: false
+            hasKB: true
         },
         {
             icon: Phone,
@@ -692,7 +757,7 @@ const HelpCenter: React.FC = () => {
             description: 'Get in touch with our support team',
             color: 'text-pink-500',
             bgColor: 'bg-pink-50',
-            hasKB: false
+            hasKB: true
         },
         {
             icon: Settings,
@@ -700,7 +765,7 @@ const HelpCenter: React.FC = () => {
             description: 'Stay up-to-date with the latest news',
             color: 'text-orange-500',
             bgColor: 'bg-orange-50',
-            hasKB: false
+            hasKB: true
         },
     ];
 
@@ -993,8 +1058,6 @@ const HelpCenter: React.FC = () => {
     if (view === 'detail' && selectedArticle) {
         return (
             <div className="p-8 max-w-4xl mx-auto">
-// Rest of the 500+ lines are the same...
-
                 {/* Back Button */}
                 <button
                     onClick={goBack}
@@ -1022,6 +1085,10 @@ const HelpCenter: React.FC = () => {
                             <span className="flex items-center gap-1">
                                 <Clock size={14} />
                                 Updated {formatDate(selectedArticle.updated_at)}
+                            </span>
+                            <span className="flex items-center gap-1">
+                                <Eye size={14} />
+                                {selectedArticle.view_count || 0} {selectedArticle.view_count === 1 ? 'view' : 'views'}
                             </span>
                         </div>
                         {selectedArticle.tags && selectedArticle.tags.length > 0 && (
@@ -1212,10 +1279,16 @@ const HelpCenter: React.FC = () => {
                                         <div className="flex items-start gap-3">
                                             <FileText size={16} className={`mt-0.5 shrink-0 ${selectedArticle?.id === article.id ? 'text-indigo-600' : 'text-gray-400'
                                                 }`} />
-                                            <span className={`text-sm line-clamp-2 ${selectedArticle?.id === article.id ? 'text-indigo-700 font-medium' : 'text-gray-700'
-                                                }`}>
-                                                {article.title}
-                                            </span>
+                                            <div className="flex-1 min-w-0">
+                                                <span className={`text-sm block truncate ${selectedArticle?.id === article.id ? 'text-indigo-700 font-medium' : 'text-gray-700'
+                                                    }`}>
+                                                    {article.title}
+                                                </span>
+                                                <div className="flex items-center gap-2 mt-1 text-[10px] text-gray-500">
+                                                    <Eye size={10} />
+                                                    <span>{article.view_count || 0}</span>
+                                                </div>
+                                            </div>
                                         </div>
                                     </button>
                                 ))}
@@ -1249,6 +1322,10 @@ const HelpCenter: React.FC = () => {
                                     <div className="flex items-center gap-2">
                                         <Clock size={16} className="text-gray-400" />
                                         <span>Updated {formatDate(selectedArticle.updated_at)}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <Eye size={16} className="text-gray-400" />
+                                        <span>{selectedArticle.view_count || 0} {selectedArticle.view_count === 1 ? 'view' : 'views'}</span>
                                     </div>
 
                                     {selectedArticle.tags && selectedArticle.tags.length > 0 && (
@@ -1386,13 +1463,20 @@ const HelpCenter: React.FC = () => {
                             </div>
                         </div>
                     ) : (
-                        <div className="flex items-center justify-center h-full">
-                            <div className="text-center">
-                                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                                    <FileText size={32} className="text-gray-400" />
+                        <div className="flex items-center justify-center h-full bg-gray-50/50">
+                            <div className="text-center max-w-sm px-6">
+                                <div className="w-24 h-24 bg-white rounded-2xl shadow-sm flex items-center justify-center mx-auto mb-6 border border-gray-100">
+                                    <BookOpen size={40} className="text-indigo-500/40" />
                                 </div>
-                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Select an article</h3>
-                                <p className="text-gray-500">Choose an article from the list to view its content</p>
+                                <h3 className="text-xl font-bold text-gray-900 mb-3">
+                                    {selectedCategory?.name}
+                                </h3>
+                                <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100/50">
+                                    <p className="text-indigo-900 font-medium text-sm mb-1">{articles.length} Articles Available</p>
+                                    <p className="text-indigo-600/70 text-xs text-balance leading-relaxed">
+                                        Please select an article from the list on the left to start reading the documentation.
+                                    </p>
+                                </div>
                             </div>
                         </div>
                     )}
@@ -1662,7 +1746,13 @@ const HelpCenter: React.FC = () => {
                                         <h3 className="font-semibold text-gray-900 group-hover:text-indigo-600 transition-colors truncate">
                                             {article.title}
                                         </h3>
-                                        <p className="text-sm text-gray-500">{article.category_name}</p>
+                                        <div className="flex items-center gap-3 text-sm text-gray-500">
+                                            <span>{article.category_name}</span>
+                                            <span className="flex items-center gap-1">
+                                                <Eye size={14} className="text-gray-400" />
+                                                {article.view_count || 0}
+                                            </span>
+                                        </div>
                                     </div>
                                     <ChevronRight size={18} className="text-gray-300 group-hover:text-indigo-500 transition-colors shrink-0" />
                                 </button>

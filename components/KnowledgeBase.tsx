@@ -29,6 +29,7 @@ interface Article {
   updated_at: string;
   published_at?: string;
   is_ai_enabled: boolean;
+  view_count: number;
 }
 
 type StatusFilter = 'all' | 'draft' | 'review' | 'published' | 'archived';
@@ -118,7 +119,7 @@ const KnowledgeBase: React.FC<{ companyId?: number | null }> = ({ companyId: pro
         .eq('is_active', true);
 
       if (companyId) {
-        catQuery = catQuery.eq('company_id', companyId);
+        catQuery = catQuery.or(`company_id.eq.${companyId},company_id.is.null`);
       }
 
       const { data: categoriesData } = await catQuery.order('name');
@@ -130,7 +131,7 @@ const KnowledgeBase: React.FC<{ companyId?: number | null }> = ({ companyId: pro
         .select('*');
 
       if (companyId) {
-        artQuery = artQuery.eq('company_id', companyId);
+        artQuery = artQuery.or(`company_id.eq.${companyId},company_id.is.null`);
       }
 
       const { data: articlesData } = await artQuery.order('updated_at', { ascending: false });
@@ -412,6 +413,7 @@ const KnowledgeBase: React.FC<{ companyId?: number | null }> = ({ companyId: pro
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Category</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Visibility</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Views</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Updated</th>
                 <th className="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
@@ -455,6 +457,12 @@ const KnowledgeBase: React.FC<{ companyId?: number | null }> = ({ companyId: pro
                     </td>
                     <td className="px-6 py-4">
                       {getStatusBadge(article.status)}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      <div className="flex items-center gap-1.5 text-xs text-gray-600 font-medium">
+                        <Eye size={14} className="text-gray-400" />
+                        {article.view_count || 0}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500">
                       {formatDate(article.updated_at)}

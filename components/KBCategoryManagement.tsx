@@ -16,7 +16,8 @@ import {
     Check,
     X,
     ArrowLeft,
-    Loader2
+    Loader2,
+    Trash2
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 
@@ -105,7 +106,8 @@ const KBCategoryManagement: React.FC<KBCategoryManagementProps> = ({ onClose }) 
                 .select('*');
 
             if (companyId || currentCompanyId) {
-                query = query.eq('company_id', companyId || currentCompanyId);
+                const cid = companyId || currentCompanyId;
+                query = query.or(`company_id.eq.${cid},company_id.is.null`);
             }
 
             const { data, error } = await query.order('name', { ascending: true });
@@ -162,6 +164,72 @@ const KBCategoryManagement: React.FC<KBCategoryManagementProps> = ({ onClose }) 
         } catch (error) {
             console.error('Error updating category:', error);
             Swal.fire('Error', 'Failed to save changes', 'error');
+        }
+    };
+
+    const handleDelete = async (node: KBCategoryNode) => {
+        try {
+            // 1. Check for children locally first
+            if (node.children && node.children.length > 0) {
+                Swal.fire('Cannot Delete', 'This category contains subcategories. Please delete the subcategories first.', 'error');
+                return;
+            }
+
+            // 2. Double check with confirm dialog
+            const result = await Swal.fire({
+                title: 'Are you sure?',
+                text: `You are about to delete "${node.name}". This action cannot be undone.`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#d33',
+                cancelButtonColor: '#3085d6',
+                confirmButtonText: 'Yes, delete it!',
+                cancelButtonText: 'Cancel'
+            });
+
+            if (!result.isConfirmed) return;
+
+            setIsLoading(true);
+
+            // 3. Check for articles in this category via Supabase
+            const { count, error: countErr } = await supabase
+                .from('kb_articles')
+                .select('*', { count: 'exact', head: true })
+                .eq('category_id', node.id);
+
+            if (countErr) throw countErr;
+
+            if (count && count > 0) {
+                setIsLoading(false);
+                Swal.fire('Cannot Delete', `This category contains ${count} articles. Please move or delete the articles first.`, 'error');
+                return;
+            }
+
+            // 4. Perform Delete
+            const { error: deleteErr } = await supabase
+                .from('kb_categories')
+                .delete()
+                .eq('id', node.id);
+
+            if (deleteErr) throw deleteErr;
+
+            Swal.fire({
+                icon: 'success',
+                title: 'Deleted',
+                text: 'Category has been removed.',
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 2000
+            });
+
+            setSelectedNodeId(null);
+            fetchCategories();
+        } catch (error: any) {
+            console.error('Error deleting category:', error);
+            Swal.fire('Error', error.message || 'Failed to delete category', 'error');
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -436,6 +504,9 @@ const KBCategoryManagement: React.FC<KBCategoryManagementProps> = ({ onClose }) 
                                             </button>
                                             <button onClick={() => setIsEditing(true)} className="px-3 py-1.5 border rounded-lg text-xs font-bold hover:bg-gray-50 flex items-center gap-1">
                                                 <Edit3 size={14} /> Edit
+                                            </button>
+                                            <button onClick={() => handleDelete(selectedNode)} className="px-3 py-1.5 border border-red-100 text-red-600 rounded-lg text-xs font-bold hover:bg-red-50 flex items-center gap-1 transition-colors">
+                                                <Trash2 size={14} /> Delete
                                             </button>
                                         </>
                                     )}
