@@ -39,6 +39,16 @@ toastStyles.textContent = `
 .animate-progress {
     animation: progress linear forwards;
 }
+
+.prose img {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.prose img:hover {
+    opacity: 0.8;
+    transform: scale(0.995);
+}
 `;
 document.head.appendChild(toastStyles);
 

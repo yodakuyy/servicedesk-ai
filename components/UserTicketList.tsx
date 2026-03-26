@@ -90,7 +90,7 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                             ticket_statuses!fk_tickets_status (status_name),
                             ticket_categories!category_id!inner (company_id)
                         `)
-                        .eq('ticket_categories.company_id', companyId);
+                        .or(`company_id.eq.${companyId},company_id.is.null`, { foreignTable: 'ticket_categories' });
                     
                     if (ticketTypeFilter) {
                         query = query.eq('ticket_type', ticketTypeFilter);

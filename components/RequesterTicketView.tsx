@@ -46,7 +46,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                         *,
                         ticket_statuses!fk_tickets_status (status_name),
                         agent:profiles!fk_tickets_assigned_agent (full_name),
-                        group:groups!assignment_group_id (name, company_id),
+                        group:groups!assignment_group_id (name, company_id, company:company_id(company_name)),
                         ticket_attachments (*)
                     `)
                     .eq('id', ticketId)
@@ -68,6 +68,25 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
 
         fetchTicketDetails();
     }, [ticketId]);
+
+    const handleImagePreview = async (src: string) => {
+        if (!src) return;
+        // @ts-ignore
+        const Swal = (await import('sweetalert2')).default;
+        Swal.fire({
+            imageUrl: src,
+            imageAlt: 'Image preview',
+            width: 'auto',
+            padding: '10px',
+            background: '#ffffff',
+            showConfirmButton: false,
+            showCloseButton: true,
+            closeButtonHtml: '&times;',
+            customClass: {
+                image: 'max-h-[85vh] max-w-[90vw] object-contain rounded-lg shadow-2xl'
+            }
+        });
+    };
 
     const handleSendReply = async () => {
         if (!replyText.trim() || !ticketId || isSending) return;
@@ -576,11 +595,19 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
 
                                     <div className={`max-w-[85%] flex flex-col ${msg.sender_role === 'requester' ? 'items-end' : 'items-start'}`}>
                                         <div className="flex items-center gap-2 mb-1">
-                                            <span className="text-xs font-bold text-slate-700">{msg.sender?.full_name || 'Support Agent'}</span>
+                                            <span className="text-xs font-bold text-slate-700">
+                                                {msg.sender_role === 'system' 
+                                                    ? `Admin ${ticket.group?.company?.company_name || ticket.group?.name || 'DIT'}` 
+                                                    : (msg.sender?.full_name || 'Support Agent')}
+                                            </span>
                                             <span className="text-[10px] text-slate-400 font-medium">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                             {msg.sender_role === 'requester' ? (
                                                 <span className="bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
                                                     Requester
+                                                </span>
+                                            ) : msg.sender_role === 'system' ? (
+                                                <span className="bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                                    SYSTEM
                                                 </span>
                                             ) : (
                                                 <span className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
@@ -595,6 +622,12 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                                     : 'bg-[#f0f2f5] text-slate-800 rounded-2xl rounded-tl-[2px] border border-slate-100'
                                                 }`}
                                             dangerouslySetInnerHTML={{ __html: msg.content || '' }}
+                                            onClick={(e) => {
+                                                const target = e.target as HTMLElement;
+                                                if (target.tagName === 'IMG') {
+                                                    handleImagePreview(target.getAttribute('src') || '');
+                                                }
+                                            }}
                                         />
                                     </div>
                                 </div>

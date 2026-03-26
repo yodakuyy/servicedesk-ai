@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, HelpCircle, Paperclip, Sparkles, Send, ChevronRight, X, Info, AlertCircle, Monitor, Wifi, Box, MoreHorizontal, Clock, CheckCircle2, Zap, Search } from 'lucide-react';
+import { ArrowLeft, HelpCircle, Paperclip, Sparkles, Send, ChevronRight, X, Info, AlertCircle, Monitor, Wifi, Box, MoreHorizontal, Clock, CheckCircle2, Zap, Search, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { applyAutoAssignment, getRoundRobinAgent } from '../lib/autoAssignment';
 import RichTextEditor from './RichTextEditor';
@@ -90,10 +90,14 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
             return;
         }
         const searchUser = async () => {
-            if (!someoneElseDetails.email.includes('@')) return;
+            const email = someoneElseDetails.email.trim();
+            if (!email.includes('@')) {
+                setAffectedUserId(null);
+                return;
+            }
             setSearchingUser(true);
             try {
-                const { data } = await supabase.from('profiles').select('id, full_name').eq('email', someoneElseDetails.email).single();
+                const { data } = await supabase.from('profiles').select('id, full_name').ilike('email', email).single();
                 if (data) {
                     setAffectedUserId(data.id);
                     if (!someoneElseDetails.fullName) setSomeoneElseDetails(prev => ({ ...prev, fullName: data.full_name }));
@@ -106,9 +110,9 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 setSearchingUser(false);
             }
         };
-        const timer = setTimeout(searchUser, 1000);
+        const timer = setTimeout(searchUser, 600); // Reduced delay
         return () => clearTimeout(timer);
-    }, [someoneElseDetails.email, affectedUser, userProfile?.id]);
+    }, [someoneElseDetails.email, affectedUser]);
 
     // Helpers
     const getSystemClassification = (type: string, subj: string, desc: string) => {
@@ -204,6 +208,28 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 setErrorMessage("Please enter a valid email format (e.g., user@example.com).");
                 setIsSubmitting(false);
                 return;
+            }
+
+            // Ensure we have the user ID before submitting if it's someone else
+            if (!affectedUserId) {
+                // One last attempt to find the user
+                try {
+                    const email = someoneElseDetails.email.trim();
+                    const { data } = await supabase.from('profiles').select('id').ilike('email', email).single();
+                    if (data) {
+                        setAffectedUserId(data.id);
+                    } else {
+                        // User not found - we could either stop or proceed as creator
+                        // But since the objective is to have it in Dedi's list, we should probably warn.
+                        setErrorMessage(`User with email ${email} not found. Please ensure they have logged in before.`);
+                        setIsSubmitting(false);
+                        return;
+                    }
+                } catch (err) {
+                    setErrorMessage("Could not verify the reported user. Please try again.");
+                    setIsSubmitting(false);
+                    return;
+                }
             }
         }
 
@@ -347,10 +373,19 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
 
                     {affectedUser === 'someone_else' && (
                         <div className="grid grid-cols-2 gap-4 pt-4 animate-in slide-in-from-top-2">
-                            <div className="space-y-1">
+                            <div className="space-y-1 relative">
                                 <input placeholder="Email Address *" type="email" required value={someoneElseDetails.email} onChange={e => setSomeoneElseDetails(p => ({ ...p, email: e.target.value }))} className={`w-full p-3 bg-gray-50 border-none rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 ${someoneElseDetails.email && !isValidEmail(someoneElseDetails.email) ? 'ring-2 ring-red-500/50' : ''}`} />
+                                {searchingUser && (
+                                    <div className="absolute right-3 top-3 animate-spin text-indigo-500"><Loader2 size={14} /></div>
+                                )}
                                 {someoneElseDetails.email && !isValidEmail(someoneElseDetails.email) && (
                                     <p className="text-[10px] text-red-500 font-bold px-1">Invalid email format</p>
+                                )}
+                                {!searchingUser && someoneElseDetails.email && isValidEmail(someoneElseDetails.email) && !affectedUserId && (
+                                    <p className="text-[10px] text-amber-600 font-bold px-1 flex items-center gap-1"><AlertCircle size={10} /> User profile not found</p>
+                                )}
+                                {!searchingUser && affectedUserId && (
+                                    <p className="text-[10px] text-green-600 font-bold px-1 flex items-center gap-1"><CheckCircle2 size={10} /> Verified User</p>
                                 )}
                             </div>
                             <div className="space-y-1">
@@ -500,10 +535,11 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                     type="submit" 
                     disabled={
                         isSubmitting || 
+                        searchingUser ||
                         !subject || 
                         !description || 
                         !categoryId || 
-                        (affectedUser === 'someone_else' && (!someoneElseDetails.fullName || !someoneElseDetails.email || !isValidEmail(someoneElseDetails.email)))
+                        (affectedUser === 'someone_else' && (!someoneElseDetails.fullName || !someoneElseDetails.email || !isValidEmail(someoneElseDetails.email) || !affectedUserId))
                     } 
                     className="w-full p-5 bg-indigo-600 text-white rounded-3xl font-black text-xl shadow-2xl shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:bg-gray-400 transition-all flex items-center justify-center gap-3"
                 >

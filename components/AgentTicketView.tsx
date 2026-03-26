@@ -3376,7 +3376,11 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                             </div>
                                             <div className={`flex-1 flex flex-col ${isAgent ? 'items-end' : 'items-start'}`}>
                                                 <div className={`flex items-center gap-2 mb-2 ${isAgent ? 'flex-row-reverse' : ''}`}>
-                                                    <span className="text-[13px] font-black text-gray-900">{msg.sender_name}</span>
+                                                    <span className="text-[13px] font-black text-gray-900">
+                                                        {msg.sender_role === 'system' 
+                                                            ? `Admin ${selectedTicket.group?.company?.company_name || selectedTicket.group?.name || 'DIT'}` 
+                                                            : msg.sender_name}
+                                                    </span>
                                                     <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
                                                         {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} WIB
                                                     </span>
@@ -3386,7 +3390,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                         </span>
                                                     ) : msg.sender_role === 'system' ? (
                                                         <span className="bg-amber-50 text-amber-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-amber-100 flex items-center gap-1">
-                                                            System
+                                                            SYSTEM
                                                         </span>
                                                     ) : (
                                                         <span className="bg-slate-100 text-slate-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
@@ -4202,8 +4206,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                                     // Determine performer name
                                     let performerName = 'System';
-                                    if (log.action?.toLowerCase().startsWith('system')) {
-                                        performerName = 'System';
+                                    if (log.action?.toLowerCase().startsWith('system') || !log.actor_id) {
+                                        const deptName = selectedTicket?.group?.company?.company_name || selectedTicket?.group?.name || 'DIT';
+                                        performerName = `Admin ${deptName}`;
                                     } else if (isRequesterAction || log.actor_id === selectedTicket?.requester_id) {
                                         performerName = selectedTicket?.requester?.full_name || 'Requester';
                                     } else if (log.actor_id === userProfile?.id) {

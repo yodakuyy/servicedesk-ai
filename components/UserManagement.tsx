@@ -19,6 +19,7 @@ interface User {
     is_department_admin: boolean;
     last_active: string;
     is_external: boolean;
+    employee_position?: string;
 }
 
 interface Role {
@@ -291,7 +292,7 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
     const fetchUserActivities = async () => {
         try {
             setLoadingActivities(true);
-            
+
             // 1. Fetch ticket activity logs where this user is the actor
             const { data: logData, error: logError } = await supabase
                 .from('ticket_activity_log')
@@ -309,7 +310,7 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
                 .eq('requester_id', user.id)
                 .order('created_at', { ascending: false })
                 .limit(activitiesLimit);
-                
+
             if (reqError) console.error('Error fetching requested tickets:', reqError);
 
             // 3. Fetch tickets assigned to this user
@@ -379,11 +380,11 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
             activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
             // Check if we might have more data (if any category hit the limit)
-            const reachedLimit = 
-                (logData?.length === activitiesLimit) || 
-                (requestedTickets?.length === activitiesLimit) || 
+            const reachedLimit =
+                (logData?.length === activitiesLimit) ||
+                (requestedTickets?.length === activitiesLimit) ||
                 (assignedTickets?.length === activitiesLimit);
-            
+
             setHasMoreActivities(reachedLimit);
 
             setUserActivities(activities);
@@ -1027,12 +1028,11 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
                                 {userActivities.map((activity) => (
                                     <div key={activity.id} className="relative flex gap-4">
                                         {/* Icon Node */}
-                                        <div className={`absolute -left-[44px] z-10 w-10 h-10 rounded-full border-4 border-white shadow-sm flex items-center justify-center shrink-0 ${
-                                            activity.icon === 'plus' ? 'bg-blue-50 text-blue-600' :
+                                        <div className={`absolute -left-[44px] z-10 w-10 h-10 rounded-full border-4 border-white shadow-sm flex items-center justify-center shrink-0 ${activity.icon === 'plus' ? 'bg-blue-50 text-blue-600' :
                                             activity.icon === 'user' ? 'bg-indigo-50 text-indigo-600' :
-                                            activity.icon === 'clock' ? 'bg-amber-50 text-amber-600' :
-                                            'bg-gray-50 text-gray-600'
-                                        }`}>
+                                                activity.icon === 'clock' ? 'bg-amber-50 text-amber-600' :
+                                                    'bg-gray-50 text-gray-600'
+                                            }`}>
                                             {activity.icon === 'plus' && <Plus size={16} />}
                                             {activity.icon === 'user' && <UserIcon size={16} />}
                                             {activity.icon === 'clock' && <Clock size={16} />}
@@ -1306,7 +1306,7 @@ const UserManagement: React.FC = () => {
                 const email = (user.email || '').toLowerCase();
                 const isModenaEmail = email.includes('@modena.com') || email.includes('@modena.co.id');
                 const isInternalSpecial = email === 'super.admin@xmail.com' || email.includes('@xmail.com');
-                
+
                 const roleName = (userRole?.role_name || userRole?.name || 'N/A').toLowerCase();
                 const roleId = String(user.role_id);
                 // User is a requester if role_id is 4 OR role name contains 'requester'
@@ -1328,7 +1328,8 @@ const UserManagement: React.FC = () => {
                     is_department_admin: user.is_department_admin || false,
                     status: normalizedStatus,
                     last_active: lastActiveDisplay,
-                    is_external: isExternal
+                    is_external: isExternal,
+                    employee_position: user.employee_position
                 };
             });
 
@@ -1347,7 +1348,7 @@ const UserManagement: React.FC = () => {
             setLoadingIdentity(true);
             const perPage = 50;
             let url = `/modena-api/modena/users?page=${page}&perpage=${perPage}`;
-            
+
             if (search) {
                 url += `&filter=employe_name:${search}`;
             }
@@ -1361,7 +1362,7 @@ const UserManagement: React.FC = () => {
             });
 
             if (!response.ok) throw new Error('Failed to fetch from Modena Identity');
-            
+
             const result = await response.json();
             setIdentityUsers(result.data || []);
             setIdentityTotal(result.total || 0);
@@ -1434,28 +1435,28 @@ const UserManagement: React.FC = () => {
                     <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
                     <p className="text-sm text-gray-500 mt-1">Manage system access and roles</p>
                 </div>
-                
+
                 <div className="flex gap-1 bg-gray-200/50 p-1 rounded-xl self-stretch md:self-auto">
                     <button
                         onClick={() => setMainTab('system')}
-                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${mainTab === 'system' 
-                            ? 'bg-white text-indigo-600 shadow-sm' 
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${mainTab === 'system'
+                            ? 'bg-white text-indigo-600 shadow-sm'
                             : 'text-gray-500 hover:text-gray-700'}`}
                     >
-                        Staff & Agents
+                        Agents
                     </button>
                     <button
                         onClick={() => setMainTab('external')}
-                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${mainTab === 'external' 
-                            ? 'bg-white text-indigo-600 shadow-sm' 
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${mainTab === 'external'
+                            ? 'bg-white text-indigo-600 shadow-sm'
                             : 'text-gray-500 hover:text-gray-700'}`}
                     >
                         External Users
                     </button>
                     <button
                         onClick={() => setMainTab('identity')}
-                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${mainTab === 'identity' 
-                            ? 'bg-white text-indigo-600 shadow-sm' 
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${mainTab === 'identity'
+                            ? 'bg-white text-indigo-600 shadow-sm'
                             : 'text-gray-500 hover:text-gray-700'}`}
                     >
                         Modena Directory
@@ -1725,7 +1726,7 @@ const UserManagement: React.FC = () => {
                                     ) : identityUsers.length > 0 ? (
                                         identityUsers.map((iUser, idx) => {
                                             const isRegistered = users.some(u => u.email.toLowerCase() === iUser.email?.toLowerCase());
-                                            
+
                                             return (
                                                 <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
                                                     <td className="px-6 py-4 text-sm font-mono text-gray-500">{iUser.emp_no || 'N/A'}</td>
@@ -1757,7 +1758,7 @@ const UserManagement: React.FC = () => {
                                                                 className="flex items-center gap-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-all shadow-sm shadow-indigo-100"
                                                             >
                                                                 <Plus size={14} />
-                                                                Activate as Staff
+                                                                Activate as Agent
                                                             </button>
                                                         )}
                                                     </td>
@@ -1782,7 +1783,7 @@ const UserManagement: React.FC = () => {
                                     Showing <span className="font-medium text-gray-700">{(identityPage - 1) * 50 + 1}</span> to <span className="font-medium text-gray-700">{Math.min(identityPage * 50, identityTotal)}</span> of <span className="font-medium text-gray-700">{identityTotal}</span> employees
                                 </div>
                                 <div className="flex gap-2">
-                                    <button 
+                                    <button
                                         onClick={() => fetchIdentityUsers(identityPage - 1, identitySearch)}
                                         disabled={identityPage <= 1 || loadingIdentity}
                                         className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -1792,7 +1793,7 @@ const UserManagement: React.FC = () => {
                                     <button className="px-3 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg">
                                         {identityPage}
                                     </button>
-                                    <button 
+                                    <button
                                         onClick={() => fetchIdentityUsers(identityPage + 1, identitySearch)}
                                         disabled={identityPage * 50 >= identityTotal || loadingIdentity}
                                         className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -1836,6 +1837,7 @@ const UserManagement: React.FC = () => {
                                 initialData={{
                                     fullName: isActivatingUser.employe_name,
                                     email: isActivatingUser.email,
+                                    employeePosition: isActivatingUser.employee_position
                                 }}
                                 onCancel={() => setIsActivatingUser(null)}
                                 onSuccess={() => {

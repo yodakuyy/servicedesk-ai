@@ -125,7 +125,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                 .or(`requester_id.eq.${user.id},created_by.eq.${user.id}`);
 
             if (companyId) {
-                // Use !inner join to filter by company_id via categories
+                // Use !inner join to filter by company_id via categories, but also allow global categories (null)
                 ticketsQuery = supabase
                     .from('tickets')
                     .select(`
@@ -134,7 +134,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                         ticket_categories!category_id!inner (company_id)
                     `)
                     .or(`requester_id.eq.${user.id},created_by.eq.${user.id}`)
-                    .eq('ticket_categories.company_id', companyId);
+                    .or(`company_id.eq.${companyId},company_id.is.null`, { foreignTable: 'ticket_categories' });
             }
 
             const { data: ticketsData } = await ticketsQuery
@@ -173,7 +173,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                         ticket_categories!category_id!inner(company_id)
                     `)
                     .or(`requester_id.eq.${user.id},created_by.eq.${user.id}`)
-                    .eq('ticket_categories.company_id', companyId);
+                    .or(`company_id.eq.${companyId},company_id.is.null`, { foreignTable: 'ticket_categories' });
             }
 
             const { data: allUserTickets } = await statsQuery;

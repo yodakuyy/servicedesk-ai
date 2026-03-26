@@ -10,6 +10,7 @@ interface CreateUserProps {
     initialData?: {
         fullName?: string;
         email?: string;
+        employeePosition?: string;
     };
 }
 
@@ -49,7 +50,8 @@ const CreateUser: React.FC<CreateUserProps> = ({ onCancel, onSuccess, initialDat
         roleId: '4', // Default to Requester
         departmentId: '',
         groupIds: [] as string[],
-        status: 'Active'
+        status: 'Active',
+        employeePosition: initialData?.employeePosition || ''
     });
 
     const [error, setError] = useState<string | null>(null);
@@ -160,7 +162,8 @@ const CreateUser: React.FC<CreateUserProps> = ({ onCancel, onSuccess, initialDat
                         email: formData.email,
                         role_id: parseInt(formData.roleId),
                         company_id: formData.departmentId ? parseInt(formData.departmentId) : 1, // Default to Global (1) if empty
-                        status: formData.status
+                        status: formData.status,
+                        employee_position: formData.employeePosition
                     });
 
             if (profileError) throw new Error(`Profile error: ${profileError.message}`);
