@@ -133,20 +133,35 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
 
   const handleSelectDepartment = async (deptId: string) => {
     try {
-      // Get profile from localStorage
+      // 1. Get base profile from localStorage (for ID)
       const profileStr = localStorage.getItem('profile');
       if (!profileStr) {
         console.error('No profile found in localStorage');
         onSelectDepartment(deptId);
         return;
       }
+      const lsProfile = JSON.parse(profileStr);
 
-      const profile = JSON.parse(profileStr);
-      console.log('=== DEPARTMENT SELECTION ===');
+      // 2. FETCH LATEST PROFILE FROM DATABASE (Source of Truth)
+      // This is critical to ensure we have the correct base role when returning home
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', lsProfile.id)
+        .single();
+
+      if (profileError || !profile) {
+        console.error('Error fetching source profile:', profileError);
+        onSelectDepartment(deptId);
+        return;
+      }
+
+      console.log('=== DEPARTMENT SELECTION (SYNCED) ===');
       console.log('Selected Department ID:', deptId);
-      console.log('User Role ID:', profile.role_id);
+      console.log('User BASE Role ID:', profile.role_id);
+      console.log('User BASE Company ID:', profile.company_id);
 
-      // Determine effective role and admin status
+      // Determine effective role and admin status based on DB profile
       const isAdminRole = profile?.role_id === 1 || profile?.role_id === '1';
       const isDeptAdmin = profile?.is_department_admin === true;
       const isSuperAdmin = isAdminRole && !isDeptAdmin;
@@ -154,7 +169,6 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
       console.log('Is Admin Role:', isAdminRole);
       console.log('Is Dept Admin:', isDeptAdmin);
       console.log('Is Super Admin:', isSuperAdmin);
-      console.log('User Company ID:', profile.company_id);
       console.log('Target Dept ID:', deptId);
 
       // 🛑 REJECT: Dept Admin trying to access another department
@@ -175,12 +189,17 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
       let effectiveRoleId = profile.role_id;
       let effectiveIsDeptAdmin = profile.is_department_admin;
 
+      // The profile's company_id from database IS their canonical home base
+      const homeDeptId = profile.company_id;
+
       if (!isSuperAdmin && !isDeptAdmin) {
         // Regular Agents/Requesters become Requesters (Role 4) if they visit another department
-        if (String(deptId) !== String(profile.company_id)) {
-          console.log('⚠️ Downgrading to Requester for crossover department access');
+        if (String(deptId) !== String(homeDeptId)) {
+          console.log('⚠️ CROSSOVER: Visiting another department. Using Requester role.');
           effectiveRoleId = 4;
           effectiveIsDeptAdmin = false;
+        } else {
+          console.log('🏠 HOME: Returning to original department. Permissions restored.');
         }
       }
 
@@ -201,8 +220,8 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
         ...profile,
         role_id: effectiveRoleId,
         is_department_admin: effectiveIsDeptAdmin,
-        company_id: Number(deptId), // Ensure all components filter by the selected department
-        services: effectiveServices // Store clean module types (Incident, etc.) for dynamic filtering
+        company_id: Number(deptId),
+        services: effectiveServices
       };
       localStorage.setItem('profile', JSON.stringify(updatedProfile));
 
@@ -283,13 +302,13 @@ const DepartmentSelection: React.FC<DepartmentSelectionProps> = ({ onSelectDepar
               const menuLabel = (m.label || m.name || m.menu_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
               if (mod.keywords.some(k => menuLabel.includes(k))) {
                 const existing = permissionsMap.get(String(m.id));
-                // Only force if not already explicitly denied (optional, but here we force view)
-                if (!existing || !existing.can_view) {
+                // HANYA tambah otomatis jika BELUM ada settingan apapun (ROLE/CUSTOM) di database
+                if (!existing) {
                   permissionsMap.set(String(m.id), {
                     menu_id: m.id,
                     can_view: true,
                     can_create: true,
-                    sort_order: existing?.sort_order || m.order_no || 100,
+                    sort_order: m.order_no || 100,
                     source: 'AUTO_SERVICE'
                   });
                 }

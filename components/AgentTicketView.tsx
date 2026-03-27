@@ -292,23 +292,23 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
         return matchesSearch && matchesStatus && matchesPriority && matchesAgent;
     }).sort((a, b) => {
-        // Priority Sorting: Non-Terminal tickets (Running SLA) come first
-        const terminalStatuses = ['Resolved', 'Closed', 'Canceled', 'Cancelled'];
+        // Priority Sorting berdasarkan sla_behavior dari ticket_statuses
+        // 'run' = SLA jalan (prioritas utama, paling atas)
+        // 'pause' = SLA pause (tengah)
+        // 'stop' = SLA berhenti / Resolved/Closed/Cancel (paling bawah)
+        const behaviorOrder: Record<string, number> = { 'run': 0, 'pause': 1, 'stop': 2 };
+        const behaviorA = behaviorOrder[a.ticket_statuses?.sla_behavior] ?? 2;
+        const behaviorB = behaviorOrder[b.ticket_statuses?.sla_behavior] ?? 2;
 
-        const statusA = a.ticket_statuses?.status_name || '';
-        const statusB = b.ticket_statuses?.status_name || '';
+        // Tiket dengan SLA 'run' selalu di atas
+        if (behaviorA !== behaviorB) return behaviorA - behaviorB;
 
-        const isTerminalA = terminalStatuses.includes(statusA);
-        const isTerminalB = terminalStatuses.includes(statusB);
-
-        // If one is terminal and other is not, the non-terminal one stays on top
-        if (isTerminalA && !isTerminalB) return 1;
-        if (!isTerminalA && isTerminalB) return -1;
-
-        // If both are same "terminal-ness", sort by update date (newest first)
-        const timeA = new Date(a.updated_at || a.created_at).getTime();
-        const timeB = new Date(b.updated_at || b.created_at).getTime();
-        return timeB - timeA;
+        // Di dalam grup 'run': terlama di atas (paling urgent, warning buat agent)
+        // Di dalam grup lainnya: terbaru di atas (urutan normal)
+        const timeA = new Date(a.created_at).getTime();
+        const timeB = new Date(b.created_at).getTime();
+        if (behaviorA === 0) return timeA - timeB; // 'run': oldest first
+        return timeB - timeA; // 'pause'/'stop': newest first
     });
 
     useEffect(() => {
@@ -510,7 +510,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                     id, ticket_number, subject, priority, created_at, updated_at, ticket_type,
                     assignment_group_id, status_id, assigned_to, requester_id, is_category_verified,
                     total_paused_minutes, paused_at,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior),
                     requester:profiles!fk_tickets_requester (full_name),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id, roles:role_id(role_name)),
                     group:groups!assignment_group_id (
@@ -1595,17 +1595,68 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
         if (!src) return;
         // @ts-ignore
         const Swal = (await import('sweetalert2')).default;
+        
         Swal.fire({
-            imageUrl: src,
-            imageAlt: 'Image preview',
-            width: 'auto',
-            padding: '10px',
-            background: '#ffffff',
+            html: `
+                <div class="flex items-center justify-center w-full min-h-[85vh] overflow-hidden">
+                    <img id="preview-img" src="${src}" class="max-h-[85vh] max-w-full object-contain rounded-xl shadow-2xl transition-transform duration-200 ease-out cursor-zoom-in" />
+                </div>
+            `,
+            width: '95vw',
+            padding: '0',
+            background: 'transparent',
             showConfirmButton: false,
             showCloseButton: true,
-            closeButtonHtml: '&times;',
+            allowOutsideClick: true, // Bisa tutup dengan klik di luar
+            closeButtonHtml: `<div class="bg-white/10 hover:bg-white/20 w-10 h-10 rounded-full flex items-center justify-center text-white transition-all shadow-lg border border-white/20">&times;</div>`,
             customClass: {
-                image: 'max-h-[85vh] max-w-[90vw] object-contain rounded-lg shadow-2xl'
+                container: 'backdrop-blur-sm',
+                popup: 'bg-transparent shadow-none border-none overflow-visible',
+                htmlContainer: 'm-0 p-0 overflow-visible',
+                closeButton: 'border-none focus:shadow-none hover:rotate-90 transition-transform text-white'
+            },
+            didOpen: () => {
+                const img = document.getElementById('preview-img') as HTMLImageElement;
+                if (!img) return;
+
+                let scale = 1;
+                let isDragging = false;
+                let startX = 0, startY = 0;
+                let translateX = 0, translateY = 0;
+
+                // 1. ZOOM logic (Mouse Wheel)
+                img.addEventListener('wheel', (e: WheelEvent) => {
+                    e.preventDefault();
+                    const delta = e.deltaY > 0 ? -0.15 : 0.15;
+                    const nextScale = Math.max(0.7, Math.min(6, scale + delta));
+                    
+                    if (nextScale !== scale) {
+                        scale = nextScale;
+                        img.style.transform = `scale(${scale}) translate(${translateX}px, ${translateY}px)`;
+                        img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
+                    }
+                }, { passive: false });
+
+                // 2. PAN logic (Drag)
+                img.onmousedown = (e: MouseEvent) => {
+                    if (scale <= 1) return;
+                    isDragging = true;
+                    img.style.cursor = 'grabbing';
+                    startX = e.clientX - translateX;
+                    startY = e.clientY - translateY;
+                };
+
+                window.onmousemove = (e: MouseEvent) => {
+                    if (!isDragging) return;
+                    translateX = e.clientX - startX;
+                    translateY = e.clientY - startY;
+                    img.style.transform = `scale(${scale}) translate(${translateX / scale}px, ${translateY / scale}px)`;
+                };
+
+                window.onmouseup = () => {
+                    isDragging = false;
+                    if (img) img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
+                };
             }
         });
     };
@@ -4402,7 +4453,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                     content={newMessage}
                                                     onChange={setNewMessage}
                                                     placeholder={isInternalNote ? "Type an internal note (visible only to agents)..." : "Type your response to the requester..."}
-                                                    minHeight="80px"
+                                                    minHeight="120px"
+                                                    maxHeight="350px"
                                                 />
                                                 <div className="flex justify-between items-center mt-4">
                                                     <button

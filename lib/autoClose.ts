@@ -125,7 +125,10 @@ async function getMatchingTickets(rule: AutoCloseRule): Promise<any[]> {
                 updated_at,
                 ticket_statuses:status_id(status_name, status_code, is_final),
                 group:groups!assignment_group_id(
-                    business_hours(weekly_schedule)
+                    name,
+                    company_id,
+                    business_hours(weekly_schedule),
+                    company:company_id(company_name)
                 )
             `)
             .lte('updated_at', cutoffDate.toISOString());
@@ -210,7 +213,8 @@ async function getMatchingTickets(rule: AutoCloseRule): Promise<any[]> {
 async function closeTicket(
     ticketId: string,
     rule: AutoCloseRule,
-    closedStatusId: string
+    closedStatusId: string,
+    ticket: any
 ): Promise<{ success: boolean; error?: string }> {
     try {
         // Use target_status_id from rule if set, otherwise default to closed
@@ -238,38 +242,19 @@ async function closeTicket(
                 : `Ticket auto-closed by rule "${rule.name}"`
         });
 
-        // 4. Fetch ticket details (needed for note sender_id + notifications)
-        const { data: ticket } = await supabase
-            .from('tickets')
-            .select(`
-                requester_id, 
-                assigned_to, 
-                ticket_number, 
-                subject,
-                assignment_group_id,
-                group:groups!assignment_group_id(
-                    company_id,
-                    company:companies!company_id(company_name)
-                )
-            `)
-            .eq('id', ticketId)
-            .single();
-        
-        // Extract department name (e.g., "DIT")
-        const rawGroup = (ticket as any)?.group;
-        const groupObj = Array.isArray(rawGroup) ? rawGroup[0] : rawGroup;
-        const rawCompany = groupObj?.company;
-        const companyObj = Array.isArray(rawCompany) ? rawCompany[0] : rawCompany;
-        const deptName = companyObj?.company_name || '';
+        // 4. Extract department name (e.g., "DIT")
+        const groupObj = Array.isArray(ticket.group) ? ticket.group[0] : ticket.group;
+        const companyObj = Array.isArray(groupObj?.company) ? groupObj.company[0] : groupObj?.company;
+        const deptName = companyObj?.company_name || groupObj?.name || 'DIT';
         const deptPrefix = deptName ? `[${deptName}] ` : '';
 
         // 5. Add system note to conversation (visible to user) if configured
         if (rule.add_note && rule.note_text) {
             // Determine best sender: assigned agent → dept admin → requester
-            let systemSenderId = ticket?.assigned_to || ticket?.requester_id;
+            let systemSenderId = ticket.assigned_to || ticket.requester_id;
 
-            // If no assigned agent, try to find a dept admin from the ticket's company
-            if (!ticket?.assigned_to && ticket?.requester_id) {
+            // If no assigned agent, try to find a dept admin
+            if (!ticket.assigned_to) {
                 const { data: deptAdmin } = await supabase
                     .from('profiles')
                     .select('id')
@@ -300,10 +285,12 @@ async function closeTicket(
         if ((rule.notify_user || rule.notify_agent) && ticket) {
                 const notifications = [];
                 const actionWord = isResolve ? 'resolved' : 'closed';
+                const ticketCompanyId = (Array.isArray(ticket.group) ? ticket.group[0] : ticket.group)?.company_id;
 
                 if (rule.notify_user && ticket.requester_id) {
                     notifications.push({
                         user_id: ticket.requester_id,
+                        company_id: ticketCompanyId,
                         title: `${deptPrefix}${isResolve ? 'Ticket Auto-Resolved' : 'Ticket Auto-Closed'}`,
                         message: `Ticket ${ticket.ticket_number} has been automatically ${actionWord} due to no response. ${isResolve ? 'If you still need help, please reply to reopen the ticket.' : ''}`,
                         type: isResolve ? 'ticket_resolved' : 'ticket_closed',
@@ -316,6 +303,7 @@ async function closeTicket(
                 if (rule.notify_agent && ticket.assigned_to) {
                     notifications.push({
                         user_id: ticket.assigned_to,
+                        company_id: ticketCompanyId,
                         title: `${deptPrefix}${isResolve ? 'Ticket Auto-Resolved' : 'Ticket Auto-Closed'}`,
                         message: `Ticket ${ticket.ticket_number} has been automatically ${actionWord} by rule "${rule.name}".`,
                         type: isResolve ? 'ticket_resolved' : 'ticket_closed',
@@ -353,7 +341,7 @@ export async function processAutoCloseRules(): Promise<AutoCloseResult> {
         const { data: closedStatus, error: statusError } = await supabase
             .from('ticket_statuses')
             .select('status_id')
-            .eq('is_final', true)
+            .eq('status_name', 'Closed')
             .limit(1)
             .single();
 
@@ -392,7 +380,7 @@ export async function processAutoCloseRules(): Promise<AutoCloseResult> {
             console.log(`Found ${tickets.length} tickets matching rule "${rule.name}"`);
 
             for (const ticket of tickets) {
-                const closeResult = await closeTicket(ticket.id, rule, closedStatusId);
+                const closeResult = await closeTicket(ticket.id, rule, closedStatusId, ticket);
 
                 result.details.push({
                     ticketId: ticket.id,

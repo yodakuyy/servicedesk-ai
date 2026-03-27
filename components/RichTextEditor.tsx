@@ -18,13 +18,15 @@ interface RichTextEditorProps {
     onChange: (html: string) => void;
     placeholder?: string;
     minHeight?: string;
+    maxHeight?: string;
 }
 
 const RichTextEditor: React.FC<RichTextEditorProps> = ({
     content,
     onChange,
     placeholder = 'Start writing...',
-    minHeight = '200px'
+    minHeight = '150px',
+    maxHeight = '400px'
 }) => {
     const [uploading, setUploading] = React.useState(false);
 
@@ -47,8 +49,8 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         },
         editorProps: {
             attributes: {
-                class: 'prose prose-sm max-w-none focus:outline-none',
-                style: `min-height: ${minHeight}`,
+                class: 'prose prose-sm max-w-none focus:outline-none custom-scrollbar p-3',
+                style: `min-height: ${minHeight}; max-height: ${maxHeight}; overflow-y: auto; overflow-x: hidden;`,
             },
         },
     });
@@ -266,9 +268,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
             </div>
 
             {/* Editor Content */}
-            <div className="p-4">
-                <EditorContent editor={editor} />
-            </div>
+            <EditorContent editor={editor} />
 
             {/* Upload Indicator */}
             {uploading && (

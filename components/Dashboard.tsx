@@ -231,7 +231,31 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   });
 
   // Shared notification state - single source of truth
-  const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll } = useNotifications(userProfile?.id);
+  const { notifications: allNotifications, markAsRead, markAllAsRead, deleteNotification, clearAll } = useNotifications(userProfile?.id);
+
+  // Filter notifications by current department
+  const notifications = allNotifications.filter(n => {
+    // 1. If company_id matches exactly, show it
+    if (n.company_id && Number(n.company_id) === Number(userProfile?.company_id)) return true;
+    
+    // 2. For legacy notifications (null company_id), filter by title prefix
+    if (!n.company_id) {
+      const currentDeptName = userProfile?.company_name || 'DIT';
+      
+      // If it has a tag like [DIT] or [Legal] but it's not our current dept, hide it
+      if (n.title.includes('[') && n.title.includes(']')) {
+        return n.title.toLowerCase().includes(`[${currentDeptName.toLowerCase()}]`);
+      }
+      
+      // If no tag and no company_id, show only in home department to be safe
+      return true;
+    }
+    
+    return false;
+  });
+  
+  // Calculate unread count only for the current department
+  const unreadCount = notifications.filter(n => !n.is_read).length;
 
   // Handle initial view prop changes (Deep Linking)
   useEffect(() => {
@@ -278,71 +302,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     };
   }, [showNotificationPanel]);
 
-  // AUTO-CLOSE TICKETS: Resolved -> Closed after 24h
-  useEffect(() => {
-    const handleAutoClose = async () => {
-      try {
-        const { supabase } = await import('../lib/supabase');
-
-        // 1. Get Resolved and Closed Status IDs
-        const { data: statuses } = await supabase
-          .from('ticket_statuses')
-          .select('status_id, status_name')
-          .in('status_name', ['Resolved', 'Closed']);
-
-        if (!statuses) return;
-
-        const resolvedStatus = statuses.find(s => s.status_name === 'Resolved');
-        const closedStatus = statuses.find(s => s.status_name === 'Closed');
-
-        if (!resolvedStatus || !closedStatus) return;
-
-        // 2. Find tickets that have been Resolved for more than 24 hours
-        // We use updated_at as the reference for when it was resolved
-        const twentyFourHoursAgo = new Date();
-        twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-
-        const { data: ticketsToClose } = await supabase
-          .from('tickets')
-          .select('id, ticket_number')
-          .eq('status_id', resolvedStatus.status_id)
-          .lt('updated_at', twentyFourHoursAgo.toISOString());
-
-        if (!ticketsToClose || ticketsToClose.length === 0) return;
-
-        console.log(`Auto-closing ${ticketsToClose.length} resolved tickets...`);
-
-        // 3. Update them to Closed
-        const ticketIds = ticketsToClose.map(t => t.id);
-        const { error: updateError } = await supabase
-          .from('tickets')
-          .update({
-            status_id: closedStatus.status_id,
-            updated_at: new Date().toISOString()
-          })
-          .in('id', ticketIds);
-
-        if (updateError) throw updateError;
-
-        // 4. Log Activity for each
-        const activityLogs = ticketsToClose.map(t => ({
-          ticket_id: t.id,
-          action: 'System auto-closed ticket after 24 hours in Resolved status.',
-          actor_id: null // System action, do not attribute to specific user
-        }));
-
-        await supabase.from('ticket_activity_log').insert(activityLogs);
-
-      } catch (err) {
-        console.error('Error in handleAutoClose:', err);
-      }
-    };
-
-    // Run once on load after userProfile is available
-    if (userProfile?.id) {
-      handleAutoClose();
-    }
-  }, [userProfile?.id]);
+  // AUTO-CLOSE TICKETS: Now handled entirely by processAutoCloseRules() in the next useEffect
+  // This ensures all auto-close rules (notes, notifications, target status) are respected.
 
   // SLA PERCENTAGE ESCALATION CHECK: Run periodically to trigger escalation rules
   useEffect(() => {

@@ -172,9 +172,12 @@ const LoginSection: React.FC<LoginSectionProps> = ({ onLogin }) => {
     console.log('=== ACCESSIBLE MENUS (MERGED) ===');
     console.log(JSON.stringify(accessibleMenus, null, 2));
 
-    // Simpan session + profile + accessible menus
+    // Simpan session + profile (dengan home_company_id) + accessible menus
     localStorage.setItem('session', JSON.stringify(data.session));
-    localStorage.setItem('profile', JSON.stringify(profile));
+    localStorage.setItem('profile', JSON.stringify({
+      ...profile,
+      home_company_id: profile.company_id // Simpan ID departemen asli
+    }));
     localStorage.setItem('accessibleMenus', JSON.stringify(accessibleMenus));
 
     // Update last_active_at di profiles table
