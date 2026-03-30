@@ -10,11 +10,13 @@ interface Announcement {
     title: string;
     content: string;
     type: 'info' | 'warning' | 'alert';
+    company_id: number | null;
     is_active: boolean;
     created_by: string | null;
     created_at: string;
     updated_at: string;
     creator?: { full_name: string } | null;
+    company?: { company_name: string } | null;
 }
 
 const AnnouncementManagement: React.FC = () => {
@@ -26,8 +28,9 @@ const AnnouncementManagement: React.FC = () => {
 
     // Modal states
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [companies, setCompanies] = useState<any[]>([]);
     const [editingId, setEditingId] = useState<string | null>(null);
-    const [form, setForm] = useState({ title: '', content: '', type: 'info' as 'info' | 'warning' | 'alert', is_active: true });
+    const [form, setForm] = useState({ title: '', content: '', type: 'info' as 'info' | 'warning' | 'alert', is_active: true, company_id: null as number | null });
     const [saving, setSaving] = useState(false);
 
     // Delete confirmation
@@ -35,18 +38,36 @@ const AnnouncementManagement: React.FC = () => {
 
     useEffect(() => {
         fetchAnnouncements();
+        fetchCompanies();
     }, []);
+
+    const fetchCompanies = async () => {
+        const { data } = await supabase.from('company').select('company_id, company_name').order('company_name');
+        if (data) setCompanies(data);
+    };
 
     const fetchAnnouncements = async () => {
         setLoading(true);
         try {
+            // Priority 1: Try to fetch with department join
             const { data, error } = await supabase
                 .from('announcements')
-                .select('*, creator:profiles!created_by(full_name)')
+                .select('*, creator:profiles!created_by(full_name), company:company!company_id(company_name)')
                 .order('created_at', { ascending: false });
 
-            if (error) throw error;
-            setAnnouncements(data || []);
+            if (error) {
+                // Priority 2: Fallback to simple fetch if column company_id doesn't exist yet
+                console.warn('Metadata fetch failed, falling back to basic fetch...', error.message);
+                const { data: basicData, error: basicError } = await supabase
+                    .from('announcements')
+                    .select('*, creator:profiles!created_by(full_name)')
+                    .order('created_at', { ascending: false });
+                
+                if (basicError) throw basicError;
+                setAnnouncements(basicData || []);
+            } else {
+                setAnnouncements(data || []);
+            }
         } catch (err) {
             console.error('Error fetching announcements:', err);
         } finally {
@@ -68,6 +89,7 @@ const AnnouncementManagement: React.FC = () => {
                         content: form.content.trim(),
                         type: form.type,
                         is_active: form.is_active,
+                        company_id: form.company_id
                     })
                     .eq('id', editingId);
                 if (error) throw error;
@@ -79,6 +101,7 @@ const AnnouncementManagement: React.FC = () => {
                         content: form.content.trim(),
                         type: form.type,
                         is_active: form.is_active,
+                        company_id: form.company_id,
                         created_by: user?.id || null,
                     });
                 if (error) throw error;
@@ -86,7 +109,7 @@ const AnnouncementManagement: React.FC = () => {
 
             setIsModalOpen(false);
             setEditingId(null);
-            setForm({ title: '', content: '', type: 'info', is_active: true });
+            setForm({ title: '', content: '', type: 'info', is_active: true, company_id: null });
             fetchAnnouncements();
         } catch (err) {
             console.error('Error saving announcement:', err);
@@ -97,7 +120,7 @@ const AnnouncementManagement: React.FC = () => {
 
     const handleEdit = (a: Announcement) => {
         setEditingId(a.id);
-        setForm({ title: a.title, content: a.content, type: a.type, is_active: a.is_active });
+        setForm({ title: a.title, content: a.content, type: a.type, is_active: a.is_active, company_id: a.company_id });
         setIsModalOpen(true);
     };
 
@@ -159,7 +182,7 @@ const AnnouncementManagement: React.FC = () => {
                 <button
                     onClick={() => {
                         setEditingId(null);
-                        setForm({ title: '', content: '', type: 'info', is_active: true });
+                        setForm({ title: '', content: '', type: 'info', is_active: true, company_id: null });
                         setIsModalOpen(true);
                     }}
                     className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 hover:shadow-xl hover:-translate-y-0.5"
@@ -259,6 +282,9 @@ const AnnouncementManagement: React.FC = () => {
                                                 ) : (
                                                     <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-gray-100 text-gray-500">Inactive</span>
                                                 )}
+                                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${a.company_id ? 'bg-indigo-100 text-indigo-700' : 'bg-purple-100 text-purple-700'}`}>
+                                                    {a.company?.company_name || 'Global / All'}
+                                                </span>
                                             </div>
                                             <p className="text-sm text-gray-500 line-clamp-1">{a.content}</p>
                                             <div className="flex items-center gap-4 mt-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
@@ -381,6 +407,21 @@ const AnnouncementManagement: React.FC = () => {
                                         </button>
                                     ))}
                                 </div>
+                            </div>
+
+                            {/* Target Department */}
+                            <div>
+                                <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-2">Target Department</label>
+                                <select
+                                    value={form.company_id || ''}
+                                    onChange={(e) => setForm(f => ({ ...f, company_id: e.target.value ? Number(e.target.value) : null }))}
+                                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-400 transition-all appearance-none cursor-pointer"
+                                >
+                                    <option value="">Global / All Departments</option>
+                                    {companies.map(c => (
+                                        <option key={c.company_id} value={c.company_id}>{c.company_name}</option>
+                                    ))}
+                                </select>
                             </div>
 
                             {/* Active Toggle */}

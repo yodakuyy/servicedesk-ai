@@ -280,7 +280,8 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                 .eq('is_active', true);
 
             if (effectiveCompanyId) {
-                announceQuery = announceQuery.eq('company_id', effectiveCompanyId);
+                // Show matching department OR global announcements (company_id is null)
+                announceQuery = announceQuery.or(`company_id.eq.${effectiveCompanyId},company_id.is.null`);
             }
 
             const { data: announceData } = await announceQuery
