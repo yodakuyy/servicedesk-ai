@@ -276,6 +276,7 @@ const KnowledgeBase: React.FC<{ companyId?: number | null }> = ({ companyId: pro
     return (
       <ArticleEditor
         articleId={editingArticleId}
+        companyId={currentCompanyId}
         onClose={() => {
           setShowEditor(false);
           setEditingArticleId(null);
@@ -531,6 +532,7 @@ const KnowledgeBase: React.FC<{ companyId?: number | null }> = ({ companyId: pro
       {showEditor && (
         <ArticleEditor
           articleId={editingArticleId}
+          companyId={currentCompanyId}
           onClose={handleEditorClose}
           onSave={handleEditorSave}
         />

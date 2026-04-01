@@ -19,6 +19,7 @@ interface ArticleEditorProps {
     articleId?: string | null;
     onClose: () => void;
     onSave?: () => void;
+    companyId?: number | null;
 }
 
 interface Category {
@@ -74,7 +75,7 @@ const ARTICLE_TYPES = [
     { value: 'reference', label: 'Internal Reference', description: 'Agent-only documentation', icon: '📋' },
 ];
 
-const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSave }) => {
+const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSave, companyId }) => {
     const [article, setArticle] = useState<ArticleData>(initialArticle);
     const [categories, setCategories] = useState<Category[]>([]);
     const [selectedMainCategory, setSelectedMainCategory] = useState<string>('');
@@ -118,7 +119,11 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
 
                     if (!articleId) {
                         // New article: set company_id for both filtering and saving
-                        const initialCompanyId = isAdmin ? null : userCompanyId;
+                        // Priority: 1. prop companyId, 2. profile companyId (if not admin), 3. null (if admin)
+                        const initialCompanyId = (companyId !== undefined) 
+                            ? companyId 
+                            : (isAdmin ? null : userCompanyId);
+                        
                         setArticle(prev => ({ ...prev, company_id: initialCompanyId }));
                     }
                 }
@@ -148,7 +153,12 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
                 .select('id, name, parent_id')
                 .eq('is_active', true);
 
-            if (!isAdmin && userCompanyId) {
+            const effectiveCompanyId = (companyId !== undefined) ? companyId : userCompanyId;
+
+            if (effectiveCompanyId) {
+                // Show matching department OR global categories (company_id is null)
+                query = query.or(`company_id.eq.${effectiveCompanyId},company_id.is.null`);
+            } else if (!isAdmin && userCompanyId) {
                 query = query.eq('company_id', userCompanyId);
             }
 
