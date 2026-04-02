@@ -53,8 +53,18 @@ toastStyles.textContent = `
 document.head.appendChild(toastStyles);
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<'login' | 'departments' | 'dashboard' | 'kb-portal' | 'presentation'>('login');
-  const [dashboardInitialView, setDashboardInitialView] = useState<string | undefined>(undefined);
+  // Determine initial view from hash to prevent flicker
+  const getInitialState = () => {
+    const hash = typeof window !== 'undefined' ? window.location.hash : '';
+    if (hash === '#kb-portal' || hash === '#/kb-portal') return { view: 'kb-portal' as const, subView: undefined };
+    if (hash === '#dashboard/tickets' || hash === '#dashboard') return { view: 'dashboard' as const, subView: 'user-dashboard' };
+    if (hash === '#presentation') return { view: 'presentation' as const, subView: undefined };
+    return { view: 'login' as const, subView: undefined };
+  };
+
+  const initialState = getInitialState();
+  const [currentView, setCurrentView] = useState<'login' | 'departments' | 'dashboard' | 'kb-portal' | 'presentation'>(initialState.view);
+  const [dashboardInitialView, setDashboardInitialView] = useState<string | undefined>(initialState.subView);
 
   // Check URL hash for direct portal access and deep linking
   useEffect(() => {
@@ -62,7 +72,7 @@ const App: React.FC = () => {
       const hash = window.location.hash;
       if (hash === '#kb-portal' || hash === '#/kb-portal') {
         setCurrentView('kb-portal');
-      } else if (hash === '#dashboard/tickets') {
+      } else if (hash === '#dashboard/tickets' || hash === '#dashboard') {
         setDashboardInitialView('user-dashboard');
         setCurrentView('dashboard');
       } else if (hash === '#presentation') {

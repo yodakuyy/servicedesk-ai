@@ -225,7 +225,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                     try {
                         const localProfile = JSON.parse(profileStr);
                         effectiveCompanyId = localProfile.company_id;
-                    } catch (e) {}
+                    } catch (e) { }
                 }
 
                 // Priority 2: Fetch from DB if still not found
@@ -235,7 +235,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                         .select('company_id, groups!user_groups(company_id)')
                         .eq('id', user.id)
                         .single();
-                    
+
                     if (profile) {
                         // @ts-ignore
                         effectiveCompanyId = profile.company_id || profile.groups?.[0]?.company_id;
@@ -557,30 +557,30 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                 {[
                     { icon: AlertCircle, label: 'Incident List', sub: 'My ticket history', color: 'rose', view: 'my-tickets', action: () => onNavigate?.('my-tickets') },
                     { icon: Package, label: 'Service Request', sub: 'Browse IT services', color: 'amber', view: 'service-requests', action: () => onNavigate?.('service-requests') },
-                    { icon: GitBranch, label: 'Change Request', sub: 'Track change requests', color: 'violet', view: 'escalated-tickets', action: () => onNavigate?.('escalated-tickets') },
+                    { icon: GitBranch, label: 'Change Requests', sub: 'Track your change requests', color: 'violet', view: 'escalated-tickets', action: () => onNavigate?.('escalated-tickets') },
                     { icon: HelpCircle, label: 'Help Center', sub: 'Guides & Support', color: 'teal', view: 'help-center', action: () => onNavigate?.('help-center') },
                 ]
-                .filter(action => isViewAccessible(action.view))
-                .map((action, index) => (
-                    <button
-                        key={index}
-                        onClick={action.action}
-                        className="flex items-center p-5 bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group cursor-pointer text-left overflow-hidden relative"
-                    >
-                        <div className={`w-12 h-12 bg-${action.color}-50 text-${action.color}-600 rounded-xl flex items-center justify-center mr-4 group-hover:bg-${action.color}-600 group-hover:text-white transition-all shadow-sm flex-shrink-0`}>
-                            <action.icon size={24} />
-                        </div>
-                        <div>
-                            <h3 className="font-black text-gray-800 text-sm group-hover:text-indigo-600 transition-colors">
-                                {action.label}
-                            </h3>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">{action.sub}</p>
-                        </div>
-                        <div className="absolute right-0 bottom-0 p-1 opacity-0 group-hover:opacity-10 transition-opacity">
-                            <action.icon size={64} />
-                        </div>
-                    </button>
-                ))}
+                    .filter(action => isViewAccessible(action.view))
+                    .map((action, index) => (
+                        <button
+                            key={index}
+                            onClick={action.action}
+                            className="flex items-center p-5 bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group cursor-pointer text-left overflow-hidden relative"
+                        >
+                            <div className={`w-12 h-12 bg-${action.color}-50 text-${action.color}-600 rounded-xl flex items-center justify-center mr-4 group-hover:bg-${action.color}-600 group-hover:text-white transition-all shadow-sm flex-shrink-0`}>
+                                <action.icon size={24} />
+                            </div>
+                            <div>
+                                <h3 className="font-black text-gray-800 text-sm group-hover:text-indigo-600 transition-colors">
+                                    {action.label}
+                                </h3>
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">{action.sub}</p>
+                            </div>
+                            <div className="absolute right-0 bottom-0 p-1 opacity-0 group-hover:opacity-10 transition-opacity">
+                                <action.icon size={64} />
+                            </div>
+                        </button>
+                    ))}
             </div>
 
             {/* Selection Modal */}

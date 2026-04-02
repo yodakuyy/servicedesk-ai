@@ -193,11 +193,12 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
                 <h1 className="text-3xl font-bold text-gray-900">
                     {ticketTypeFilter === 'incident' ? 'My Incidents' :
                         ticketTypeFilter === 'service_request' ? 'My Service Requests' :
-                            ticketTypeFilter === 'change_request' ? 'Change Requests' :
+                            ticketTypeFilter === 'change_request' ? 'My Change Requests' :
                                 `Hi, ${userName || 'User'}!`}
                 </h1>
                 <p className="text-gray-500">
-                    {ticketTypeFilter ? `Manage your ${ticketTypeFilter.replace('_', ' ')}s here.` : 'Here are your recent tickets and updates.'}
+                    {ticketTypeFilter === 'change_request' ? 'Manage your change requests here.' : 
+                     ticketTypeFilter ? `Manage your ${ticketTypeFilter.replace('_', ' ')}s here.` : 'Here are your recent tickets and updates.'}
                 </p>
             </div>
 

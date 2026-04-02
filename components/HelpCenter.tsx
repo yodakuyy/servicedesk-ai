@@ -7,7 +7,7 @@ import {
     ArrowLeft, Clock, ChevronRight, Loader2, ThumbsUp, ThumbsDown,
     CheckCircle, Sparkles, BookOpen, Tag, Folder, Grid3X3, List,
     Plus, Ticket, ChevronDown, Megaphone, AlertTriangle, Smartphone, Mail,
-    Building2, Eye
+    Building2, Eye, MessageSquare
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 // @ts-ignore
@@ -938,12 +938,21 @@ const HelpCenter: React.FC = () => {
                         <p className="text-gray-500 mb-6 text-sm">Best for urgent issues that need immediate attention.</p>
                         <div className="space-y-3">
                             <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                                <span className="text-sm font-medium text-gray-600">Extension</span>
-                                <span className="font-bold text-indigo-600">{companyData?.support_phone?.slice(-4) || '8888'}</span>
+                                <div className="flex items-center gap-2">
+                                    <MessageSquare size={16} className="text-indigo-500" />
+                                    <span className="text-sm font-medium text-gray-600">Yogi Danis</span>
+                                </div>
+                                <a 
+                                    href={`https://teams.microsoft.com/l/chat/0/0?users=${companyData?.support_email || 'yogi.fermana@modena.com'}`}
+                                    className="text-xs font-bold bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full hover:bg-indigo-200 transition-colors"
+                                    title="Open Teams Chat"
+                                >
+                                    Chat with PIC
+                                </a>
                             </div>
                             <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
                                 <span className="text-sm font-medium text-gray-600">Direct Number</span>
-                                <span className="font-bold text-gray-900">{companyData?.support_phone || '+62 21 1234 5678'}</span>
+                                <span className="font-bold text-gray-900">{companyData?.support_phone || '+62 8591 0655 0716'}</span>
                             </div>
                         </div>
                     </div>
@@ -957,7 +966,7 @@ const HelpCenter: React.FC = () => {
                         <div className="space-y-3">
                             <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
                                 <span className="text-sm font-medium text-gray-600">Email</span>
-                                <span className="font-bold text-indigo-600 truncate ml-2">{companyData?.support_email || 'it.support@company.com'}</span>
+                                <span className="font-bold text-indigo-600 truncate ml-2">{companyData?.support_email || 'support.it@modena.com'}</span>
                             </div>
                             <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
                                 <span className="text-sm font-medium text-gray-600">Business Hours</span>
@@ -971,8 +980,14 @@ const HelpCenter: React.FC = () => {
                     <Sparkles className="mb-4" size={32} />
                     <h3 className="text-2xl font-bold mb-2">Need a Ticket?</h3>
                     <p className="opacity-90 mb-6 max-w-md">For better tracking and escalation, always create a ticket for your issues.</p>
-                    <button className="px-8 py-3 bg-white text-indigo-600 rounded-xl font-bold hover:bg-gray-50 transition-colors">
-                        Create New Ticket
+                    <button 
+                        onClick={() => {
+                            window.location.hash = '#dashboard/tickets';
+                            window.location.reload();
+                        }}
+                        className="px-8 py-3 bg-white text-indigo-600 rounded-xl font-bold hover:bg-gray-50 transition-colors"
+                    >
+                        {userRole === 'requester' ? 'Go to My Dashboard' : 'Go to Dashboard'}
                     </button>
                 </div>
             </div>
