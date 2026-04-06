@@ -121,14 +121,23 @@ function checkAllConditions(rule: AssignmentRule, ticketData: TicketData): boole
  */
 export async function getRoundRobinAgent(groupId: string): Promise<string | null> {
     try {
-        // Get all agents in the group
+        // Get all active agents in the group who ARE NOT "Out Of Office"
+        // Join with profiles table to check their status
         const { data: members, error } = await supabase
             .from('group_members')
-            .select('user_id')
+            .select(`
+                user_id,
+                profiles!inner (
+                    status
+                )
+            `)
             .eq('group_id', groupId)
-            .eq('is_active', true);
+            .eq('is_active', true)
+            .not('profiles.status', 'ilike', 'Out Of Office')
+            .not('profiles.status', 'ilike', 'OOO');
 
         if (error || !members || members.length === 0) {
+            console.log('No active agents available (all may be Out of Office)');
             return null;
         }
 

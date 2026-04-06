@@ -25,6 +25,7 @@ interface NotificationPanelProps {
     onClearAll: () => void;
     onClose: () => void;
     onNavigate?: (referenceType: string, referenceId: string, companyId?: number | null) => void;
+    onViewAll?: () => void;
 }
 
 const NotificationPanel: React.FC<NotificationPanelProps> = ({
@@ -36,7 +37,8 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
     onDelete,
     onClearAll,
     onClose,
-    onNavigate
+    onNavigate,
+    onViewAll
 }) => {
     const getIcon = (type: Notification['type']) => {
         const iconProps = { size: 18 };
@@ -207,10 +209,16 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
             </div>
 
             {/* Footer */}
-            {notifications.length > 10 && (
+            {notifications.length > 0 && (
                 <div className="px-4 py-3 bg-gray-50 border-t border-gray-100 text-center">
-                    <button className="text-xs font-medium text-indigo-600 hover:text-indigo-800">
-                        View all notifications
+                    <button 
+                        onClick={() => {
+                            if (onViewAll) onViewAll();
+                            onClose();
+                        }}
+                        className="text-xs font-black text-indigo-600 hover:text-indigo-800 uppercase tracking-widest flex items-center justify-center gap-2 mx-auto"
+                    >
+                        View all updates <ExternalLink size={12} />
                     </button>
                 </div>
             )}

@@ -1,11 +1,10 @@
--- FUNCTION: get_team_pulse (VERSI PERBAIKAN TYPE MISMATCH)
--- Memperbaiki error 42804 (Structure of query does not match function result)
--- Dengan menambahkan explicit casting ::TEXT pada kolom string
+-- FUNCTION: get_team_pulse (VERSI PERBAIKAN DENGAN STATUS OOO)
+-- Menambahkan kolom status untuk mendeteksi agent yang sedang Out Of Office
 
 -- 1. Bersihkan fungsi lama
 DROP FUNCTION IF EXISTS public.get_team_pulse();
 
--- 2. Buat fungsi baru dengan casting yang tepat
+-- 2. Buat fungsi baru dengan kolom status
 CREATE OR REPLACE FUNCTION public.get_team_pulse()
 RETURNS TABLE (
   agent_id uuid,
@@ -14,7 +13,8 @@ RETURNS TABLE (
   role_id int,
   active_count bigint,
   resolved_today_count bigint,
-  overdue_count bigint
+  overdue_count bigint,
+  agent_status text -- Kolom baru
 ) 
 LANGUAGE plpgsql
 SECURITY DEFINER 
@@ -32,8 +32,8 @@ BEGIN
   RETURN QUERY
   SELECT 
     p.id as agent_id,
-    p.full_name::TEXT, -- Tambahkan casting ::TEXT untuk menghindari mismatch VARCHAR
-    p.email::TEXT,     -- Tambahkan casting ::TEXT
+    p.full_name::TEXT,
+    p.email::TEXT,
     p.role_id::INT,
     -- Hitung Tiket Active
     (SELECT COUNT(*) FROM public.tickets t 
@@ -56,9 +56,10 @@ BEGIN
      WHERE t.assigned_to = p.id 
      AND t.status_id IN (
          SELECT s.status_id FROM public.ticket_statuses s 
-         WHERE s.status_name NOT IN ('Resolved', 'Closed', 'Canceled')
+         WHERE s.status_name NOT IN ('Resolved', 'Closed', 'Canceled', 'Cancelled')
      )
-     AND t.created_at < (NOW() - INTERVAL '24 hours'))::bigint as overdue_count
+     AND t.created_at < (NOW() - INTERVAL '24 hours'))::bigint as overdue_count,
+    p.status::TEXT as agent_status -- Ambil status dari profil
   FROM public.profiles p
   WHERE p.role_id IN (2, 3) -- Tampilkan hanya SPV (2) dan Agent (3)
   AND (

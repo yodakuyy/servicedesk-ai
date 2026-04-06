@@ -72,6 +72,7 @@ import ReportsView from './ReportsView';
 import ServiceRequestFields from './ServiceRequestFields';
 import AnnouncementManagement from './AnnouncementManagement';
 import PortalHighlights from './PortalHighlights';
+import AllNotifications from './AllNotifications';
 import { useNotifications } from '../hooks/useNotifications';
 import { useRealtimeToast } from '../hooks/useRealtimeToast';
 import { processAutoCloseRules } from '../lib/autoClose';
@@ -138,8 +139,9 @@ const NotificationPanelWrapper: React.FC<{
   clearAll: () => Promise<void>;
   onClose: () => void;
   onNavigate?: (referenceType: string, referenceId: string, companyId?: number | null) => void;
+  onViewAll?: () => void;
   currentCompanyId?: number | null;
-}> = ({ notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll, onClose, onNavigate, currentCompanyId }) => {
+}> = ({ notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll, onClose, onNavigate, onViewAll, currentCompanyId }) => {
   return (
     <NotificationPanel
       notifications={notifications}
@@ -151,6 +153,7 @@ const NotificationPanelWrapper: React.FC<{
       onClearAll={clearAll}
       onClose={onClose}
       onNavigate={onNavigate}
+      onViewAll={onViewAll}
     />
   );
 };
@@ -168,7 +171,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     notifications: false
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'change-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'announcement-management' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'my-notifications' | 'access-policy' | 'create-incident' | 'reports'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'change-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'announcement-management' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'my-notifications' | 'all-notifications' | 'access-policy' | 'create-incident' | 'reports'>('dashboard');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile' | 'user-dashboard'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
@@ -753,16 +756,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 const active = Number(agent.active_count);
                 const resolved = Number(agent.resolved_today_count);
                 const isSPV = agent.role_id === 2;
+                const agentStatus = agent.agent_status || 'Active';
+                const isOOO = agentStatus.toLowerCase().includes('out of office') || agentStatus.toLowerCase().includes('ooo');
+
                 let score = 100 - (active * 5) + (resolved * 2);
+                if (isOOO) score = 0;
                 score = Math.min(100, Math.max(0, score));
+
                 return {
                   name: agent.full_name || agent.email || 'Unknown Agent',
                   active: active,
                   overdue: Number(agent.overdue_count || 0),
                   resolved: resolved,
-                  status: active > 8 ? 'Overload' : active > 3 ? 'Busy' : 'Free',
+                  status: isOOO ? 'OOO' : active > 8 ? 'Overload' : active > 3 ? 'Busy' : 'Free',
                   score: score,
-                  isSPV: isSPV
+                  isSPV: isSPV,
+                  agent_status: agentStatus
                 };
               });
           }
@@ -1418,6 +1427,38 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       return <UserNotificationPreferences />;
     }
 
+    if (currentView === 'all-notifications') {
+      return (
+        <AllNotifications
+          userId={userProfile?.id}
+          onBack={() => setCurrentView('dashboard')}
+          onNavigateTicket={async (refId, targetDeptId) => {
+            // Check if the ticket belongs to a different department
+            if (targetDeptId && Number(targetDeptId) !== Number(userProfile?.company_id)) {
+              const { isConfirmed } = await Swal.fire({
+                title: 'Switch Department?',
+                text: 'This ticket belongs to another department. You need to switch departments to view it.',
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'Yes, Switch Now',
+                cancelButtonText: 'Cancel',
+                confirmButtonColor: '#4f46e5'
+              });
+
+              if (isConfirmed) {
+                const updatedProfile = { ...userProfile, company_id: targetDeptId };
+                localStorage.setItem('profile', JSON.stringify(updatedProfile));
+                window.location.reload();
+              }
+            } else {
+              setSelectedTicketId(refId);
+              setCurrentView('incidents');
+            }
+          }}
+        />
+      );
+    }
+
     if (currentView === 'service-request-fields') {
       return <ServiceRequestFields />;
     }
@@ -1766,6 +1807,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                       </div>
                       <span className={`absolute bottom-0 right-0 w-3 h-3 border-2 border-white rounded-full ${agent.status === 'Overload' ? 'bg-red-500' :
                         agent.status === 'Busy' ? 'bg-amber-500' :
+                        agent.status === 'OOO' ? 'bg-gray-300' :
                           'bg-emerald-500'
                         }`}></span>
                     </div>
@@ -1781,13 +1823,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                               {agent.overdue} Overdue
                             </span>
                           )}
-                          <span>{agent.active} Active</span>
+                          <span>{agent.status === 'OOO' ? 'Out of Office' : `${agent.active} Active`}</span>
                         </span>
                       </div>
                       <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
                         <div
                           className={`h-full rounded-full ${agent.status === 'Overload' ? 'bg-red-500' :
                             agent.status === 'Busy' ? 'bg-amber-500' :
+                            agent.status === 'OOO' ? 'bg-gray-300' :
                               'bg-emerald-500'
                             }`}
                           style={{ width: `${(agent.active / 10) * 100}%` }}
@@ -2206,6 +2249,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   deleteNotification={deleteNotification}
                   clearAll={clearAll}
                   onClose={() => setShowNotificationPanel(false)}
+                  onViewAll={() => {
+                    setCurrentView('all-notifications');
+                    setShowNotificationPanel(false);
+                  }}
                   onNavigate={async (refType, refId, targetDeptId) => {
                     if (refType === 'ticket') {
                       // Check if the ticket belongs to a different department

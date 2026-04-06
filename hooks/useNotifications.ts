@@ -44,6 +44,7 @@ export function useNotifications(userId: string | null) {
         if (!userId) return;
 
         try {
+            // Fetch the list of notifications (limited)
             const { data, error } = await supabase
                 .from('notifications')
                 .select('*')
@@ -53,8 +54,17 @@ export function useNotifications(userId: string | null) {
 
             if (error) throw error;
 
+            // Fetch the ACTUAL total unread count from DB
+            const { count, error: countError } = await supabase
+                .from('notifications')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', userId)
+                .eq('is_read', false);
+
+            if (countError) throw countError;
+
             setNotifications(data || []);
-            setUnreadCount(data?.filter(n => !n.is_read).length || 0);
+            setUnreadCount(count || 0);
         } catch (error) {
             console.error('Error fetching notifications:', error);
         } finally {
