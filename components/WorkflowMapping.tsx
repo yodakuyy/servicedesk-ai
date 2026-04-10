@@ -215,7 +215,8 @@ const WorkflowMapping: React.FC = () => {
                 .select('company_id, company_name')
                 .eq('is_active', true);
 
-            if (currentUser?.company_id) {
+            const isSuperAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            if (currentUser?.company_id && !isSuperAdmin) {
                 query = query.eq('company_id', currentUser.company_id);
             }
 
@@ -424,7 +425,8 @@ const WorkflowMapping: React.FC = () => {
                 .select('workflow_id, company_id, department_id, workflow_name, is_active')
                 .eq('is_active', true);
 
-            if (currentUser?.company_id) {
+            const isSuperAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            if (currentUser?.company_id && !isSuperAdmin) {
                 query = query.eq('company_id', currentUser.company_id);
             }
 

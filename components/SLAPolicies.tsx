@@ -158,7 +158,7 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
             let companyQuery = supabase.from('company').select('company_id, company_name').eq('is_active', true);
             const effectiveCompanyId = currentUser?.company_id || null;
 
-            if (effectiveCompanyId) {
+            if (effectiveCompanyId && !isSuperAdmin) {
                 companyQuery = companyQuery.eq('company_id', effectiveCompanyId);
             }
 
@@ -181,7 +181,7 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
                     company:company_id(company_name)
                 `);
 
-            if (effectiveCompanyId) {
+            if (effectiveCompanyId && !isSuperAdmin) {
                 policiesQuery = policiesQuery.eq('company_id', effectiveCompanyId);
             }
 

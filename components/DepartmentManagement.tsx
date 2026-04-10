@@ -317,7 +317,7 @@ const DepartmentManagement: React.FC = () => {
     const isSuperAdmin = isAdmin && !isDeptAdmin;
 
     return (
-        <div className="p-8 max-w-7xl mx-auto font-sans text-slate-600">
+        <div className="p-8 w-full font-sans text-slate-600">
             <div className="mb-8">
                 <h1 className="text-2xl font-bold text-gray-800">Department Management</h1>
                 <p className="text-gray-500">Manage your service desk departments and units.</p>
@@ -385,7 +385,7 @@ const DepartmentManagement: React.FC = () => {
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center gap-2">
-                                            <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                            <div className="w-40 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                                                 <div
                                                     className={`h-full transition-all duration-500 ${deptsProgress[dept.company_id] === 100 ? 'bg-emerald-500' : 'bg-indigo-500'}`}
                                                     style={{ width: `${deptsProgress[dept.company_id] || 0}%` }}

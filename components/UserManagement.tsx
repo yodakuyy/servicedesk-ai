@@ -149,7 +149,8 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
         role_id: user.role_id,
         status: user.status,
         is_department_admin: user.is_department_admin,
-        groups: user.groups
+        groups: user.groups,
+        employee_position: user.employee_position || ''
     });
     const [allGroups, setAllGroups] = useState<Group[]>([]);
     const [allRoles, setAllRoles] = useState<Role[]>([]);
@@ -169,7 +170,8 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
             role_id: user.role_id,
             status: user.status,
             is_department_admin: user.is_department_admin,
-            groups: user.groups
+            groups: user.groups,
+            employee_position: user.employee_position || ''
         });
     }, [user]);
 
@@ -413,7 +415,8 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
                     email: formData.email,
                     role_id: formData.role_id,
                     status: formData.status,
-                    is_department_admin: formData.is_department_admin
+                    is_department_admin: formData.is_department_admin,
+                    employee_position: formData.employee_position
                 })
                 .eq('id', user.id);
 
@@ -485,7 +488,8 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
                 role_id: formData.role_id,
                 status: formData.status as 'Active' | 'Inactive',
                 is_department_admin: formData.is_department_admin,
-                groups: formData.groups
+                groups: formData.groups,
+                employee_position: formData.employee_position
             };
 
             Swal.fire({
@@ -660,6 +664,19 @@ const UserDetail: React.FC<UserDetailProps> = ({ user, onBack, onSave, isViewOnl
                                 <option value="Active">Active</option>
                                 <option value="Inactive">Inactive</option>
                             </select>
+                        </div>
+
+                        {/* Position */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Position / Title</label>
+                            <input
+                                type="text"
+                                value={formData.employee_position}
+                                onChange={(e) => setFormData({ ...formData, employee_position: e.target.value })}
+                                placeholder="e.g. IT Manager, Software Engineer"
+                                disabled={!isEditing || isViewOnly}
+                                className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:bg-gray-50 disabled:text-gray-500"
+                            />
                         </div>
 
                         {/* Is Department Admin */}
@@ -1600,6 +1617,7 @@ const UserManagement: React.FC = () => {
                                         <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
                                         <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
                                         <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
+                                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Position</th>
                                         {mainTab !== 'external' && (
                                             <>
                                                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Department</th>
@@ -1624,6 +1642,7 @@ const UserManagement: React.FC = () => {
                                                 <td className="px-6 py-4 text-sm font-medium text-gray-900">{user.name}</td>
                                                 <td className="px-6 py-4 text-sm text-gray-600">{user.email}</td>
                                                 <td className="px-6 py-4 text-sm text-gray-600">{user.role_name}</td>
+                                                <td className="px-6 py-4 text-sm text-gray-600 italic">{user.employee_position || '-'}</td>
                                                 {mainTab !== 'external' && (
                                                     <>
                                                         <td className="px-6 py-4 text-sm text-gray-600">{user.department}</td>

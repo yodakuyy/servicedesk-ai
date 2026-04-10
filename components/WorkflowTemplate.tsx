@@ -379,7 +379,7 @@ const WorkflowBuilder = ({
     };
 
     return (
-        <div className="flex flex-col h-[calc(100vh-100px)]">
+        <div className="flex flex-col h-full">
             {/* Toolbar */}
             <div className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center flex-shrink-0">
                 <div className="flex items-center gap-4">
@@ -765,31 +765,33 @@ const WorkflowBuilder = ({
                             </div>
                         )}
 
-                        {/* Legend */}
-                        <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg p-3 shadow-sm flex flex-col gap-2 text-xs z-20 pointer-events-none">
-                            <div className="font-semibold text-gray-600 mb-1 uppercase tracking-wider text-[10px]">Line Legend</div>
-                            <div className="flex items-center gap-2 text-gray-600 font-medium">
-                                <div className="w-6 h-0.5 bg-slate-400"></div>
-                                <span>Standard (Manual)</span>
+                        {nodes.length > 0 && (
+                            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-white/95 backdrop-blur-sm rounded-lg border border-gray-200 px-5 py-2.5 shadow-lg pointer-events-none flex items-center gap-6 whitespace-nowrap">
+                                <div className="flex items-center gap-5">
+                                    <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Legend</span>
+                                    <div className="w-px h-4 bg-gray-200"></div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-5 h-0.5 bg-slate-400"></div>
+                                        <span className="text-[10px] text-gray-500 font-semibold">Manual</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-5 h-0.5 bg-indigo-500"></div>
+                                        <span className="text-[10px] text-gray-500 font-semibold">Bidirectional</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-5 h-0.5 border-t-2 border-dashed border-indigo-400"></div>
+                                        <span className="text-[10px] text-gray-500 font-semibold">Auto-Reply</span>
+                                    </div>
+                                </div>
+                                <div className="w-px h-4 bg-gray-200"></div>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-amber-500 text-xs">💡</span>
+                                    <span className="text-[10px] text-gray-500 font-medium">
+                                        <strong className="text-gray-600">Template Mode</strong> — Preview only. Apply via <strong className="text-indigo-600">Workflow Mapping</strong>.
+                                    </span>
+                                </div>
                             </div>
-                            <div className="flex items-center gap-2 text-gray-600 font-medium">
-                                <div className="w-6 h-0.5 bg-indigo-500"></div>
-                                <span>Bidirectional</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-gray-600 font-medium">
-                                <div className="w-6 h-0.5 border-t-2 border-dashed border-indigo-500"></div>
-                                <span>Auto-Action on Reply</span>
-                            </div>
-                        </div>
-
-                        {/* Bottom Info Banner */}
-                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg px-4 py-2 shadow-sm flex items-center gap-2 text-gray-600 text-sm z-20 pointer-events-none">
-                            <span className="text-amber-500">💡</span>
-                            <span>
-                                <strong>Template Mode:</strong> Everything shown here is for reference only. Actual workflows will be configured when this template is applied in{' '}
-                                <span className="text-indigo-600 font-medium">Workflow Mapping</span>.
-                            </span>
-                        </div>
+                        )}
                     </div>
                 </div>
 
@@ -1126,7 +1128,7 @@ const WorkflowTemplate = () => {
     };
 
     return (
-        <div className="p-8 max-w-7xl mx-auto min-h-screen">
+        <div className={view === 'builder' ? "h-full w-full flex flex-col overflow-hidden" : "p-8 w-full"}>
             {/* Toast Notification */}
             {toast.show && (
                 <div
