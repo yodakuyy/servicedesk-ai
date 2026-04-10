@@ -103,9 +103,11 @@ const DepartmentManagement: React.FC = () => {
             const profileStr = localStorage.getItem('profile');
             const currentUser = profileStr ? JSON.parse(profileStr) : null;
             const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
 
             let query = supabase.from('company').select('*');
-            if (currentUser && !isAdmin) {
+            if (currentUser && !isSuperAdmin) {
                 query = query.eq('company_id', currentUser.company_id);
             }
 

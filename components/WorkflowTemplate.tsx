@@ -968,7 +968,29 @@ const WorkflowTemplate = () => {
     const fetchTemplates = async () => {
         setLoading(true);
         try {
-            const { data, error } = await supabase.from('workflow_templates').select('*').order('created_at', { ascending: false });
+            const profileStr = localStorage.getItem('profile');
+            const currentUser = profileStr ? JSON.parse(profileStr) : null;
+            const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+            const isDeptAdmin = currentUser?.is_department_admin === true;
+            const isSuperAdmin = isAdmin && !isDeptAdmin;
+
+            let query = supabase.from('workflow_templates').select('*').order('created_at', { ascending: false });
+
+            // If not super admin, filter templates by company name
+            if (!isSuperAdmin && currentUser?.company_id) {
+                // Get company name first
+                const { data: companyData } = await supabase
+                    .from('company')
+                    .select('company_name')
+                    .eq('company_id', currentUser.company_id)
+                    .single();
+
+                if (companyData?.company_name) {
+                    query = query.ilike('name', `%${companyData.company_name}%`);
+                }
+            }
+
+            const { data, error } = await query;
 
             if (error) {
                 throw error;
