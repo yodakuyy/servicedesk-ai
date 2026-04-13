@@ -32,7 +32,7 @@ interface CategoryNode {
 interface CustomField {
     id: string;
     label: string;
-    type: 'text' | 'textarea' | 'number' | 'date' | 'dropdown' | 'multiselect' | 'checkbox' | 'file' | 'label' | 'link';
+    type: 'text' | 'textarea' | 'number' | 'date' | 'datetime' | 'dropdown' | 'multiselect' | 'checkbox' | 'file' | 'label' | 'link';
     required: boolean;
     options?: string[];
     placeholder?: string;
@@ -511,6 +511,9 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
 
             case 'date':
                 return <input type="date" className={commonClasses} value={formValues[field.id] || ''} onChange={e => handleInputChange(field.id, e.target.value)} />;
+
+            case 'datetime':
+                return <input type="datetime-local" className={commonClasses} value={formValues[field.id] || ''} onChange={e => handleInputChange(field.id, e.target.value)} />;
 
             case 'dropdown':
                 return (

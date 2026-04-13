@@ -42,6 +42,7 @@ interface AutoCloseRule {
     tickets_closed?: number;
     target_status_id?: string;
     use_business_hours?: boolean;
+    target_company_ids?: number[] | null;
 }
 
 interface TicketStatus {
@@ -54,8 +55,10 @@ type ConditionType = 'status' | 'user_confirmed' | 'no_response' | 'pending';
 const AutoCloseRules: React.FC = () => {
     const [rules, setRules] = useState<AutoCloseRule[]>([]);
     const [statuses, setStatuses] = useState<TicketStatus[]>([]);
+    const [companies, setCompanies] = useState<{ company_id: number; company_name: string }[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    const [userProfile, setUserProfile] = useState<any>(null);
 
     // Modal states
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -78,6 +81,7 @@ const AutoCloseRules: React.FC = () => {
         is_active: boolean;
         target_status_id: string;
         use_business_hours: boolean;
+        target_company_ids: number[];
     }>({
         name: '',
         description: '',
@@ -91,7 +95,8 @@ const AutoCloseRules: React.FC = () => {
         note_text: '',
         is_active: true,
         target_status_id: '',
-        use_business_hours: false
+        use_business_hours: false,
+        target_company_ids: []
     });
 
     // Pagination
@@ -146,6 +151,15 @@ const AutoCloseRules: React.FC = () => {
     };
 
     useEffect(() => {
+        const profile = localStorage.getItem('profile');
+        if (profile) {
+            const parsed = JSON.parse(profile);
+            setUserProfile(parsed);
+            // If dept admin, default her dept in form
+            if (parsed.is_department_admin && parsed.company_id) {
+                setFormData(prev => ({ ...prev, target_company_ids: [parsed.company_id] }));
+            }
+        }
         fetchData();
     }, []);
 
@@ -161,10 +175,28 @@ const AutoCloseRules: React.FC = () => {
 
             if (statusesData) setStatuses(statusesData);
 
+            // Fetch companies
+            const { data: companiesData } = await supabase
+                .from('company')
+                .select('company_id, company_name')
+                .order('company_name');
+            if (companiesData) setCompanies(companiesData);
+
             // Fetch auto close rules
-            const { data: rulesData, error } = await supabase
+            const profile = localStorage.getItem('profile');
+            const currentUser = profile ? JSON.parse(profile) : null;
+            const isSuperAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
+
+            let query = supabase
                 .from('auto_close_rules')
-                .select('*')
+                .select('*');
+
+            // If Dept Admin, only show their dept rules + global rules
+            if (currentUser?.is_department_admin && currentUser?.company_id) {
+                query = query.or(`target_company_ids.is.null,target_company_ids.cs.[${currentUser.company_id}]`);
+            }
+
+            const { data: rulesData, error } = await query
                 .order('created_at', { ascending: false });
 
             if (error) {
@@ -173,7 +205,7 @@ const AutoCloseRules: React.FC = () => {
                 // Optionally show an error alert here
             } else if (rulesData) {
                 setRules(rulesData);
-                
+
                 // Calculate stats
                 const activeCount = rulesData.filter(r => r.is_active).length;
                 setStats({
@@ -228,7 +260,8 @@ const AutoCloseRules: React.FC = () => {
                 note_text: rule.note_text || '',
                 is_active: rule.is_active,
                 target_status_id: rule.target_status_id || '',
-                use_business_hours: rule.use_business_hours || false
+                use_business_hours: rule.use_business_hours || false,
+                target_company_ids: rule.target_company_ids || []
             });
         } else {
             setEditingRule(null);
@@ -245,7 +278,8 @@ const AutoCloseRules: React.FC = () => {
                 note_text: '',
                 is_active: true,
                 target_status_id: '',
-                use_business_hours: false
+                use_business_hours: false,
+                target_company_ids: userProfile?.is_department_admin && userProfile.company_id ? [userProfile.company_id] : []
             });
         }
         setIsModalOpen(true);
@@ -268,6 +302,7 @@ const AutoCloseRules: React.FC = () => {
             is_active: formData.is_active,
             target_status_id: formData.target_status_id || null,
             use_business_hours: formData.use_business_hours || false,
+            target_company_ids: formData.target_company_ids.length > 0 ? formData.target_company_ids : null,
             updated_at: new Date().toISOString()
         };
 
@@ -329,8 +364,8 @@ const AutoCloseRules: React.FC = () => {
 
     // Filter rules
     const filteredRules = rules.filter(rule =>
-        rule.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        rule.description?.toLowerCase().includes(searchTerm.toLowerCase())
+    (rule.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        rule.description?.toLowerCase().includes(searchTerm.toLowerCase()))
     );
 
     // Pagination
@@ -387,8 +422,8 @@ const AutoCloseRules: React.FC = () => {
             {/* Run Result Notification */}
             {runResult?.show && (
                 <div className={`mb-6 p-4 rounded-xl flex items-start gap-3 ${runResult.errors.length > 0
-                        ? 'bg-red-50 border border-red-200'
-                        : 'bg-green-50 border border-green-200'
+                    ? 'bg-red-50 border border-red-200'
+                    : 'bg-green-50 border border-green-200'
                     }`}>
                     {runResult.errors.length > 0 ? (
                         <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
@@ -518,6 +553,7 @@ const AutoCloseRules: React.FC = () => {
                     <thead className="bg-gray-50 border-b border-gray-100">
                         <tr>
                             <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide">Rule Name</th>
+                            <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide">Department</th>
                             <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide">Condition</th>
                             <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide">After Period</th>
                             <th className="px-6 py-4 font-semibold text-xs text-gray-600 uppercase tracking-wide text-center">Notify</th>
@@ -554,6 +590,23 @@ const AutoCloseRules: React.FC = () => {
                                             <span className="font-medium text-gray-800">{rule.name}</span>
                                             {rule.description && (
                                                 <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">{rule.description}</p>
+                                            )}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <div className="flex flex-wrap gap-1">
+                                            {!rule.target_company_ids || rule.target_company_ids.length === 0 ? (
+                                                <span className="px-2 py-1 bg-gray-100 text-gray-500 rounded text-[10px] font-black uppercase tracking-wider italic">
+                                                    Global Rule
+                                                </span>
+                                            ) : (
+                                                companies
+                                                    .filter(c => rule.target_company_ids?.includes(c.company_id))
+                                                    .map(c => (
+                                                        <span key={c.company_id} className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-[10px] font-black uppercase tracking-wider border border-indigo-100 italic">
+                                                            {c.company_name}
+                                                        </span>
+                                                    ))
                                             )}
                                         </div>
                                     </td>
@@ -798,6 +851,54 @@ const AutoCloseRules: React.FC = () => {
                                         <span className="text-sm text-gray-600">hours</span>
                                     </div>
                                 </div>
+                            </div>
+
+                            {/* Department Selection */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Target Department(s)</label>
+                                <div className="p-3 border border-gray-200 rounded-lg max-h-48 overflow-y-auto space-y-2 bg-gray-50/50">
+                                    <label className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-gray-100 transition-colors">
+                                        <input
+                                            type="checkbox"
+                                            checked={formData.target_company_ids.length === 0}
+                                            onChange={(e) => {
+                                                if (e.target.checked) setFormData(prev => ({ ...prev, target_company_ids: [] }));
+                                            }}
+                                            disabled={userProfile?.is_department_admin}
+                                            className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                                        />
+                                        <span className={`text-sm ${formData.target_company_ids.length === 0 ? 'font-bold text-indigo-700' : 'text-gray-600'}`}>
+                                            Global (All Departments)
+                                        </span>
+                                    </label>
+                                    <div className="h-px bg-gray-200 my-2" />
+                                    {companies.map(c => {
+                                        const isChecked = formData.target_company_ids.includes(c.company_id);
+                                        return (
+                                            <label key={c.company_id} className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-gray-100 transition-colors">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isChecked}
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) {
+                                                            setFormData(prev => ({ ...prev, target_company_ids: [...prev.target_company_ids, c.company_id] }));
+                                                        } else {
+                                                            setFormData(prev => ({ ...prev, target_company_ids: prev.target_company_ids.filter(id => id !== c.company_id) }));
+                                                        }
+                                                    }}
+                                                    disabled={userProfile?.is_department_admin}
+                                                    className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                                                />
+                                                <span className={`text-sm ${isChecked ? 'font-bold text-indigo-700' : 'text-gray-600'}`}>
+                                                    {c.company_name}
+                                                </span>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                                {userProfile?.is_department_admin && (
+                                    <p className="text-[10px] text-gray-400 mt-1 italic">Only Global Admins can change the target departments.</p>
+                                )}
                             </div>
 
                             {/* Time Calculation Mode */}

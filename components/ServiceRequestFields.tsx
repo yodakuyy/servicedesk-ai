@@ -26,7 +26,9 @@ import {
     Link as LinkIcon,
     Paperclip,
     Edit2,
-    Info
+    Info,
+    Clock,
+    ChevronDown as ChevronDownIcon
 } from 'lucide-react';
 // @ts-ignore
 import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
@@ -45,7 +47,7 @@ interface CategoryNode {
 interface CustomField {
     id: string;
     label: string;
-    type: 'text' | 'textarea' | 'number' | 'date' | 'dropdown' | 'multiselect' | 'checkbox' | 'file' | 'label' | 'link';
+    type: 'text' | 'textarea' | 'number' | 'date' | 'datetime' | 'dropdown' | 'multiselect' | 'checkbox' | 'file' | 'label' | 'link';
     required: boolean;
     options?: string[]; // for dropdown/multiselect
     placeholder?: string;
@@ -297,7 +299,7 @@ const ServiceRequestFields: React.FC = () => {
                 label: f.label,
                 field_type: f.type,
                 is_required: f.required,
-                options: f.options || [],
+                options: (f.options || []).map(opt => opt.trim()).filter(opt => opt !== ''),
                 placeholder: f.placeholder,
                 description: f.description,
                 default_value: f.defaultValue,
@@ -347,6 +349,7 @@ const ServiceRequestFields: React.FC = () => {
             case 'dropdown': return <List size={16} />;
             case 'multiselect': return <CheckSquare size={16} />;
             case 'date': return <Calendar size={16} />;
+            case 'datetime': return <Clock size={16} />;
             case 'checkbox': return <CheckSquare size={16} />;
             case 'number': return <Hash size={16} />;
             case 'file': return <Paperclip size={16} />;
@@ -575,6 +578,11 @@ const ServiceRequestFields: React.FC = () => {
                                                                             <input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" />
                                                                             <span className="text-sm font-medium text-gray-700">{field.placeholder || field.label}</span>
                                                                         </label>
+                                                                    ) : field.type === 'date' || field.type === 'datetime' ? (
+                                                                        <input
+                                                                            type={field.type === 'date' ? 'date' : 'datetime-local'}
+                                                                            className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all placeholder:font-normal text-sm"
+                                                                        />
                                                                     ) : field.type === 'file' ? (
                                                                         <div className="w-full px-4 py-8 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-400 hover:bg-gray-50 hover:border-indigo-200 transition-all cursor-pointer group">
                                                                             <div className="w-10 h-10 bg-gray-50 rounded-full flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
@@ -661,6 +669,7 @@ const ServiceRequestFields: React.FC = () => {
                                                                                         <option value="textarea">Long Text / Description</option>
                                                                                         <option value="number">Number</option>
                                                                                         <option value="date">Date Picker</option>
+                                                                                        <option value="datetime">Date & Time Picker</option>
                                                                                         <option value="checkbox">Checkbox / Toggle</option>
                                                                                         <option value="file">File Attachment</option>
                                                                                     </optgroup>
@@ -707,7 +716,9 @@ const ServiceRequestFields: React.FC = () => {
                                                                             <input
                                                                                 type="text"
                                                                                 value={field.options?.join(', ') || ''}
-                                                                                onChange={(e) => updateField(field.id, { options: e.target.value.split(',').map(s => s.trim()) })}
+                                                                                onChange={(e) => updateField(field.id, { 
+                                                                                    options: e.target.value.split(',').map(s => s.replace(/^\s+/, '')) 
+                                                                                })}
                                                                                 className="w-full px-3 py-2 bg-white border border-orange-200 rounded-lg text-sm text-gray-700 focus:border-orange-400 focus:outline-none placeholder:text-orange-200"
                                                                                 placeholder="Option 1, Option 2, Option 3"
                                                                             />
