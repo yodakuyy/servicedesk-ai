@@ -420,6 +420,16 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
 
                 if (field.type === 'file') {
                     displayVal = file ? `File: ${file.name} (${(file.size / 1024).toFixed(1)} KB)` : 'No file';
+                } else if (field.type === 'date' && val) {
+                    try {
+                        displayVal = new Date(val).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+                    } catch (e) { displayVal = val; }
+                } else if (field.type === 'datetime' && val) {
+                    try {
+                        const d = new Date(val);
+                        displayVal = d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) + ', ' + 
+                                     d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+                    } catch (e) { displayVal = val; }
                 } else if (Array.isArray(val)) {
                     displayVal = val.join(', ');
                 } else if (typeof val === 'boolean') {
@@ -428,8 +438,8 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
 
                 descriptionHtml += `
                     <tr style="border-bottom: 1px solid #eee;">
-                        <td style="padding: 8px; font-weight: bold; color: #555; width: 40%;">${field.label}</td>
-                        <td style="padding: 8px; color: #000;">${displayVal || '-'}</td>
+                        <td style="padding: 10px 8px; font-weight: bold; color: #64748b; width: 35%; font-size: 13px;">${field.label}</td>
+                        <td style="padding: 10px 8px; color: #1e293b; font-size: 14px; font-weight: 500;">${displayVal || '-'}</td>
                     </tr>
                 `;
             });
