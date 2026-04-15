@@ -406,23 +406,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-        // 0. Fetch All Statuses for filtering
-        const { data: allStatuses } = await supabase.from('ticket_statuses').select('status_id, status_name');
+        // 0. Fetch All Statuses for filtering (including sla_behavior and is_final for dynamic detection)
+        const { data: allStatuses } = await supabase.from('ticket_statuses').select('status_id, status_name, sla_behavior, is_final');
 
         // 1. Get Status IDs for "Open" definition (Open + In Progress only)
         const openStatusIds = allStatuses
           ?.filter(s => ['open', 'in progress'].includes(s.status_name.toLowerCase()))
           .map(s => s.status_id) || [];
 
-        // 1.5 Get Pending/Waiting Status IDs
+        // 1.5 Get Pending/Waiting Status IDs (dynamically from sla_behavior = 'pause')
         const pendingStatusIds = allStatuses
-          ?.filter(s => s.status_name.toLowerCase().includes('pending') || s.status_name.toLowerCase().includes('waiting'))
+          ?.filter(s => s.sla_behavior === 'pause')
           .map(s => s.status_id) || [];
 
-        // 2. Get All Active Status IDs (Excluding Resolved, Closed, Canceled, Cancelled)
-        const terminalStatusNames = ['resolved', 'closed', 'canceled', 'cancelled'];
+        // 2. Get All Active Status IDs (Excluding terminal statuses: sla_behavior='stop' or is_final=true)
         const activeStatusIds = allStatuses
-          ?.filter(s => !terminalStatusNames.includes(s.status_name.toLowerCase()))
+          ?.filter(s => s.sla_behavior !== 'stop' && !s.is_final)
           .map(s => s.status_id) || [];
 
         // 2. NEW TICKETS (Last 7 days)

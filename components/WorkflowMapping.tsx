@@ -14,7 +14,8 @@ import {
     Settings,
     Zap,
     CheckCircle,
-    XCircle
+    XCircle,
+    RefreshCcw
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import Swal from 'sweetalert2';
@@ -97,6 +98,7 @@ const WorkflowMapping: React.FC = () => {
     const [showWarning, setShowWarning] = useState(false);
     const [pendingDepartmentChange, setPendingDepartmentChange] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const [isSyncing, setIsSyncing] = useState(false);
 
     const showToast = (type: 'success' | 'error', message: string) => {
         Swal.fire({
@@ -378,6 +380,104 @@ const WorkflowMapping: React.FC = () => {
             showToast('error', error.message || 'Failed to enable workflow');
         } finally {
             setEnablingWorkflow(false);
+        }
+    };
+
+    const syncWithTemplate = async () => {
+        if (!selectedDepartment) return;
+
+        const currentWf = departments.find(d => d.workflow_id === selectedDepartment);
+        if (!currentWf || !currentWf.workflow_name.includes('|template:')) {
+            showToast('error', 'This workflow is not linked to any template.');
+            return;
+        }
+
+        const templateId = currentWf.workflow_name.split('|template:')[1];
+
+        // Confirm sync
+        const result = await Swal.fire({
+            title: 'Sync from Template?',
+            text: 'This will overwrite current department transitions and statuses with the latest version from the template. Are you sure?',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#6366f1',
+            cancelButtonColor: '#94a3b8',
+            confirmButtonText: 'Yes, Sync Now',
+            cancelButtonText: 'Cancel'
+        });
+
+        if (!result.isConfirmed) return;
+
+        setIsSyncing(true);
+        try {
+            // 1. Fetch template statuses
+            const { data: templateStatuses, error: statusErr } = await supabase
+                .from('workflow_template_statuses')
+                .select('status_id, sort_order, auto_reply_transition_to_status_id, require_reason_on_entry')
+                .eq('workflow_template_id', templateId);
+
+            if (statusErr) throw statusErr;
+
+            // 2. Clear current department data
+            const { error: delTransErr } = await supabase.from('workflow_transitions').delete().eq('workflow_id', selectedDepartment);
+            if (delTransErr) throw delTransErr;
+
+            const { error: delStatusErr } = await supabase.from('workflow_statuses').delete().eq('workflow_id', selectedDepartment);
+            if (delStatusErr) throw delStatusErr;
+
+            // 3. Insert fresh statuses
+            if (templateStatuses && templateStatuses.length > 0) {
+                const statusInserts = templateStatuses.map(s => ({
+                    workflow_id: selectedDepartment,
+                    status_id: s.status_id,
+                    sort_order: s.sort_order,
+                    auto_reply_transition_to_status_id: s.auto_reply_transition_to_status_id,
+                    require_reason_on_entry: s.require_reason_on_entry
+                }));
+
+                const { error: insertErr } = await supabase
+                    .from('workflow_statuses')
+                    .insert(statusInserts);
+
+                if (insertErr) throw insertErr;
+
+                // 4. Fetch and insert fresh transitions
+                const { data: templateTransitions, error: transErr } = await supabase
+                    .from('workflow_template_transitions')
+                    .select('from_status_id, to_status_id, allowed_roles, is_automatic, condition')
+                    .eq('workflow_template_id', templateId);
+
+                if (transErr) throw transErr;
+
+                if (templateTransitions && templateTransitions.length > 0) {
+                    const transitionInserts = templateTransitions.map(t => ({
+                        workflow_id: selectedDepartment,
+                        from_status_id: t.from_status_id,
+                        to_status_id: t.to_status_id,
+                        allowed_roles: t.allowed_roles ? [t.allowed_roles] : ['agent'],
+                        is_automatic: t.is_automatic || false,
+                        condition: t.condition || {}
+                    }));
+
+                    const { error: transInsertErr } = await supabase
+                        .from('workflow_transitions')
+                        .insert(transitionInserts);
+
+                    if (transInsertErr) throw transInsertErr;
+                }
+            }
+
+            showToast('success', 'Workflow successfully synchronized with template');
+            
+            // Reload workflow to reflect changes on canvas
+            await loadWorkflow();
+            await fetchWorkflowStatuses(selectedDepartment);
+
+        } catch (error: any) {
+            console.error('Error syncing workflow:', error);
+            showToast('error', error.message || 'Failed to sync with template');
+        } finally {
+            setIsSyncing(false);
         }
     };
 
@@ -1214,6 +1314,22 @@ const WorkflowMapping: React.FC = () => {
                             title="Delete Workflow Configuration"
                         >
                             <Trash2 size={18} />
+                        </button>
+                    )}
+
+                    {selectedDepartment && departments.find(d => d.workflow_id === selectedDepartment)?.workflow_name.includes('|template:') && (
+                        <button
+                            onClick={syncWithTemplate}
+                            disabled={isSyncing}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all border
+                                ${isSyncing 
+                                    ? 'bg-gray-100 text-gray-400 border-gray-200' 
+                                    : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
+                                }`}
+                            title="Sync structure with master template"
+                        >
+                            <RefreshCcw size={14} className={isSyncing ? 'animate-spin' : ''} />
+                            {isSyncing ? 'Syncing...' : 'Sync with Template'}
                         </button>
                     )}
 

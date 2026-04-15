@@ -29,6 +29,7 @@ interface CategoryNode {
     level: number;
     description: string;
     isActive: boolean;
+    showOnCalendar: boolean;
     visible_to: string[];
     children?: CategoryNode[];
     parent_id?: string | null;
@@ -56,12 +57,13 @@ const CategoryManagement: React.FC = () => {
         description: '',
         visible_to: ['admin', 'requestor', 'agent'],
         isActive: true,
+        showOnCalendar: false,
         parent_id: null as string | null,
         level: 1,
         type: 'Incident' as 'Incident' | 'Service Request' | 'Change Request',
         default_group_id: null as string | null,
         assignment_strategy: 'manual' as 'manual' | 'round_robin',
-        default_priority: null as string | null,
+        default_priority: null as CategoryNode['default_priority'],
         company_id: null as number | null
     });
 
@@ -144,6 +146,7 @@ const CategoryManagement: React.FC = () => {
                     level: item.level || 1,
                     description: item.description || '',
                     isActive: item.is_active ?? true,
+                    showOnCalendar: item.show_on_calendar ?? false,
                     parent_id: item.parent_id ? String(item.parent_id) : null,
                     default_group_id: item.default_group_id ? String(item.default_group_id) : null,
                     assignment_strategy: item.assignment_strategy || 'manual',
@@ -178,7 +181,8 @@ const CategoryManagement: React.FC = () => {
                     default_group_id: node.default_group_id,
                     assignment_strategy: node.assignment_strategy || 'manual',
                     default_priority: node.default_priority,
-                    company_id: node.company_id
+                    company_id: node.company_id,
+                    show_on_calendar: node.showOnCalendar
                 })
                 .eq('id', node.id);
 
@@ -479,12 +483,13 @@ const CategoryManagement: React.FC = () => {
             description: '',
             visible_to: parentNode ? [...parentNode.visible_to] : ['admin', 'requestor', 'agent'],
             isActive: true,
+            showOnCalendar: parentNode ? parentNode.showOnCalendar : false,
             parent_id: parentNode ? parentNode.id : null,
             level: parentNode ? parentNode.level + 1 : 1,
             type: parentNode ? parentNode.type : ticketType,
             default_group_id: parentNode ? parentNode.default_group_id : null,
             assignment_strategy: parentNode ? parentNode.assignment_strategy : 'manual',
-            default_priority: parentNode ? parentNode.default_priority : null,
+            default_priority: parentNode ? parentNode.default_priority as CategoryNode['default_priority'] : null,
             company_id: parentNode ? parentNode.company_id : (selectedDeptFilter === 'all' ? null : selectedDeptFilter as number)
         });
         setIsAddModalOpen(true);
@@ -519,7 +524,8 @@ const CategoryManagement: React.FC = () => {
                     default_group_id: newCategoryData.default_group_id,
                     assignment_strategy: newCategoryData.assignment_strategy,
                     default_priority: newCategoryData.default_priority,
-                    company_id: newCategoryData.company_id
+                    company_id: newCategoryData.company_id,
+                    show_on_calendar: newCategoryData.showOnCalendar
                 }])
                 .select()
                 .single();
@@ -758,112 +764,146 @@ const CategoryManagement: React.FC = () => {
                                 />
                             </div>
 
-                            {/* Status Toggles */}
-                            <div className="flex gap-12 pt-4">
-                                <div className="flex items-center gap-4 group">
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-black text-gray-700">Active</span>
-                                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Standard UI visibility</span>
+                            {/* Settings Section */}
+                            <div className="space-y-8 pt-4">
+                                {/* Toggles Row */}
+                                <div className="flex gap-16 items-start">
+                                    <div className="flex items-center gap-4 group">
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-black text-gray-700">Active Status</span>
+                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Category visibility in forms</span>
+                                        </div>
+                                        <button
+                                            disabled={!isEditing}
+                                            onClick={() => {
+                                                setCategories(prev => {
+                                                    const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
+                                                        return nodes.map(n => {
+                                                            if (n.id === selectedNode.id) return { ...n, isActive: !n.isActive };
+                                                            if (n.children) return { ...n, children: updateInTree(n.children) };
+                                                            return n;
+                                                        });
+                                                    };
+                                                    return updateInTree(prev);
+                                                });
+                                            }}
+                                            className={`w-14 h-7 rounded-full relative transition-all ${selectedNode.isActive ? 'bg-indigo-600' : 'bg-gray-200'} ${!isEditing && 'opacity-60 cursor-not-allowed'}`}
+                                        >
+                                            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all ${selectedNode.isActive ? 'right-1' : 'left-1'}`} />
+                                        </button>
                                     </div>
-                                    <button
-                                        disabled={!isEditing}
-                                        onClick={() => {
-                                            setCategories(prev => {
-                                                const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
-                                                    return nodes.map(n => {
-                                                        if (n.id === selectedNode.id) return { ...n, isActive: !n.isActive };
-                                                        if (n.children) return { ...n, children: updateInTree(n.children) };
-                                                        return n;
-                                                    });
-                                                };
-                                                return updateInTree(prev);
-                                            });
-                                        }}
-                                        className={`w-14 h-7 rounded-full relative transition-all ${selectedNode.isActive ? 'bg-indigo-600' : 'bg-gray-200'} ${!isEditing && 'opacity-60 cursor-not-allowed'}`}
-                                    >
-                                        <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all ${selectedNode.isActive ? 'right-1' : 'left-1'}`} />
-                                    </button>
+
+                                    <div className="flex items-center gap-4 group">
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-black text-indigo-700">Display Calendar</span>
+                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Show events on dashboard</span>
+                                        </div>
+                                        <button
+                                            disabled={!isEditing}
+                                            onClick={() => {
+                                                setCategories(prev => {
+                                                    const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
+                                                        return nodes.map(n => {
+                                                            if (n.id === selectedNode.id) return { ...n, showOnCalendar: !n.showOnCalendar };
+                                                            if (n.children) return { ...n, children: updateInTree(n.children) };
+                                                            return n;
+                                                        });
+                                                    };
+                                                    return updateInTree(prev);
+                                                });
+                                            }}
+                                            className={`w-14 h-7 rounded-full relative transition-all ${selectedNode.showOnCalendar ? 'bg-indigo-600' : 'bg-gray-200'} ${!isEditing && 'opacity-60 cursor-not-allowed'}`}
+                                        >
+                                            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all ${selectedNode.showOnCalendar ? 'right-1' : 'left-1'}`} />
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="flex flex-col gap-2 flex-grow">
-                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Default Assignment Group</label>
-                                    <select
-                                        disabled={!isEditing}
-                                        value={selectedNode.default_group_id || ''}
-                                        onChange={(e) => {
-                                            const val = e.target.value || null;
-                                            setCategories(prev => {
-                                                const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
-                                                    return nodes.map(n => {
-                                                        if (n.id === selectedNode.id) return { ...n, default_group_id: val };
-                                                        if (n.children) return { ...n, children: updateInTree(n.children) };
-                                                        return n;
-                                                    });
-                                                };
-                                                return updateInTree(prev);
-                                            });
-                                        }}
-                                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 disabled:bg-gray-100/50 disabled:cursor-not-allowed transition-all"
-                                    >
-                                        <option value="">No Default Group</option>
-                                        {availableGroups.map(g => (
-                                            <option key={g.id} value={g.id}>{g.name}</option>
-                                        ))}
-                                    </select>
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide ml-1">Tickets in this category will auto-route to this group</span>
-                                </div>
-                                <div className="flex flex-col gap-2 flex-grow">
-                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Default Priority (Urgency)</label>
-                                    <select
-                                        disabled={!isEditing}
-                                        value={selectedNode.default_priority || ''}
-                                        onChange={(e) => {
-                                            const val = e.target.value || null;
-                                            setCategories(prev => {
-                                                const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
-                                                    return nodes.map(n => {
-                                                        if (n.id === selectedNode.id) return { ...n, default_priority: val as any };
-                                                        if (n.children) return { ...n, children: updateInTree(n.children) };
-                                                        return n;
-                                                    });
-                                                };
-                                                return updateInTree(prev);
-                                            });
-                                        }}
-                                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 disabled:bg-gray-100/50 disabled:cursor-not-allowed transition-all"
-                                    >
-                                        <option value="">System Default</option>
-                                        {currentDeptPriorities.map(p => (
-                                            <option key={p} value={p.toLowerCase()}>{p}</option>
-                                        ))}
-                                    </select>
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide ml-1">Automate urgency based on category</span>
-                                </div>
-                                <div className="flex flex-col gap-2 flex-grow">
-                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Primary Department</label>
-                                    <select
-                                        disabled={!isEditing}
-                                        value={selectedNode.company_id || ''}
-                                        onChange={(e) => {
-                                            const val = e.target.value ? Number(e.target.value) : null;
-                                            setCategories(prev => {
-                                                const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
-                                                    return nodes.map(n => {
-                                                        if (n.id === selectedNode.id) return { ...n, company_id: val };
-                                                        if (n.children) return { ...n, children: updateInTree(n.children) };
-                                                        return n;
-                                                    });
-                                                };
-                                                return updateInTree(prev);
-                                            });
-                                        }}
-                                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 disabled:bg-gray-100/50 disabled:cursor-not-allowed transition-all"
-                                    >
-                                        <option value="">Global (All Departments)</option>
-                                        {availableDepartments.map(dept => (
-                                            <option key={dept.company_id} value={dept.company_id}>{dept.company_name}</option>
-                                        ))}
-                                    </select>
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide ml-1">Limit this category to a specific department</span>
+
+                                {/* Dropdowns Grid */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Default Assignment Group</label>
+                                        <select
+                                            disabled={!isEditing}
+                                            value={selectedNode.default_group_id || ''}
+                                            onChange={(e) => {
+                                                const val = e.target.value || null;
+                                                setCategories(prev => {
+                                                    const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
+                                                        return nodes.map(n => {
+                                                            if (n.id === selectedNode.id) return { ...n, default_group_id: val };
+                                                            if (n.children) return { ...n, children: updateInTree(n.children) };
+                                                            return n;
+                                                        });
+                                                    };
+                                                    return updateInTree(prev);
+                                                });
+                                            }}
+                                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 disabled:bg-gray-100/50 disabled:cursor-not-allowed transition-all shadow-sm"
+                                        >
+                                            <option value="">No Default Group</option>
+                                            {availableGroups.map(g => (
+                                                <option key={g.id} value={g.id}>{g.name}</option>
+                                            ))}
+                                        </select>
+                                        <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tight ml-1 leading-tight">Auto-routes tickets to this team</span>
+                                    </div>
+
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Default Priority</label>
+                                        <select
+                                            disabled={!isEditing}
+                                            value={selectedNode.default_priority || ''}
+                                            onChange={(e) => {
+                                                const val = (e.target.value || null) as CategoryNode['default_priority'];
+                                                setCategories(prev => {
+                                                    const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
+                                                        return nodes.map(n => {
+                                                            if (n.id === selectedNode.id) return { ...n, default_priority: val };
+                                                            if (n.children) return { ...n, children: updateInTree(n.children) };
+                                                            return n;
+                                                        });
+                                                    };
+                                                    return updateInTree(prev);
+                                                });
+                                            }}
+                                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 disabled:bg-gray-100/50 disabled:cursor-not-allowed transition-all shadow-sm"
+                                        >
+                                            <option value="">System Default</option>
+                                            {currentDeptPriorities.map(p => (
+                                                <option key={p} value={p}>{p}</option>
+                                            ))}
+                                        </select>
+                                        <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tight ml-1 leading-tight">Automated priority based on category</span>
+                                    </div>
+
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Primary Department</label>
+                                        <select
+                                            disabled={!isEditing}
+                                            value={selectedNode.company_id || ''}
+                                            onChange={(e) => {
+                                                const val = e.target.value ? Number(e.target.value) : null;
+                                                setCategories(prev => {
+                                                    const updateInTree = (nodes: CategoryNode[]): CategoryNode[] => {
+                                                        return nodes.map(n => {
+                                                            if (n.id === selectedNode.id) return { ...n, company_id: val };
+                                                            if (n.children) return { ...n, children: updateInTree(n.children) };
+                                                            return n;
+                                                        });
+                                                    };
+                                                    return updateInTree(prev);
+                                                });
+                                            }}
+                                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 disabled:bg-gray-100/50 disabled:cursor-not-allowed transition-all shadow-sm"
+                                        >
+                                            <option value="">Global (All Departments)</option>
+                                            {availableDepartments.map(dept => (
+                                                <option key={dept.company_id} value={dept.company_id}>{dept.company_name}</option>
+                                            ))}
+                                        </select>
+                                        <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tight ml-1 leading-tight">Limits category to a specific department</span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1101,6 +1141,20 @@ const CategoryManagement: React.FC = () => {
                                             <span className="text-xs font-bold text-gray-700">{newCategoryData.isActive ? 'Active' : 'Inactive'}</span>
                                         </div>
                                     </div>
+
+                                    <div className="space-y-3 col-span-2 p-4 bg-indigo-50/30 rounded-2xl border border-indigo-100/50 flex items-center justify-between">
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-black text-indigo-700 leading-tight">Display Calendar</span>
+                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Show events on dashboard</span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setNewCategoryData(prev => ({ ...prev, showOnCalendar: !prev.showOnCalendar }))}
+                                            className={`w-14 h-7 rounded-full relative transition-all ${newCategoryData.showOnCalendar ? 'bg-indigo-600' : 'bg-gray-200'}`}
+                                        >
+                                            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all ${newCategoryData.showOnCalendar ? 'right-1' : 'left-1'}`} />
+                                        </button>
+                                    </div>
                                     <div className="space-y-3 col-span-2">
                                         <label className="text-xs font-bold text-gray-700">Default Assignment Group</label>
                                         <select
@@ -1138,12 +1192,12 @@ const CategoryManagement: React.FC = () => {
                                             <label className="text-xs font-bold text-gray-700">Default Priority (Urgency)</label>
                                             <select
                                                 value={newCategoryData.default_priority || ''}
-                                                onChange={(e) => setNewCategoryData(prev => ({ ...prev, default_priority: e.target.value || null }))}
+                                                onChange={(e) => setNewCategoryData(prev => ({ ...prev, default_priority: (e.target.value || null) as CategoryNode['default_priority'] }))}
                                                 className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all"
                                             >
                                                 <option value="">System Default</option>
                                                 {currentDeptPriorities.map(p => (
-                                                    <option key={p} value={p.toLowerCase()}>{p}</option>
+                                                    <option key={p} value={p}>{p}</option>
                                                 ))}
                                             </select>
                                         </div>

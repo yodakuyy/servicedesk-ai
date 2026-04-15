@@ -69,21 +69,33 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
     // Submission
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [openStatusId, setOpenStatusId] = useState<string | null>(null);
+    const [approvedStatusId, setApprovedStatusId] = useState<string | null>(null);
+
+    // Availability Check State
+    const [isCheckingAvailability, setIsCheckingAvailability] = useState(false);
+    const [availabilityError, setAvailabilityError] = useState<string | null>(null);
 
     // Initial Load
     useEffect(() => {
         fetchCategories();
-        fetchOpenStatus();
+        fetchStatuses();
         setStep(1); // Reset step when ticket type changes
     }, [ticketType]);
 
-    const fetchOpenStatus = async () => {
-        const { data } = await supabase
+    const fetchStatuses = async () => {
+        const { data: openData } = await supabase
             .from('ticket_statuses')
             .select('status_id')
             .eq('status_name', 'Open')
             .single();
-        if (data) setOpenStatusId(data.status_id);
+        if (openData) setOpenStatusId(openData.status_id);
+
+        const { data: approvedData } = await supabase
+            .from('ticket_statuses')
+            .select('status_id')
+            .eq('status_name', 'Approved')
+            .single();
+        if (approvedData) setApprovedStatusId(approvedData.status_id);
     };
 
     const fetchCategories = async () => {
@@ -281,6 +293,78 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
         }
     };
 
+    // --- Culinaria / Kitchen Availability Check ---
+    useEffect(() => {
+        const checkAvailability = async () => {
+            // Only run for Culinaria categories
+            if (!selectedCategoryName?.toLowerCase().includes('culinaria')) {
+                setAvailabilityError(null);
+                return;
+            }
+
+            // Find the "Event Date & Time" field
+            const dateField = fields.find(f => f.label.toLowerCase().includes('event date'));
+            if (!dateField) return;
+
+            const selectedDate = formValues[dateField.id];
+            if (!selectedDate) {
+                setAvailabilityError(null);
+                return;
+            }
+
+            // Standardize date for comparison (YYYY-MM-DD)
+            const dateOnly = selectedDate.split('T')[0];
+
+            setIsCheckingAvailability(true);
+            try {
+                // Search for ANY approved ticket in this category that HAS the same date in its description
+                // We use ILIKE because custom fields are stored in the HTML description table
+                const { data, error } = await supabase
+                    .from('tickets')
+                    .select('id, subject, description, ticket_statuses!status_id!inner(status_name)')
+                    .eq('category_id', selectedCategoryId)
+                    .eq('ticket_statuses.status_name', 'Approved')
+                    .ilike('description', `%${dateOnly}%`);
+
+                if (error) throw error;
+
+                // Filter specifically for "Approved" or "In Progress" type behaviors
+                // For now, let's trust "any existing confirmed order for this day"
+                if (data && data.length > 0) {
+                    // Try to find a real match in the HTML structure to avoid false positives
+                    const match = data.find(ticket => {
+                        const desc = ticket.description || '';
+                        // Looking for something like: <td>Event Date & Time</td>...<td>2024-04-14</td>
+                        return desc.includes(dateOnly);
+                    });
+
+                    if (match) {
+                        // Try to extract "Event Name" from the HTML description
+                        let eventName = match.subject;
+                        const eventNameRegex = /<td[^>]*>Event Name<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+                        const nameMatch = match.description?.match(eventNameRegex);
+                        if (nameMatch && nameMatch[1]) {
+                            eventName = nameMatch[1].trim();
+                        }
+
+                        setAvailabilityError(`⚠️ Sorry, the kitchen is FULLY BOOKED on ${dateOnly} for event: "${eventName}". Please select another date. You can check the Public Calendar on the Dashboard to see available dates.`);
+                    } else {
+                        setAvailabilityError(null);
+                    }
+                } else {
+                    setAvailabilityError(null);
+                }
+            } catch (err) {
+                console.error('Availability check failed:', err);
+            } finally {
+                setIsCheckingAvailability(false);
+            }
+        };
+
+        const timer = setTimeout(checkAvailability, 500); // Debounce
+        return () => clearTimeout(timer);
+    }, [formValues, selectedCategoryId, fields, selectedCategoryName]);
+
     // Form Handling
     const handleInputChange = (fieldId: string, value: any) => {
         setFormValues(prev => ({ ...prev, [fieldId]: value }));
@@ -302,7 +386,7 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                 }
             }
         }
-        return true;
+        return !availabilityError;
     };
 
     const handleSubmit = async () => {
@@ -669,11 +753,25 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
 
                                         return (
                                             <div key={field.id} className="space-y-2 animate-in slide-in-from-bottom-2">
-                                                <label className="text-sm font-bold text-gray-700 flex items-center gap-1">
-                                                    {field.label}
-                                                    {field.required && <span className="text-red-500">*</span>}
+                                                <label className="text-sm font-bold text-gray-700 flex items-center justify-between gap-1">
+                                                    <div className="flex items-center gap-1">
+                                                        {field.label}
+                                                        {field.required && <span className="text-red-500">*</span>}
+                                                    </div>
+                                                    {field.label.toLowerCase().includes('event date') && isCheckingAvailability && (
+                                                        <div className="flex items-center gap-1.5 text-[10px] font-black text-indigo-500 uppercase tracking-widest animate-pulse">
+                                                            <div className="w-2 h-2 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                                                            Checking...
+                                                        </div>
+                                                    )}
                                                 </label>
                                                 {renderField(field)}
+                                                {field.label.toLowerCase().includes('event date') && availabilityError && (
+                                                    <div className="flex items-center gap-2 text-xs font-bold text-red-500 mt-1 bg-red-50 p-2 rounded-lg border border-red-100 animate-in slide-in-from-top-2">
+                                                        <AlertCircle size={14} />
+                                                        {availabilityError}
+                                                    </div>
+                                                )}
                                                 {field.description && <p className="text-xs text-gray-400">{field.description}</p>}
                                             </div>
                                         );
@@ -691,7 +789,7 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                             </button>
                             <button
                                 onClick={handleSubmit}
-                                disabled={isSubmitting}
+                                disabled={isSubmitting || !!availabilityError}
                                 className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
                             >
                                 {isSubmitting ? 'Submitting...' : 'Submit Request'}

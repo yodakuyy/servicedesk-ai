@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, FileText, Book, BookOpen, HelpCircle, Eye, Info, X, AlertCircle, Package, Bot, Send, MessageSquare, Sparkles, Clock, CheckCircle2, ArrowRight, GitBranch } from 'lucide-react';
+import { Plus, FileText, Book, BookOpen, HelpCircle, Eye, Info, X, AlertCircle, Package, Bot, Send, MessageSquare, Sparkles, Clock, CheckCircle2, ArrowRight, GitBranch, Calendar } from 'lucide-react';
 
 import { supabase } from '../lib/supabase';
 
@@ -42,6 +42,9 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
     const [selectedArticle, setSelectedArticle] = useState<any>(null);
     const [isArticleModalOpen, setIsArticleModalOpen] = useState(false);
     const [loadingArticle, setLoadingArticle] = useState(false);
+    const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
+    const [isCalendarLoading, setIsCalendarLoading] = useState(false);
+    const [showAllEvents, setShowAllEvents] = useState(false);
     const [stats, setStats] = useState({
         open: 0,
         openBreakdown: '',
@@ -293,6 +296,68 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
             } else {
                 setAnnouncements([]);
             }
+
+            // --- FETCH CALENDAR EVENTS ---
+            setIsCalendarLoading(true);
+            try {
+                // 1. Get categories that have show_on_calendar = true
+                const { data: calCats } = await supabase
+                    .from('ticket_categories')
+                    .select('id, name')
+                    .eq('show_on_calendar', true);
+
+                if (calCats && calCats.length > 0) {
+                    const catIds = calCats.map(c => c.id);
+                    
+                    // 2. Get tickets for these categories
+                    // We join with ticket_statuses to ensure we only get "Approved" events
+                    const { data: calTickets } = await supabase
+                        .from('tickets')
+                        .select('id, subject, description, category_id, ticket_statuses!status_id!inner(status_name)')
+                        .in('category_id', catIds)
+                        .eq('ticket_statuses.status_name', 'Approved');
+
+                    if (calTickets) {
+                        const events: any[] = [];
+                        calTickets.forEach(t => {
+                            const desc = t.description || '';
+                            
+                            // Extract Date (YYYY-MM-DD or MM/DD/YYYY)
+                            // We look for the standard date format or the one in the table
+                            const dateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}\/\d{1,2}\/\d{4})/;
+                            const dateMatch = desc.match(dateRegex);
+                            
+                            if (dateMatch) {
+                                const eventDate = new Date(dateMatch[0]);
+                                const today = new Date();
+                                today.setHours(0, 0, 0, 0); // Reset time to compare only dates
+                                
+                                if (eventDate < today) return; // Skip past events
+
+                                // Extract Event Name if possible
+                                const nameRegex = /<td[^>]*>Event Name<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+                                const nameMatch = desc.match(nameRegex);
+                                const eventName = nameMatch ? nameMatch[1].trim() : t.subject;
+
+                                events.push({
+                                    id: t.id,
+                                    title: eventName,
+                                    category: calCats.find(c => c.id === t.category_id)?.name,
+                                    date: dateMatch[0],
+                                    raw: t
+                                });
+                            }
+                        });
+                        setCalendarEvents(events
+                            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                        );
+                    }
+                }
+            } catch (err) {
+                console.error("Dashboard Calendar Error:", err);
+            } finally {
+                setIsCalendarLoading(false);
+            }
         };
         fetchData();
     }, [companyId]);
@@ -482,7 +547,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
     };
 
     return (
-        <div className="p-8 max-w-7xl mx-auto space-y-8">
+        <div className="p-8 w-full mx-auto space-y-8">
             {/* Welcome & Stats Section */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 bg-gradient-to-br from-indigo-600 to-violet-700 p-8 rounded-2xl shadow-lg border border-indigo-500/20 relative overflow-hidden flex flex-col justify-center">
@@ -691,6 +756,54 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                     </div>
                 </div>
             </div>
+
+            {/* Event Calendar Section */}
+            {calendarEvents.length > 0 && (
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-xl shadow-indigo-100/20 overflow-hidden">
+                    <div className="p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-end">
+                        <div className="space-y-1">
+                            <h2 className="text-2xl font-black text-gray-900 leading-tight">Public Events & Bookings</h2>
+                            <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Live schedule across all departments</p>
+                        </div>
+                        <div className="flex items-center gap-6">
+                            {calendarEvents.length > 8 && (
+                                <button
+                                    onClick={() => setShowAllEvents(!showAllEvents)}
+                                    className="text-xs font-black text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-4 py-2 rounded-xl transition-all active:scale-95"
+                                >
+                                    {showAllEvents ? 'Show Less' : `View All (${calendarEvents.length})`}
+                                </button>
+                            )}
+                            <div className="flex items-center gap-2 text-xs font-bold text-gray-500">
+                                <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
+                                Booked Event
+                            </div>
+                        </div>
+                    </div>
+                    <div className="p-8">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {calendarEvents
+                                .slice(0, showAllEvents ? undefined : 8)
+                                .map((ev, i) => (
+                                <div key={i} className="group relative bg-white border border-gray-100 p-5 rounded-2xl hover:border-indigo-500 hover:shadow-md transition-all cursor-default">
+                                    <div className="flex justify-between items-start mb-3">
+                                        <div className="px-2.5 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                                            {ev.category}
+                                        </div>
+                                        <Calendar size={16} className="text-gray-300 group-hover:text-indigo-400" />
+                                    </div>
+                                    <h4 className="font-bold text-gray-800 text-sm mb-1 group-hover:text-indigo-600 truncate">{ev.title}</h4>
+                                    <div className="flex items-center gap-2 text-xs font-bold text-gray-400">
+                                        <Clock size={12} />
+                                        {new Date(ev.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </div>
+                                    <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-500/5 rounded-bl-full -translate-y-2 translate-x-2 group-hover:bg-indigo-500/10 transition-colors"></div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Recent Tickets Table */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">

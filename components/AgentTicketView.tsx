@@ -510,7 +510,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                     id, ticket_number, subject, priority, created_at, updated_at, ticket_type,
                     assignment_group_id, status_id, assigned_to, requester_id, is_category_verified,
                     total_paused_minutes, paused_at,
-                    ticket_statuses!fk_tickets_status (status_name, sla_behavior),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
+                    ticket_categories:category_id (name),
                     requester:profiles!fk_tickets_requester (full_name),
                     assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id, roles:role_id(role_name)),
                     group:groups!assignment_group_id (
@@ -1055,9 +1056,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
         const activeSlaType = firstResponseTime ? 'resolution' : 'response';
         const activeTarget = firstResponseTime ? resolutionTarget : responseTarget;
 
-        // Terminal status detection - case insensitive, handles both Canceled and Cancelled
-        const currentStatusLower = selectedTicket.ticket_statuses?.status_name?.toLowerCase() || '';
-        const isTerminal = ['resolved', 'closed', 'canceled', 'cancelled'].includes(currentStatusLower);
+        // Terminal status detection - driven by sla_behavior and is_final from ticket_statuses table
+        const isTerminal = selectedTicket.ticket_statuses?.sla_behavior === 'stop' || selectedTicket.ticket_statuses?.is_final === true;
 
         // Find the OLDEST terminal log in the history to use as the stop time (Fulfillment Time)
         // This ensures that if a ticket is Resolved then Closed, we use the Resolution time.
@@ -1066,7 +1066,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
             return actionLower.includes('resolved') ||
                 actionLower.includes('closed') ||
                 actionLower.includes('canceled') ||
-                actionLower.includes('cancelled');
+                actionLower.includes('cancelled') ||
+                actionLower.includes('approved') ||
+                actionLower.includes('rejected');
         });
 
         // Since activityLogs is sorted DESC, the LAST item in terminalLogs is the OLDEST.
@@ -1074,7 +1076,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
         const stopTime = oldestTerminalLog?.created_at;
 
         // 4. Calculate Elapsed Time (Aware of Pauses)
-        const isPaused = selectedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending');
+        const isPaused = selectedTicket.ticket_statuses?.sla_behavior === 'pause';
         const totalPausedMinutes = selectedTicket.total_paused_minutes || 0;
         const pausedAt = selectedTicket.paused_at;
 
@@ -2727,25 +2729,40 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                             // SLA Calculation (Dynamic)
                             const schedule = ticket.group?.business_hours?.weekly_schedule || [];
-                            const isTerminal = ['Resolved', 'Closed', 'Canceled'].includes(ticket.ticket_statuses?.status_name);
+                            const isTerminal = ticket.ticket_statuses?.sla_behavior === 'stop' || ticket.ticket_statuses?.is_final === true;
 
                             // Check if already responded to decide which SLA to show
                             // Note: messages isn't available for ALL tickets at once, so we assume response if status bukan Open
                             const likelyHasResponse = ticket.ticket_statuses?.status_name !== 'Open';
                             const activeSlaType = likelyHasResponse ? 'resolution' : 'response';
 
-                            // Find matching policy (Simplified for list performance)
+                            // Find matching policy (must match ALL conditions including company/department)
                             const linkedSlaIds = ticket.group?.group_sla_policies?.map((ug: any) => ug.sla_policy_id) || [];
                             const matchingPolicy = slaPolicies.find(policy => {
                                 if (linkedSlaIds.length > 0 && !linkedSlaIds.includes(policy.id)) return false;
                                 if (!policy.conditions || !Array.isArray(policy.conditions)) return false;
                                 return policy.conditions.every((cond: any) => {
                                     let val: any;
-                                    if (cond.field === 'ticket_type') val = ticket.ticket_type;
-                                    else if (cond.field === 'priority') val = ticket.priority;
-                                    else return true; // Skip complex conditions for list
+                                    switch (cond.field) {
+                                        case 'company': val = ticket.group?.company?.company_name; break;
+                                        case 'ticket_type': val = ticket.ticket_type; break;
+                                        case 'category': val = ticket.ticket_categories?.name; break;
+                                        case 'priority': val = ticket.priority; break;
+                                        default: return false; // Unknown condition = no match
+                                    }
+                                    if (!val) return false;
                                     const valNormalized = String(val).toLowerCase().replace(/\s+/g, '_');
                                     const condValNormalized = String(cond.value).toLowerCase().replace(/\s+/g, '_');
+                                    if (cond.operator === 'equals') return valNormalized === condValNormalized;
+                                    if (cond.operator === 'not_equals') return valNormalized !== condValNormalized;
+                                    if (cond.operator === 'in') {
+                                        const values = condValNormalized.split(',').map((s: string) => s.trim());
+                                        return values.includes(valNormalized);
+                                    }
+                                    if (cond.operator === 'not_in') {
+                                        const values = condValNormalized.split(',').map((s: string) => s.trim());
+                                        return !values.includes(valNormalized);
+                                    }
                                     return valNormalized === condValNormalized;
                                 });
                             });
@@ -2758,7 +2775,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                             const totalPaused = ticket.total_paused_minutes || 0;
                             const pausedAt = ticket.paused_at;
-                            const isPaused = ticket.ticket_statuses?.status_name.toLowerCase().includes('pending');
+                            const isPaused = ticket.ticket_statuses?.sla_behavior === 'pause';
 
                             let elapsed = calculateBusinessElapsed(ticketCreatedAt, now, schedule);
                             elapsed = Math.max(0, elapsed - totalPaused);
@@ -3042,7 +3059,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 </div>
                             </div>
                             {(() => {
-                                const isTerminalStatus = ['Closed', 'Canceled', 'Cancelled', 'Rejected'].includes(selectedTicket.ticket_statuses?.status_name || '');
+                                const isTerminalStatus = selectedTicket.ticket_statuses?.sla_behavior === 'stop' || selectedTicket.ticket_statuses?.is_final === true;
                                 return (
                                     <div className="flex gap-2">
                                         <button
@@ -3238,7 +3255,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                             const activeSlaType = firstResponseTime ? 'Resolution' : 'Response';
                             const activeTarget = firstResponseTime ? resolutionTarget : responseTarget;
-                            const isTerminal = ['Resolved', 'Closed', 'Canceled', 'Cancelled'].includes(selectedTicket.ticket_statuses?.status_name);
+                            const isTerminal = selectedTicket.ticket_statuses?.sla_behavior === 'stop' || selectedTicket.ticket_statuses?.is_final === true;
 
                             // Find termination time from logs (OLDEST terminal status change)
                             const terminalLogs = activityLogs.filter(l => {
@@ -3246,7 +3263,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 return actionLower.includes('resolved') ||
                                     actionLower.includes('closed') ||
                                     actionLower.includes('canceled') ||
-                                    actionLower.includes('cancelled');
+                                    actionLower.includes('cancelled') ||
+                                    actionLower.includes('approved') ||
+                                    actionLower.includes('rejected');
                             });
                             const oldestTerminalLog = terminalLogs.length > 0 ? terminalLogs[terminalLogs.length - 1] : null;
 
@@ -3254,7 +3273,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             const stopTime = oldestTerminalLog?.created_at || (isTerminal ? selectedTicket.updated_at : null);
 
                             // 4. Calculate Elapsed Time (Aware of Pauses)
-                            const isPaused = selectedTicket.ticket_statuses?.status_name.toLowerCase().includes('pending');
+                            const isPaused = selectedTicket.ticket_statuses?.sla_behavior === 'pause';
                             const totalPausedMinutes = selectedTicket.total_paused_minutes || 0;
                             const pausedAt = selectedTicket.paused_at;
 
@@ -3897,13 +3916,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             const firstResponseTime = messages.find(m => !m.is_internal && m.sender_id !== selectedTicket.requester_id)?.created_at;
                             const schedule = selectedTicket.group?.business_hours?.weekly_schedule || [];
                             const currentStatusName = getStatusName(selectedTicket);
-                            const isPaused = currentStatusName.toLowerCase().includes('pending');
+                            const isPaused = selectedTicket.ticket_statuses?.sla_behavior === 'pause';
                             const totalPausedMinutes = selectedTicket.total_paused_minutes || 0;
                             const pausedAt = selectedTicket.paused_at;
 
                             // Terminal status detection - case insensitive (MUST be before elapsed calculation)
                             const slaStatusLower = currentStatusName.toLowerCase();
-                            const isTerminal = ['resolved', 'closed', 'canceled', 'cancelled'].includes(slaStatusLower);
+                            const isTerminal = selectedTicket.ticket_statuses?.sla_behavior === 'stop' || selectedTicket.ticket_statuses?.is_final === true;
 
                             // Find termination time from logs (OLDEST terminal status change in current stream)
                             const terminalStream = activityLogs.filter(l => {
@@ -3911,7 +3930,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 return actionLower.includes('resolved') ||
                                     actionLower.includes('closed') ||
                                     actionLower.includes('canceled') ||
-                                    actionLower.includes('cancelled');
+                                    actionLower.includes('cancelled') ||
+                                    actionLower.includes('approved') ||
+                                    actionLower.includes('rejected');
                             });
                             // Since activityLogs is DESC, the LAST in terminalLogs is the OLDEST.
                             const oldestTerminalLog = terminalStream.length > 0 ? terminalStream[terminalStream.length - 1] : null;
@@ -4368,7 +4389,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                     {/* Bottom Composer */}
                     {activeTab === 'conversation' && (() => {
-                        const isTerminal = ['Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name);
+                        const isTerminal = selectedTicket.ticket_statuses?.sla_behavior === 'stop' || selectedTicket.ticket_statuses?.is_final === true;
                         const isL2Agent = currentUserRoleName.includes('L2');
                         const isAssignedToMe = selectedTicket.assigned_to === userProfile?.id;
                         const isMySubmittedTicket = selectedTicket.requester_id === userProfile?.id;
