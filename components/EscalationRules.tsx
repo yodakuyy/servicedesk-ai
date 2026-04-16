@@ -38,7 +38,7 @@ interface UserData { id: string; full_name: string; email: string; }
 // Mock Data
 const mockRules: EscalationRule[] = [
     {
-        id: '1', name: 'IT General - 80% Warning', sla_policy_id: '1', sla_policy_name: 'IT Support - Standard',
+        id: '99999999-9999-9999-9999-999999999901', name: 'IT General - 80% Warning', sla_policy_id: '88888888-8888-8888-8888-888888888801', sla_policy_name: 'IT Support - Standard',
         sla_type: 'response', trigger_type: 'percentage', trigger_value: 80, trigger_source: 'sla',
         actions: [{ type: 'notify_supervisor' }],
         notification_channels: ['in_app', 'email'],
@@ -46,15 +46,15 @@ const mockRules: EscalationRule[] = [
         is_active: true
     },
     {
-        id: '2', name: 'IT General - Breach Alert', sla_policy_id: '1', sla_policy_name: 'IT Support - Standard',
+        id: '99999999-9999-9999-9999-999999999902', name: 'IT General - Breach Alert', sla_policy_id: '88888888-8888-8888-8888-888888888801', sla_policy_name: 'IT Support - Standard',
         sla_type: 'response', trigger_type: 'percentage', trigger_value: 100, trigger_source: 'sla',
-        actions: [{ type: 'notify_supervisor' }, { type: 'notify_group', target_id: '1', target_name: 'IT Managers' }, { type: 'change_priority', new_priority: 'Urgent' }],
+        actions: [{ type: 'notify_supervisor' }, { type: 'notify_group', target_id: '77777777-7777-7777-7777-777777777701', target_name: 'IT Managers' }, { type: 'change_priority', new_priority: 'Urgent' }],
         notification_channels: ['in_app', 'email'],
         notification_message: 'SLA BREACH for ticket #{ticket_id}! Immediate action required.',
         is_active: true
     },
     {
-        id: '3', name: 'HR - Resolution Overdue', sla_policy_id: '2', sla_policy_name: 'HR - General Request',
+        id: '99999999-9999-9999-9999-999999999903', name: 'HR - Resolution Overdue', sla_policy_id: '88888888-8888-8888-8888-888888888802', sla_policy_name: 'HR - General Request',
         sla_type: 'resolution', trigger_type: 'overdue_minutes', trigger_value: 60, trigger_source: 'sla',
         actions: [{ type: 'reassign' }, { type: 'add_note', note_text: 'Ticket reassigned due to SLA breach.' }],
         notification_channels: ['email'],
@@ -64,9 +64,9 @@ const mockRules: EscalationRule[] = [
 ];
 
 const mockSLAPolicies: SLAPolicy[] = [
-    { id: '1', name: 'IT Support - Standard' },
-    { id: '2', name: 'HR - General Request' },
-    { id: '3', name: 'Finance - Urgent' }
+    { id: '88888888-8888-8888-8888-888888888801', name: 'IT Support - Standard' },
+    { id: '88888888-8888-8888-8888-888888888802', name: 'HR - General Request' },
+    { id: '88888888-8888-8888-8888-888888888803', name: 'Finance - Urgent' }
 ];
 
 const triggerPercentages = [50, 80, 100];
@@ -243,26 +243,33 @@ const EscalationRules: React.FC = () => {
             }
 
             const data = result.data as any;
-            setRunResult({
-                show: true,
-                processed: data?.processed || data?.processed_tickets || 0,
-                triggered: data?.triggered || data?.notifications_sent || 0,
-                success: true
+            const processedCount = data?.processed || data?.processed_tickets || 0;
+            const triggeredCount = data?.triggered || data?.notifications_sent || 0;
+
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Escalation Check Completed',
+                html: `
+                    <div class="text-left space-y-2">
+                        <p>Processed: <b>${processedCount}</b> tickets</p>
+                        <p>Triggered: <b>${triggeredCount}</b> escalations</p>
+                    </div>
+                `,
+                confirmButtonColor: '#10b981'
             });
 
             // Refresh data after running
             fetchData();
-
-            // Auto-hide result after 10 seconds
-            setTimeout(() => setRunResult(null), 10000);
         } catch (error: any) {
-            setRunResult({
-                show: true,
-                processed: 0,
-                triggered: 0,
-                success: false
-            });
             console.error('Error running escalation check:', error);
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'error',
+                title: 'Check Failed',
+                text: 'An error occurred while running escalation check: ' + (error.message || 'Unknown error'),
+                confirmButtonColor: '#ef4444'
+            });
         } finally {
             setIsRunning(false);
         }
@@ -281,7 +288,7 @@ const EscalationRules: React.FC = () => {
 
             // Fetch groups with conditional filter
             let groupQuery = supabase.from('groups').select('id, name');
-            if (currentUser?.company_id) {
+            if (!isSuperAdmin && currentUser?.company_id) {
                 groupQuery = groupQuery.eq('company_id', currentUser.company_id);
             }
 
@@ -294,7 +301,7 @@ const EscalationRules: React.FC = () => {
 
             // Fetch SLA policies for dropdown with conditional filter
             let policiesQuery = supabase.from('sla_policies').select('id, name, company_id');
-            if (currentUser?.company_id) {
+            if (!isSuperAdmin && currentUser?.company_id) {
                 policiesQuery = policiesQuery.eq('company_id', currentUser.company_id);
             }
 
@@ -303,7 +310,7 @@ const EscalationRules: React.FC = () => {
             if (policiesData && policiesData.length > 0) {
                 setSLAPolicies(policiesData.map((p: any) => ({ id: p.id?.toString(), name: p.name })));
             } else {
-                setSLAPolicies(mockSLAPolicies);
+                setSLAPolicies([]);
             }
 
             // Fetch escalation rules with policy join filter
@@ -314,7 +321,7 @@ const EscalationRules: React.FC = () => {
                     policy:sla_policy_id!inner(id, name, company_id)
                 `);
 
-            if (currentUser?.company_id) {
+            if (!isSuperAdmin && currentUser?.company_id) {
                 escalationsQuery = escalationsQuery.eq('policy.company_id', currentUser.company_id);
             }
 
@@ -342,12 +349,12 @@ const EscalationRules: React.FC = () => {
                 }));
                 setRules(transformedRules);
             } else {
-                setRules(mockRules);
+                setRules([]);
             }
         } catch (error) {
             console.error('Error fetching data:', error);
-            setSLAPolicies(mockSLAPolicies);
-            setRules(mockRules);
+            setSLAPolicies([]);
+            setRules([]);
         } finally {
             setLoading(false);
         }
@@ -445,10 +452,23 @@ const EscalationRules: React.FC = () => {
             }
 
             await fetchData();
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Saved',
+                text: 'Escalation rule has been saved successfully',
+                confirmButtonColor: '#4f46e5'
+            });
             setView('list');
         } catch (error: any) {
             console.error('Save Error:', error);
-            alert('Error saving rule: ' + (error.message || 'Check console for details'));
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'error',
+                title: 'Save Failed',
+                text: 'Error saving rule: ' + (error.message || 'Check console for details'),
+                confirmButtonColor: '#4f46e5'
+            });
         } finally {
             setSaving(false);
         }
@@ -464,12 +484,26 @@ const EscalationRules: React.FC = () => {
 
             if (error) throw error;
 
-            setRules(rules.filter(r => r.id !== ruleToDelete.id));
+            await fetchData();
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'success',
+                title: 'Deleted',
+                text: 'Rule has been deleted',
+                timer: 2000,
+                showConfirmButton: false
+            });
             setShowDeleteConfirm(false);
             setRuleToDelete(null);
         } catch (error: any) {
             console.error('Delete Error:', error);
-            alert('Error deleting rule: ' + (error.message || 'Check console for details'));
+            const Swal = (await import('sweetalert2')).default;
+            Swal.fire({
+                icon: 'error',
+                title: 'Delete Failed',
+                text: 'Error deleting rule: ' + (error.message || 'Check console for details'),
+                confirmButtonColor: '#ef4444'
+            });
         }
     };
 
@@ -530,34 +564,7 @@ const EscalationRules: React.FC = () => {
                 </div>
 
                 {/* Run Result Notification */}
-                {runResult?.show && (
-                    <div className={`mb-6 p-4 rounded-lg flex items-center justify-between ${runResult.success ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
-                        <div className="flex items-center gap-3">
-                            {runResult.success ? (
-                                <div className="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center">
-                                    <AlertTriangle size={18} className="text-emerald-600" />
-                                </div>
-                            ) : (
-                                <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
-                                    <X size={18} className="text-red-600" />
-                                </div>
-                            )}
-                            <div>
-                                <p className={`font-medium ${runResult.success ? 'text-emerald-800' : 'text-red-800'}`}>
-                                    {runResult.success ? 'Escalation Check Completed' : 'Escalation Check Failed'}
-                                </p>
-                                <p className={`text-sm ${runResult.success ? 'text-emerald-600' : 'text-red-600'}`}>
-                                    {runResult.success
-                                        ? `Processed ${runResult.processed} tickets, triggered ${runResult.triggered} escalations`
-                                        : 'An error occurred while running escalation check'}
-                                </p>
-                            </div>
-                        </div>
-                        <button onClick={() => setRunResult(null)} className="p-1 hover:bg-white/50 rounded">
-                            <X size={18} className={runResult.success ? 'text-emerald-600' : 'text-red-600'} />
-                        </button>
-                    </div>
-                )}
+
 
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <table className="w-full text-left">
@@ -691,11 +698,29 @@ const EscalationRules: React.FC = () => {
                                             setRules(rules.map(r =>
                                                 r.id === ruleToToggle.id ? { ...r, is_active: newStatus } : r
                                             ));
+                                            
+                                            const Swal = (await import('sweetalert2')).default;
+                                            Swal.fire({
+                                                icon: 'success',
+                                                title: newStatus ? 'Activated' : 'Deactivated',
+                                                text: `Rule has been ${newStatus ? 'activated' : 'deactivated'}`,
+                                                timer: 1500,
+                                                showConfirmButton: false,
+                                                position: 'top-end',
+                                                toast: true
+                                            });
+
                                             setShowToggleConfirm(false);
                                             setRuleToToggle(null);
                                         } catch (error: any) {
                                             console.error('Toggle Error:', error);
-                                            alert('Error updating status: ' + (error.message || 'Check console'));
+                                            const Swal = (await import('sweetalert2')).default;
+                                            Swal.fire({
+                                                icon: 'error',
+                                                title: 'Update Failed',
+                                                text: 'Error updating status: ' + (error.message || 'Check console'),
+                                                confirmButtonColor: '#4f46e5'
+                                            });
                                         }
                                     }}
                                     className={`px-4 py-2 text-sm font-medium text-white rounded-lg ${ruleToToggle.is_active ? 'bg-orange-600 hover:bg-orange-700' : 'bg-green-600 hover:bg-green-700'}`}

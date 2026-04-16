@@ -78,7 +78,7 @@ const DepartmentManagement: React.FC = () => {
 
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = 5;
+    const itemsPerPage = 10;
 
     // Checklist state
     const [activeTab, setActiveTab] = useState<'basic' | 'checklist'>('basic');
