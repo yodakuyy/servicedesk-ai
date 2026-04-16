@@ -637,7 +637,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .select(`
                     *,
                     category_id,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
@@ -1323,7 +1323,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .select(`
                     *,
                     is_category_verified,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
@@ -1477,7 +1477,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .from('tickets')
                 .select(`
                     *,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
@@ -1697,7 +1697,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .select(`
                     *,
                     is_category_verified,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
@@ -1815,7 +1815,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .select(`
                     *,
                     is_category_verified,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
@@ -1988,7 +1988,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .select(`
                     *,
                     is_category_verified,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
@@ -2080,7 +2080,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .select(`
                     *,
                     is_category_verified,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
@@ -2165,7 +2165,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .select(`
                     *,
                     is_category_verified,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
@@ -2247,7 +2247,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 .select(`
                     *,
                     is_category_verified,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                     ticket_categories (name),
                     services (name),
                     requester:profiles!fk_tickets_requester (full_name, email),
@@ -2879,13 +2879,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                                     {/* Line 5: Status (Bottom Right) */}
                                     <div className="flex justify-end mt-1">
-                                        <div className={`text-[10px] font-black uppercase tracking-tight text-right leading-tight ${ticket.ticket_statuses?.status_name === 'Open' ? 'text-blue-600' :
-                                            ticket.ticket_statuses?.status_name === 'In Progress' ? 'text-indigo-600' :
-                                                ticket.ticket_statuses?.status_name.toLowerCase().includes('pending') ? 'text-orange-600' :
-                                                    ticket.ticket_statuses?.status_name === 'Resolved' ? 'text-emerald-600' :
-                                                        ticket.ticket_statuses?.status_name === 'Canceled' ? 'text-rose-600' :
-                                                            ticket.ticket_statuses?.status_name === 'Closed' ? 'text-slate-400' :
-                                                                'text-gray-400'
+                                        <div className={`text-[10px] font-black uppercase tracking-tight text-right leading-tight ${ticket.ticket_statuses?.is_final === true ? 'text-rose-600' :
+                                            ticket.ticket_statuses?.status_name === 'Open' ? 'text-blue-600' :
+                                                ticket.ticket_statuses?.status_name === 'In Progress' ? 'text-indigo-600' :
+                                                    ticket.ticket_statuses?.status_name.toLowerCase().includes('pending') ? 'text-orange-600' :
+                                                        ticket.ticket_statuses?.status_name === 'Resolved' ? 'text-emerald-600' :
+                                                            ticket.ticket_statuses?.status_name === 'Canceled' ? 'text-rose-600' :
+                                                                ticket.ticket_statuses?.status_name === 'Closed' ? 'text-slate-400' :
+                                                                    'text-gray-400'
                                             }`}>
                                             {ticket.ticket_statuses?.status_name}
                                         </div>
@@ -2988,12 +2989,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                 title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : ''}
                                                 className={`appearance-none pl-3 pr-8 py-1 rounded text-[10px] font-black tracking-widest uppercase border transition-all
                                                     ${!checkPermission('update', selectedTicket).allowed ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed' :
-                                                        selectedTicket.ticket_statuses?.status_name === 'Open' ? 'bg-blue-50 text-blue-600 border-blue-200 cursor-pointer' :
-                                                            selectedTicket.ticket_statuses?.status_name === 'In Progress' ? 'bg-indigo-50 text-indigo-600 border-indigo-200 cursor-pointer' :
-                                                                selectedTicket.ticket_statuses?.status_name && selectedTicket.ticket_statuses.status_name.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-600 border-orange-200 cursor-pointer' :
-                                                                    selectedTicket.ticket_statuses?.status_name === 'Resolved' ? 'bg-green-50 text-green-600 border-green-200 cursor-pointer' :
-                                                                        selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'bg-rose-50 text-rose-600 border-rose-200 cursor-pointer' :
-                                                                            'bg-slate-50 text-slate-600 border-slate-200 cursor-pointer'}`}
+                                                        selectedTicket.ticket_statuses?.is_final === true ? 'bg-rose-50 text-rose-600 border-rose-200 cursor-pointer' :
+                                                            selectedTicket.ticket_statuses?.status_name === 'Open' ? 'bg-blue-50 text-blue-600 border-blue-200 cursor-pointer' :
+                                                                selectedTicket.ticket_statuses?.status_name === 'In Progress' ? 'bg-indigo-50 text-indigo-600 border-indigo-200 cursor-pointer' :
+                                                                    selectedTicket.ticket_statuses?.status_name && selectedTicket.ticket_statuses.status_name.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-600 border-orange-200 cursor-pointer' :
+                                                                        selectedTicket.ticket_statuses?.status_name === 'Resolved' ? 'bg-green-50 text-green-600 border-green-200 cursor-pointer' :
+                                                                            selectedTicket.ticket_statuses?.status_name === 'Canceled' ? 'bg-rose-50 text-rose-600 border-rose-200 cursor-pointer' :
+                                                                                'bg-slate-50 text-slate-600 border-slate-200 cursor-pointer'}`}
                                             >
                                                 {availableStatuses
                                                     .filter(s => {
@@ -3059,7 +3061,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                 </div>
                             </div>
                             {(() => {
-                                const isTerminalStatus = selectedTicket.ticket_statuses?.sla_behavior === 'stop' || selectedTicket.ticket_statuses?.is_final === true;
+                                const isTerminalStatus = selectedTicket.ticket_statuses?.is_final === true;
                                 return (
                                     <div className="flex gap-2">
                                         <button
@@ -4338,7 +4340,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             <div className="max-w-4xl mx-auto p-4 space-y-4">
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">Attached Files</h3>
-                                    {!['Closed', 'Canceled'].includes(selectedTicket.ticket_statuses?.status_name) && (
+                                    {selectedTicket.ticket_statuses?.is_final !== true && (
                                         <label className={`flex items-center gap-2 px-4 py-2 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer 
                                             ${isUploading || !checkPermission('comment', selectedTicket).allowed
                                                 ? 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed pointer-events-none'
@@ -4389,7 +4391,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                     {/* Bottom Composer */}
                     {activeTab === 'conversation' && (() => {
-                        const isTerminal = selectedTicket.ticket_statuses?.sla_behavior === 'stop' || selectedTicket.ticket_statuses?.is_final === true;
+                        const isTerminal = selectedTicket.ticket_statuses?.is_final === true;
                         const isL2Agent = currentUserRoleName.includes('L2');
                         const isAssignedToMe = selectedTicket.assigned_to === userProfile?.id;
                         const isMySubmittedTicket = selectedTicket.requester_id === userProfile?.id;

@@ -44,7 +44,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     .from('tickets')
                     .select(`
                         *,
-                        ticket_statuses!fk_tickets_status (status_name),
+                        ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                         agent:profiles!fk_tickets_assigned_agent (full_name),
                         group:groups!assignment_group_id (name, company_id, company:company_id(company_name)),
                         ticket_attachments (*)
@@ -208,7 +208,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                 .from('tickets')
                 .select(`
                     *,
-                    ticket_statuses!fk_tickets_status (status_name),
+                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
                     agent:profiles!fk_tickets_assigned_agent (full_name),
                     group:groups!assignment_group_id (name, company_id)
                 `)
@@ -459,10 +459,11 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                 <h2 className="text-2xl font-bold text-gray-900 break-words">{ticket.subject}</h2>
                             </div>
                             <div className="flex gap-3 shrink-0 flex-wrap">
-                                <span className={`px-3 py-1 rounded-lg text-sm font-semibold border flex items-center gap-2 ${statusName === 'Open' ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                                <span className={`px-3 py-1 rounded-lg text-sm font-semibold border flex items-center gap-2 ${ticket.ticket_statuses?.is_final === true ? 'bg-red-50 text-red-700 border-red-100' :
+                                    statusName === 'Open' ? 'bg-blue-50 text-blue-700 border-blue-100' :
                                     statusName === 'Resolved' ? 'bg-green-50 text-green-700 border-green-100' :
-                                        statusName.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-700 border-orange-100' :
-                                            'bg-slate-50 text-slate-700 border-slate-100'
+                                    statusName.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-700 border-orange-100' :
+                                    'bg-slate-50 text-slate-700 border-slate-100'
                                     }`}>
                                     <div className={`w-2 h-2 rounded-full ${statusName === 'Resolved' ? 'bg-green-500' : 'bg-blue-500 animate-pulse'}`}></div>
                                     Status: {statusName}
@@ -636,7 +637,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     </div>
 
                     {/* Reply Composer */}
-                    {['Closed', 'Canceled'].includes(statusName) ? (
+                    {(ticket.ticket_statuses?.is_final === true) ? (
                         <div className="p-8 bg-gray-50 border-t border-gray-100 rounded-b-xl flex flex-col items-center justify-center text-center">
                             <div className="w-12 h-12 bg-gray-200 text-gray-400 rounded-full flex items-center justify-center mb-3">
                                 <Lock size={24} />
