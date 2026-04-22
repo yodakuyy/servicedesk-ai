@@ -312,46 +312,78 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                 return;
             }
 
-            // Standardize date for comparison (YYYY-MM-DD)
-            const dateOnly = selectedDate.split('T')[0];
+            const targetDate = selectedDate.split('T')[0];
 
             setIsCheckingAvailability(true);
             try {
-                // 1. Search for ANY approved ticket in this category that HAS the same date
-                const { data: ticketConflict, error: ticketError } = await supabase
+                // 1. Check for conflicting approved tickets (Global search for Culinaria)
+                const { data: allTickets } = await supabase
                     .from('tickets')
-                    .select('id, subject, description, ticket_statuses!status_id!inner(status_name)')
-                    .eq('category_id', selectedCategoryId)
-                    .eq('ticket_statuses.status_name', 'Approved')
-                    .ilike('description', `%${dateOnly}%`);
+                    .select('id, subject, description, ticket_statuses!status_id!inner(status_name)');
+                
+                if (allTickets) {
+                    const conflict = allTickets.find(t => {
+                        if ((t.ticket_statuses as any)?.status_name?.toLowerCase() !== 'approved') return false;
+                        
+                        const desc = t.description || '';
+                        const dateCellRegex = /<td[^>]*>Event Date.*?<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+                        const dateCellMatch = desc.match(dateCellRegex);
+                        let rawDate = "";
+                        
+                        if (dateCellMatch) {
+                            rawDate = dateCellMatch[1].replace(/&nbsp;/g, ' ').replace(/<[^>]*>/g, '').trim();
+                        } else {
+                            const generalDateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/;
+                            const generalMatch = desc.match(generalDateRegex);
+                            if (generalMatch) rawDate = generalMatch[0];
+                        }
+                        
+                        if (!rawDate) return false;
 
-                if (ticketError) throw ticketError;
+                        let eventDate: Date;
+                        const namedMonthRegex = /^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/;
+                        const namedMatch = rawDate.match(namedMonthRegex);
+                        
+                        if (namedMatch) {
+                            const day = parseInt(namedMatch[1]);
+                            const monthStr = namedMatch[2].toLowerCase();
+                            const year = parseInt(namedMatch[3]);
+                            const months: { [key: string]: number } = {
+                                'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'mei': 4, 'may': 4, 'jun': 5,
+                                'jul': 6, 'agu': 7, 'ags': 7, 'aug': 7, 'sep': 8, 'okt': 9, 'oct': 9,
+                                'nov': 10, 'des': 11, 'dec': 11
+                            };
+                            const month = months[monthStr.substring(0, 3)] ?? 0;
+                            eventDate = new Date(year, month, day);
+                        } else {
+                            eventDate = new Date(rawDate);
+                        }
 
-                // 2. Search for ANY manual entry in calendar_events for the SAME category and SAME date
-                const { data: manualConflict, error: manualError } = await supabase
-                    .from('calendar_events')
-                    .select('id, title')
-                    .eq('category_name', selectedCategoryName)
-                    .eq('event_date', dateOnly)
-                    .limit(1);
+                        if (isNaN(eventDate.getTime())) return false;
+                        return eventDate.toISOString().split('T')[0] === targetDate;
+                    });
 
-                if (manualError) throw manualError;
-
-                if (ticketConflict && ticketConflict.length > 0) {
-                    const match = ticketConflict.find(ticket => (ticket.description || '').includes(dateOnly));
-                    if (match) {
-                        let eventName = match.subject;
+                    if (conflict) {
+                        let eventName = conflict.subject;
                         const eventNameRegex = /<td[^>]*>Event Name<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
-                        const nameMatch = match.description?.match(eventNameRegex);
-                        if (nameMatch && nameMatch[1]) eventName = nameMatch[1].trim();
-
-                        setAvailabilityError(`⚠️ Sorry, the "${selectedCategoryName}" is FULLY BOOKED on ${dateOnly} for event: "${eventName}". Please check the dashboard calendar for another date.`);
+                        const nameMatch = conflict.description?.match(eventNameRegex);
+                        if (nameMatch && nameMatch[1]) {
+                            eventName = nameMatch[1].replace(/<[^>]*>/g, '').trim();
+                        }
+                        setAvailabilityError(`⚠️ Sorry, the date ${targetDate} is already FULLY BOOKED for: "${eventName}". Please select another date.`);
                         return;
                     }
                 }
 
+                // 2. Check for conflicting manual entries
+                const { data: manualConflict } = await supabase
+                    .from('calendar_events')
+                    .select('id, title')
+                    .eq('event_date', targetDate)
+                    .limit(1);
+
                 if (manualConflict && manualConflict.length > 0) {
-                     setAvailabilityError(`⚠️ Sorry, the "${selectedCategoryName}" is BOOKED for an internal event: "${manualConflict[0].title}" on ${dateOnly}. Please select another date.`);
+                     setAvailabilityError(`⚠️ Sorry, the date ${targetDate} is BOOKED for an internal event: "${manualConflict[0].title}". Please select another date.`);
                      return;
                 }
 

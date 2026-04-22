@@ -84,6 +84,80 @@ const CalendarManagement: React.FC = () => {
         try {
             const { data: { user } } = await supabase.auth.getUser();
 
+            // --- AVAILABILITY CHECK ---
+            const targetDate = form.event_date; // YYYY-MM-DD
+
+            // 1. Check for conflicting approved tickets using the same parser logic as dashboard
+            const { data: allTickets } = await supabase
+                .from('tickets')
+                .select('id, subject, description, ticket_statuses!status_id!inner(status_name)');
+            
+            if (allTickets) {
+                const conflict = allTickets.find(t => {
+                    if ((t.ticket_statuses as any)?.status_name?.toLowerCase() !== 'approved') return false;
+                    
+                    const desc = t.description || '';
+                    const dateCellRegex = /<td[^>]*>Event Date.*?<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+                    const dateCellMatch = desc.match(dateCellRegex);
+                    let rawDate = "";
+                    
+                    if (dateCellMatch) {
+                        rawDate = dateCellMatch[1].replace(/&nbsp;/g, ' ').replace(/<[^>]*>/g, '').trim();
+                    } else {
+                        const generalDateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/;
+                        const generalMatch = desc.match(generalDateRegex);
+                        if (generalMatch) rawDate = generalMatch[0];
+                    }
+                    
+                    if (!rawDate) return false;
+
+                    let eventDate: Date;
+                    const namedMonthRegex = /^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/;
+                    const namedMatch = rawDate.match(namedMonthRegex);
+                    
+                    if (namedMatch) {
+                        const day = parseInt(namedMatch[1]);
+                        const monthStr = namedMatch[2].toLowerCase();
+                        const year = parseInt(namedMatch[3]);
+                        const months: { [key: string]: number } = {
+                            'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'mei': 4, 'may': 4, 'jun': 5,
+                            'jul': 6, 'agu': 7, 'ags': 7, 'aug': 7, 'sep': 8, 'okt': 9, 'oct': 9,
+                            'nov': 10, 'des': 11, 'dec': 11
+                        };
+                        const month = months[monthStr.substring(0, 3)] ?? 0;
+                        eventDate = new Date(year, month, day);
+                    } else {
+                        eventDate = new Date(rawDate);
+                    }
+
+                    if (isNaN(eventDate.getTime())) return false;
+                    const isoDate = eventDate.toISOString().split('T')[0];
+                    return isoDate === targetDate;
+                });
+
+                if (conflict) {
+                    let eventName = conflict.subject;
+                    const eventNameRegex = /<td[^>]*>Event Name<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+                    const nameMatch = conflict.description?.match(eventNameRegex);
+                    if (nameMatch && nameMatch[1]) {
+                        eventName = nameMatch[1].replace(/<[^>]*>/g, '').trim();
+                    }
+                    throw new Error(`The date ${targetDate} is already BOOKED by: "${eventName}".`);
+                }
+            }
+
+            // 2. Check for conflicting manual events
+            const { data: manualConflict } = await supabase
+                .from('calendar_events')
+                .select('id, title')
+                .eq('event_date', targetDate)
+                .eq('category_name', form.category_name)
+                .neq('id', editingId || '00000000-0000-0000-0000-000000000000'); // Exclude current if editing
+
+            if (manualConflict && manualConflict.length > 0) {
+                throw new Error(`The date ${targetDate} is already taken by another manual event: "${manualConflict[0].title}".`);
+            }
+
             const payload = {
                 title: form.title.trim(),
                 description: form.description.trim(),

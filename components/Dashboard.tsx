@@ -36,7 +36,8 @@ import {
   CheckCircle,
   RefreshCw,
   X,
-  BarChart3
+  BarChart3,
+  Calendar
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import Swal from 'sweetalert2';
@@ -233,6 +234,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     weeklyTrend: [],
     teamPulse: []
   });
+
+  const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
+  const [isCalendarLoading, setIsCalendarLoading] = useState(false);
+  const [showAllEvents, setShowAllEvents] = useState(false);
 
   // Shared notification state - single source of truth
   const { notifications: allNotifications, markAsRead, markAllAsRead, deleteNotification, clearAll } = useNotifications(userProfile?.id);
@@ -946,7 +951,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       }
     }
   }, []);
-
   // Fetch Department Name when company_id changes
   useEffect(() => {
     const fetchDeptName = async () => {
@@ -970,6 +974,112 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
     fetchDeptName();
   }, [userProfile?.company_id]);
+
+  // --- Global Calendar Fetch Logic ---
+  useEffect(() => {
+    const fetchCalendarData = async () => {
+      setIsCalendarLoading(true);
+      try {
+        const { supabase } = await import('../lib/supabase');
+        const events: any[] = [];
+
+        // 1. FETCH TICKET-BASED EVENTS
+        const { data: allTickets } = await supabase
+          .from('tickets')
+          .select('id, subject, description, ticket_statuses!status_id!inner(status_name)');
+        
+        if (allTickets) {
+          allTickets.forEach(t => {
+            if ((t.ticket_statuses as any)?.status_name?.toLowerCase() !== 'approved') return;
+            
+            const desc = t.description || '';
+            const dateCellRegex = /<td[^>]*>Event Date.*?<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+            const dateCellMatch = desc.match(dateCellRegex);
+            let rawDate = "";
+            
+            if (dateCellMatch) {
+              rawDate = dateCellMatch[1].replace(/&nbsp;/g, ' ').replace(/<[^>]*>/g, '').trim();
+            } else {
+              const generalDateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/;
+              const generalMatch = desc.match(generalDateRegex);
+              if (generalMatch) rawDate = generalMatch[0];
+            }
+            
+            if (!rawDate) return;
+
+            let eventDate: Date;
+            const namedMonthRegex = /^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/;
+            const namedMatch = rawDate.match(namedMonthRegex);
+            
+            if (namedMatch) {
+              const day = parseInt(namedMatch[1]);
+              const monthStr = namedMatch[2].toLowerCase();
+              const year = parseInt(namedMatch[3]);
+              const months: { [key: string]: number } = {
+                'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'mei': 4, 'may': 4, 'jun': 5,
+                'jul': 6, 'agu': 7, 'ags': 7, 'aug': 7, 'sep': 8, 'okt': 9, 'oct': 9,
+                'nov': 10, 'des': 11, 'dec': 11
+              };
+              const month = months[monthStr.substring(0, 3)] ?? 0;
+              eventDate = new Date(year, month, day);
+            } else {
+              eventDate = new Date(rawDate);
+            }
+
+            if (isNaN(eventDate.getTime())) return;
+            if (eventDate < new Date(new Date().setHours(0,0,0,0))) return;
+
+            let eventName = t.subject;
+            const eventNameRegex = /<td[^>]*>Event Name<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+            const nameMatch = desc.match(eventNameRegex);
+            if (nameMatch && nameMatch[1]) {
+              eventName = nameMatch[1].replace(/<[^>]*>/g, '').trim();
+            }
+
+            events.push({
+              id: t.id,
+              title: eventName,
+              category: 'Ticket Booking',
+              date: eventDate.toISOString().split('T')[0],
+              requester: (t as any).requester?.full_name || 'User',
+              isManual: false
+            });
+          });
+        }
+
+        // 2. FETCH MANUAL EVENTS
+        const { data: manualEvents } = await supabase
+          .from('calendar_events')
+          .select('*')
+          .or('is_public.eq.true,is_public.is.null')
+          .gte('event_date', new Date().toISOString().split('T')[0]);
+
+        if (manualEvents) {
+          manualEvents.forEach(me => {
+            events.push({
+              id: me.id,
+              title: me.title,
+              category: me.category_name || 'Internal Event',
+              date: me.event_date,
+              requester: 'Admin',
+              isManual: true
+            });
+          });
+        }
+
+        const sorted = events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        setCalendarEvents(sorted);
+      } catch (err) {
+        console.error("Dashboard Calendar Error:", err);
+      } finally {
+        setIsCalendarLoading(false);
+      }
+    };
+
+    if (currentView === 'dashboard') {
+      fetchCalendarData();
+    }
+  }, [currentView]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -1647,10 +1757,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 </h2>
                 <button onClick={() => setCurrentView('my-tickets')} className="text-xs font-bold text-indigo-600 hover:text-indigo-800">View Full Queue</button>
               </div>
-              {/* Reusing existing table logic but can filter specifically for agent later */}
               <div className="p-0 overflow-x-auto">
-                {/* ... (Table content - same as below but simplified) ... */}
-                {/* For now rendering same table for demo consistency */}
                 {renderCommonTable(dashboardData.newTickets)}
               </div>
             </div>
@@ -1686,6 +1793,57 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                         <div className="text-xs text-gray-600 truncate">{ticket.subject}</div>
                       </div>
                     ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Public Events & Bookings Section for Agent */}
+            <div className="col-span-12">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100/50 overflow-hidden">
+                <div className="p-6 border-b border-gray-50 flex justify-between items-center bg-gray-50/30">
+                  <div>
+                    <h2 className="font-bold text-gray-800 flex items-center gap-2">
+                      <Calendar size={18} className="text-indigo-600" /> Public Events & Bookings
+                    </h2>
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-0.5">Live schedule across all departments</p>
+                  </div>
+                  <button 
+                    onClick={() => setShowAllEvents(!showAllEvents)}
+                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors"
+                  >
+                    {showAllEvents ? 'Show Less' : 'View All Schedule'}
+                  </button>
+                </div>
+                <div className="p-6">
+                  {isCalendarLoading ? (
+                    <div className="flex justify-center py-12"><RefreshCw className="animate-spin text-indigo-600" /></div>
+                  ) : calendarEvents.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {calendarEvents.slice(0, showAllEvents ? undefined : 4).map((ev, i) => (
+                        <div key={i} className="group relative bg-white border border-gray-100 p-4 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[9px] font-black uppercase">
+                              {ev.category}
+                            </div>
+                            <Calendar size={14} className="text-gray-300" />
+                          </div>
+                          <h4 className="font-bold text-gray-800 text-xs mb-1 truncate">{ev.title}</h4>
+                          <div className="flex flex-col gap-1 mt-1">
+                            <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                              <Clock size={10} />
+                              {new Date(ev.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[9px] font-bold text-indigo-400 uppercase">
+                              <div className="w-1 h-1 rounded-full bg-indigo-300"></div>
+                              By: {ev.requester}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-400 text-sm">No upcoming events scheduled</div>
                   )}
                 </div>
               </div>
@@ -1963,6 +2121,56 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
 
             {/* Weekly Trend Analytics (Replaced Top 5 Incident) */}
+            {/* Public Events & Bookings Section for Admin/SPV */}
+            <div className="col-span-12 mt-4">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100/50 overflow-hidden">
+                <div className="p-6 border-b border-gray-50 flex justify-between items-center bg-gray-50/30">
+                  <div>
+                    <h2 className="font-bold text-gray-800 flex items-center gap-2">
+                      <Calendar size={18} className="text-indigo-600" /> Public Events & Bookings
+                    </h2>
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-0.5">Global Live Schedule</p>
+                  </div>
+                  <button 
+                    onClick={() => setShowAllEvents(!showAllEvents)}
+                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors"
+                  >
+                    {showAllEvents ? 'Show Less' : 'View All Schedule'}
+                  </button>
+                </div>
+                <div className="p-6">
+                  {isCalendarLoading ? (
+                    <div className="flex justify-center py-12"><RefreshCw className="animate-spin text-indigo-600" /></div>
+                  ) : calendarEvents.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {calendarEvents.slice(0, showAllEvents ? undefined : 4).map((ev, i) => (
+                        <div key={i} className="group relative bg-white border border-gray-100 p-4 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[9px] font-black uppercase">
+                              {ev.category}
+                            </div>
+                            <Calendar size={14} className="text-gray-300" />
+                          </div>
+                          <h4 className="font-bold text-gray-800 text-xs mb-1 truncate">{ev.title}</h4>
+                          <div className="flex flex-col gap-1 mt-1">
+                            <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                              <Clock size={10} />
+                              {new Date(ev.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[9px] font-bold text-indigo-400 uppercase">
+                              <div className="w-1 h-1 rounded-full bg-indigo-300"></div>
+                              By: {ev.requester}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-400 text-sm">No upcoming events scheduled</div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

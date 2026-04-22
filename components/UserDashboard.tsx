@@ -300,7 +300,9 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
             // --- FETCH CALENDAR EVENTS ---
             setIsCalendarLoading(true);
             try {
-                // 1. Get categories that have show_on_calendar = true
+                const events: any[] = [];
+
+                // 1. FETCH TICKET-BASED EVENTS
                 const { data: calCats } = await supabase
                     .from('ticket_categories')
                     .select('id, name')
@@ -308,9 +310,6 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
 
                 if (calCats && calCats.length > 0) {
                     const catIds = calCats.map(c => c.id);
-                    
-                    // 2. Get tickets for these categories
-                    // We join with ticket_statuses to ensure we only get "Approved" events
                     const { data: calTickets } = await supabase
                         .from('tickets')
                         .select(`
@@ -320,17 +319,13 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                         `)
                         .in('category_id', catIds);
 
-                    // Filter for Approved status (case-insensitive) locally to be safe
                     const approvedTickets = calTickets?.filter(t => 
                         (t.ticket_statuses as any)?.status_name?.toLowerCase() === 'approved'
                     );
 
                     if (approvedTickets) {
-                        const events: any[] = [];
                         approvedTickets.forEach(t => {
                             const desc = t.description || '';
-                            
-                            // Extract Date
                             const dateCellRegex = /<td[^>]*>Event Date.*?<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
                             const dateCellMatch = desc.match(dateCellRegex);
                             let rawDate = "";
@@ -384,55 +379,40 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                                 isManual: false
                             });
                         });
-
-                        // 3. FETCH MANUAL EVENTS
-                        const { data: manualEvents } = await supabase
-                            .from('calendar_events')
-                            .select('*, creator:profiles!created_by(full_name)')
-                            .eq('is_public', true)
-                            .or(`company_id.is.null,company_id.eq.${effectiveCompanyId || 0}`)
-                            .gte('event_date', new Date().toISOString().split('T')[0]);
-
-                        if (manualEvents) {
-                            manualEvents.forEach(me => {
-                                events.push({
-                                    id: me.id,
-                                    title: me.title,
-                                    category: me.category_name || 'Internal Event',
-                                    date: me.event_date,
-                                    requester: me.creator?.full_name || 'Admin',
-                                    raw: me,
-                                    isManual: true
-                                });
-                            });
-                        }
-
-                        setCalendarEvents(events
-                            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-                        );
                     }
-                } else {
-                    // Even if no ticket categories, still fetch manual events
-                     const { data: manualEvents } = await supabase
-                            .from('calendar_events')
-                            .select('*, creator:profiles!created_by(full_name)')
-                            .eq('is_public', true)
-                            .or(`company_id.is.null,company_id.eq.${effectiveCompanyId || 0}`)
-                            .gte('event_date', new Date().toISOString().split('T')[0]);
+                }
 
-                    if (manualEvents) {
-                        const events = manualEvents.map(me => ({
+                // 2. FETCH MANUAL EVENTS
+                console.log("UserDashboard: Fetching manual events...");
+                const { data: manualEvents, error: manualErr } = await supabase
+                    .from('calendar_events')
+                    .select('*')
+                    .or('is_public.eq.true,is_public.is.null')
+                    .gte('event_date', new Date().toISOString().split('T')[0]);
+
+                if (manualErr) {
+                    console.error("UserDashboard: Manual events fetch error:", manualErr);
+                }
+
+                console.log(`UserDashboard: Raw manual events from DB:`, manualEvents);
+
+                if (manualEvents && manualEvents.length > 0) {
+                    manualEvents.forEach(me => {
+                        events.push({
                             id: me.id,
                             title: me.title,
                             category: me.category_name || 'Internal Event',
                             date: me.event_date,
-                            requester: me.creator?.full_name || 'Admin',
+                            requester: 'Admin', // Simplified to avoid join issues for now
                             raw: me,
                             isManual: true
-                        }));
-                        setCalendarEvents(events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
-                    }
+                        });
+                    });
                 }
+
+                const sorted = events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                console.log("UserDashboard: Final combined events:", sorted.length, sorted);
+                setCalendarEvents(sorted);
             } catch (err) {
                 console.error("Dashboard Calendar Error:", err);
             } finally {
