@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, FileText, Book, BookOpen, HelpCircle, Eye, Info, X, AlertCircle, Package, Bot, Send, MessageSquare, Sparkles, Clock, CheckCircle2, ArrowRight, GitBranch, Calendar } from 'lucide-react';
+import { Plus, FileText, Book, BookOpen, HelpCircle, Eye, Info, X, AlertCircle, Package, Bot, Send, MessageSquare, Sparkles, Clock, CheckCircle2, ArrowRight, GitBranch, Calendar, ChevronRight, User, Ticket as TicketIcon, Settings } from 'lucide-react';
 
 import { supabase } from '../lib/supabase';
 
@@ -39,7 +39,11 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
     const [recentTickets, setRecentTickets] = useState<Ticket[]>([]);
     const [articles, setArticles] = useState<Article[]>([]);
     const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+    const [selectedTicket, setSelectedTicket] = useState<any>(null);
     const [selectedArticle, setSelectedArticle] = useState<any>(null);
+    const [selectedEvent, setSelectedEvent] = useState<any>(null);
+    const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+    const [activeTab, setActiveTab] = useState<'all' | 'open' | 'resolved'>('all');
     const [isArticleModalOpen, setIsArticleModalOpen] = useState(false);
     const [loadingArticle, setLoadingArticle] = useState(false);
     const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
@@ -319,9 +323,10 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                         `)
                         .in('category_id', catIds);
 
-                    const approvedTickets = calTickets?.filter(t => 
-                        (t.ticket_statuses as any)?.status_name?.toLowerCase() === 'approved'
-                    );
+                    const approvedTickets = calTickets?.filter(t => {
+                        const status = (t.ticket_statuses as any)?.status_name?.toLowerCase();
+                        return ['approved', 'resolved', 'closed'].includes(status);
+                    });
 
                     if (approvedTickets) {
                         approvedTickets.forEach(t => {
@@ -845,25 +850,40 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                             {calendarEvents
                                 .slice(0, showAllEvents ? undefined : 8)
                                 .map((ev, i) => (
-                                <div key={i} className="group relative bg-white border border-gray-100 p-5 rounded-2xl hover:border-indigo-500 hover:shadow-md transition-all cursor-default">
+                                <div 
+                                    key={i} 
+                                    onClick={() => {
+                                        setSelectedEvent(ev);
+                                        setIsEventModalOpen(true);
+                                    }}
+                                    className="group relative bg-white border border-gray-100 p-5 rounded-2xl hover:border-indigo-500 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer active:scale-95"
+                                >
                                     <div className="flex justify-between items-start mb-3">
-                                        <div className="px-2.5 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-black uppercase tracking-wider">
-                                            {ev.category}
+                                        <div className={`px-2.5 py-1 ${ev.isManual ? 'bg-purple-50 text-purple-600' : 'bg-indigo-50 text-indigo-600'} rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5`}>
+                                            {ev.isManual ? <Calendar size={10} /> : <TicketIcon size={10} />}
+                                            {ev.isManual ? 'Internal Event' : 'Service Ticket'}
                                         </div>
-                                        <Calendar size={16} className="text-gray-300 group-hover:text-indigo-400" />
+                                        {ev.isManual ? <Calendar size={16} className="text-purple-200 group-hover:text-purple-400" /> : <TicketIcon size={16} className="text-indigo-200 group-hover:text-indigo-400" />}
                                     </div>
-                                    <h4 className="font-bold text-gray-800 text-sm mb-1 group-hover:text-indigo-600 truncate">{ev.title}</h4>
+                                    <div className="mb-2">
+                                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{ev.category}</p>
+                                        <h4 className="font-bold text-gray-800 text-sm group-hover:text-indigo-600 truncate">{ev.title}</h4>
+                                    </div>
                                     <div className="flex flex-col gap-1.5 mt-2">
                                         <div className="flex items-center gap-2 text-[11px] font-bold text-gray-400">
                                             <Clock size={12} />
                                             {new Date(ev.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
                                         </div>
-                                        <div className="flex items-center gap-2 text-[10px] font-black text-indigo-400/80 uppercase tracking-tight">
-                                            <div className="w-1 h-1 rounded-full bg-indigo-300"></div>
+                                        <div className={`flex items-center gap-2 text-[10px] font-black ${ev.isManual ? 'text-purple-400/80' : 'text-indigo-400/80'} uppercase tracking-tight`}>
+                                            <div className={`w-1 h-1 rounded-full ${ev.isManual ? 'bg-purple-300' : 'bg-indigo-300'}`}></div>
                                             Booked by: {ev.requester}
                                         </div>
                                     </div>
-                                    <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-500/5 rounded-bl-full -translate-y-2 translate-x-2 group-hover:bg-indigo-500/10 transition-colors"></div>
+                                    <div className={`absolute top-0 right-0 w-16 h-16 ${ev.isManual ? 'bg-purple-500/5' : 'bg-indigo-500/5'} rounded-bl-full -translate-y-2 translate-x-2 group-hover:scale-110 transition-all`}></div>
+                                    <div className="mt-3 pt-3 border-t border-gray-50 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">Click for details</span>
+                                        <ChevronRight size={14} className="text-indigo-400" />
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -1157,6 +1177,90 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                                     </div>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Event Detail Modal */}
+            {isEventModalOpen && selectedEvent && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className={`relative h-32 ${selectedEvent.isManual ? 'bg-gradient-to-br from-purple-600 to-indigo-700' : 'bg-gradient-to-br from-indigo-600 to-purple-700'} p-8`}>
+                            <button 
+                                onClick={() => setIsEventModalOpen(false)}
+                                className="absolute top-6 right-6 p-2 bg-white/20 hover:bg-white/30 text-white rounded-full transition-colors"
+                            >
+                                <X size={20} />
+                            </button>
+                            <div className="mt-2">
+                                <span className="px-3 py-1 bg-white/20 text-white text-[10px] font-black uppercase tracking-widest rounded-full backdrop-blur-md border border-white/10 flex items-center gap-2 w-fit">
+                                    {selectedEvent.isManual ? <Calendar size={12} /> : <TicketIcon size={12} />}
+                                    {selectedEvent.isManual ? 'Manual Internal Event' : 'Service Request Ticket'}
+                                </span>
+                                <h2 className="text-2xl font-black text-white mt-2 leading-tight">{selectedEvent.title}</h2>
+                            </div>
+                        </div>
+                        <div className="p-8">
+                            <div className="grid grid-cols-2 gap-4 mb-8">
+                                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl border border-gray-100">
+                                    <div className={`w-10 h-10 ${selectedEvent.isManual ? 'bg-purple-100 text-purple-600' : 'bg-indigo-100 text-indigo-600'} rounded-xl flex items-center justify-center`}>
+                                        <Calendar size={20} />
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Event Date</p>
+                                        <p className="font-bold text-gray-800 text-xs">{new Date(selectedEvent.date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl border border-gray-100">
+                                    <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center">
+                                        <User size={20} />
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Booked By</p>
+                                        <p className="font-bold text-gray-800 text-xs">{selectedEvent.requester}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="mb-6 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${selectedEvent.isManual ? 'bg-purple-600 text-white' : 'bg-indigo-600 text-white'}`}>
+                                        {selectedEvent.isManual ? <Settings size={14} /> : <Package size={14} />}
+                                    </div>
+                                    <div>
+                                        <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest">Category Source</p>
+                                        <p className="font-bold text-indigo-900 text-xs uppercase">{selectedEvent.category}</p>
+                                    </div>
+                                </div>
+                                {!selectedEvent.isManual && (
+                                    <div className="px-3 py-1 bg-white border border-indigo-100 rounded-full text-[10px] font-black text-indigo-600 shadow-sm">
+                                        REF: SR-TICKET
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="space-y-4">
+                                <h3 className="font-black text-gray-800 text-sm uppercase tracking-widest flex items-center gap-2">
+                                    <FileText size={16} className="text-indigo-500" /> Event Details
+                                </h3>
+                                <div className="p-5 bg-gray-50 rounded-2xl border border-gray-100 text-sm text-gray-600 leading-relaxed max-h-48 overflow-y-auto custom-scrollbar">
+                                    {selectedEvent.isManual ? (
+                                        selectedEvent.raw?.description || 'No additional description provided.'
+                                    ) : (
+                                        <div 
+                                            className="prose prose-sm max-w-none prose-p:my-1 prose-td:p-1"
+                                            dangerouslySetInnerHTML={{ __html: selectedEvent.raw?.description || 'No additional details available.' }} 
+                                        />
+                                    )}
+                                </div>
+                            </div>
+
+                            <button 
+                                onClick={() => setIsEventModalOpen(false)}
+                                className="w-full mt-8 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-lg shadow-indigo-100 transition-all active:scale-95"
+                            >
+                                Close Details
+                            </button>
                         </div>
                     </div>
                 </div>

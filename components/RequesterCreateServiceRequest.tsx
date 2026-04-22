@@ -323,7 +323,8 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                 
                 if (allTickets) {
                     const conflict = allTickets.find(t => {
-                        if ((t.ticket_statuses as any)?.status_name?.toLowerCase() !== 'approved') return false;
+                        const status = (t.ticket_statuses as any)?.status_name?.toLowerCase();
+                        if (!['approved', 'resolved', 'closed'].includes(status)) return false;
                         
                         const desc = t.description || '';
                         const dateCellRegex = /<td[^>]*>Event Date.*?<\/td>\s*<td[^>]*>(.*?)<\/td>/i;

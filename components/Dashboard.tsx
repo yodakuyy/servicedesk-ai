@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   LayoutDashboard,
-  Ticket,
+  Ticket as TicketIcon,
   Package,
   Book,
   Settings,
@@ -235,6 +235,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     teamPulse: []
   });
 
+  const [selectedEvent, setSelectedEvent] = useState<any>(null);
+  const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
   const [isCalendarLoading, setIsCalendarLoading] = useState(false);
   const [showAllEvents, setShowAllEvents] = useState(false);
@@ -986,11 +988,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         // 1. FETCH TICKET-BASED EVENTS
         const { data: allTickets } = await supabase
           .from('tickets')
-          .select('id, subject, description, ticket_statuses!status_id!inner(status_name)');
+          .select('id, subject, description, ticket_statuses!status_id!inner(status_name), requester:requester_id(full_name)');
         
         if (allTickets) {
           allTickets.forEach(t => {
-            if ((t.ticket_statuses as any)?.status_name?.toLowerCase() !== 'approved') return;
+            const status = (t.ticket_statuses as any)?.status_name?.toLowerCase();
+            if (!['approved', 'resolved', 'closed'].includes(status)) return;
             
             const desc = t.description || '';
             const dateCellRegex = /<td[^>]*>Event Date.*?<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
@@ -1042,6 +1045,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               category: 'Ticket Booking',
               date: eventDate.toISOString().split('T')[0],
               requester: (t as any).requester?.full_name || 'User',
+              raw: t,
               isManual: false
             });
           });
@@ -1050,7 +1054,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         // 2. FETCH MANUAL EVENTS
         const { data: manualEvents } = await supabase
           .from('calendar_events')
-          .select('*')
+          .select('*, profiles:created_by(full_name)')
           .or('is_public.eq.true,is_public.is.null')
           .gte('event_date', new Date().toISOString().split('T')[0]);
 
@@ -1061,7 +1065,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               title: me.title,
               category: me.category_name || 'Internal Event',
               date: me.event_date,
-              requester: 'Admin',
+              requester: (me as any).profiles?.full_name || 'Admin',
+              raw: me,
               isManual: true
             });
           });
@@ -1233,7 +1238,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 {detailModal.type === 'overdue' ? <AlertCircle size={24} /> :
                   detailModal.type === 'unassigned' ? <Users size={24} /> :
                     detailModal.type === 'satisfaction' ? <Star size={24} /> :
-                      <Ticket size={24} />}
+                      <TicketIcon size={24} />}
               </div>
               <div>
                 <h2 className="text-xl font-black text-gray-800 uppercase tracking-tight">{detailModal.title}</h2>
@@ -1821,22 +1826,33 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   ) : calendarEvents.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                       {calendarEvents.slice(0, showAllEvents ? undefined : 4).map((ev, i) => (
-                        <div key={i} className="group relative bg-white border border-gray-100 p-4 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all">
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[9px] font-black uppercase">
-                              {ev.category}
+                        <div 
+                          key={i} 
+                          onClick={() => {
+                            setSelectedEvent(ev);
+                            setIsEventModalOpen(true);
+                          }}
+                          className="group relative bg-white border border-gray-100 p-4 rounded-xl hover:border-indigo-500 hover:shadow-lg hover:-translate-y-1 transition-all cursor-pointer active:scale-95"
+                        >
+                          <div className="flex justify-between items-start mb-3">
+                            <div className={`px-2.5 py-1 ${ev.isManual ? 'bg-purple-50 text-purple-600' : 'bg-indigo-50 text-indigo-600'} rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5`}>
+                              {ev.isManual ? <Calendar size={10} /> : <TicketIcon size={10} />}
+                              {ev.isManual ? 'Internal Event' : 'Service Ticket'}
                             </div>
-                            <Calendar size={14} className="text-gray-300" />
+                            {ev.isManual ? <Calendar size={16} className="text-purple-200 group-hover:text-purple-400 transition-colors" /> : <TicketIcon size={16} className="text-indigo-200 group-hover:text-indigo-400 transition-colors" />}
                           </div>
-                          <h4 className="font-bold text-gray-800 text-xs mb-1 truncate">{ev.title}</h4>
-                          <div className="flex flex-col gap-1 mt-1">
-                            <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
-                              <Clock size={10} />
+                          <div className="mb-2">
+                            <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{ev.category}</p>
+                            <h4 className="font-bold text-gray-800 text-sm group-hover:text-indigo-600 truncate transition-colors">{ev.title}</h4>
+                          </div>
+                          <div className="flex flex-col gap-1.5 mt-2">
+                            <div className="flex items-center gap-2 text-[11px] font-bold text-gray-400">
+                              <Clock size={12} />
                               {new Date(ev.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
                             </div>
-                            <div className="flex items-center gap-1.5 text-[9px] font-bold text-indigo-400 uppercase">
-                              <div className="w-1 h-1 rounded-full bg-indigo-300"></div>
-                              By: {ev.requester}
+                            <div className={`flex items-center gap-2 text-[10px] font-black ${ev.isManual ? 'text-purple-400/80' : 'text-indigo-400/80'} uppercase tracking-tight`}>
+                              <div className={`w-1 h-1 rounded-full ${ev.isManual ? 'bg-purple-300' : 'bg-indigo-300'}`}></div>
+                              Booked by: {ev.requester}
                             </div>
                           </div>
                         </div>
@@ -1889,7 +1905,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 </div>
               </div>
               <div className="absolute right-0 top-0 w-24 h-24 bg-gradient-to-br from-indigo-500/10 to-blue-500/0 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-              <Ticket className="absolute right-4 bottom-4 text-gray-100 mb-1 ml-1" size={48} />
+              <TicketIcon className="absolute right-4 bottom-4 text-gray-100 mb-1 ml-1" size={48} />
             </div>
 
             {/* Total Pending Card */}
@@ -2144,24 +2160,36 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                   ) : calendarEvents.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                       {calendarEvents.slice(0, showAllEvents ? undefined : 4).map((ev, i) => (
-                        <div key={i} className="group relative bg-white border border-gray-100 p-4 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all">
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[9px] font-black uppercase">
-                              {ev.category}
+                        <div 
+                          key={i} 
+                          onClick={() => {
+                            setSelectedEvent(ev);
+                            setIsEventModalOpen(true);
+                          }}
+                          className="group relative bg-white border border-gray-100 p-4 rounded-xl hover:border-indigo-500 hover:shadow-lg hover:-translate-y-1 transition-all cursor-pointer active:scale-95"
+                        >
+                          <div className="flex justify-between items-start mb-3">
+                            <div className={`px-2.5 py-1 ${ev.isManual ? 'bg-purple-50 text-purple-600' : 'bg-indigo-50 text-indigo-600'} rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5`}>
+                              {ev.isManual ? <Calendar size={10} /> : <TicketIcon size={10} />}
+                              {ev.isManual ? 'Internal Event' : 'Service Ticket'}
                             </div>
-                            <Calendar size={14} className="text-gray-300" />
+                            {ev.isManual ? <Calendar size={16} className="text-purple-200 group-hover:text-purple-400 transition-colors" /> : <TicketIcon size={16} className="text-indigo-200 group-hover:text-indigo-400 transition-colors" />}
                           </div>
-                          <h4 className="font-bold text-gray-800 text-xs mb-1 truncate">{ev.title}</h4>
-                          <div className="flex flex-col gap-1 mt-1">
-                            <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
-                              <Clock size={10} />
+                          <div className="mb-2">
+                            <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{ev.category}</p>
+                            <h4 className="font-bold text-gray-800 text-sm group-hover:text-indigo-600 truncate transition-colors">{ev.title}</h4>
+                          </div>
+                          <div className="flex flex-col gap-1.5 mt-2">
+                            <div className="flex items-center gap-2 text-[11px] font-bold text-gray-400">
+                              <Clock size={12} />
                               {new Date(ev.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
                             </div>
-                            <div className="flex items-center gap-1.5 text-[9px] font-bold text-indigo-400 uppercase">
-                              <div className="w-1 h-1 rounded-full bg-indigo-300"></div>
-                              By: {ev.requester}
+                            <div className={`flex items-center gap-2 text-[10px] font-black ${ev.isManual ? 'text-purple-400/80' : 'text-indigo-400/80'} uppercase tracking-tight`}>
+                              <div className={`w-1 h-1 rounded-full ${ev.isManual ? 'bg-purple-300' : 'bg-indigo-300'}`}></div>
+                              Booked by: {ev.requester}
                             </div>
                           </div>
+                          <div className="absolute top-0 right-0 w-12 h-12 bg-indigo-500/5 rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity"></div>
                         </div>
                       ))}
                     </div>
@@ -2271,7 +2299,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               const getMenuIcon = () => {
                 if (normalizedName === 'dashboard') return LayoutDashboard;
                 if (normalizedName === 'mydashboard' || normalizedName === 'mydashbord' || normalizedName === 'usertickets') return User;
-                if (normalizedName === 'allincidents') return Ticket;
+                if (normalizedName === 'allincidents') return TicketIcon;
                 if (normalizedName.includes('incidents') || normalizedName.includes('mytickets')) return FileText;
                 if (normalizedName.includes('office')) return CalendarOff;
                 if (normalizedName.includes('knowledge')) return Book;
@@ -2547,6 +2575,90 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           {renderDetailModal()}
         </main>
       </div>
+      {/* Event Detail Modal */}
+      {isEventModalOpen && selectedEvent && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className={`relative h-32 ${selectedEvent.isManual ? 'bg-gradient-to-br from-purple-600 to-indigo-700' : 'bg-gradient-to-br from-indigo-600 to-purple-700'} p-8 text-white`}>
+              <button 
+                onClick={() => setIsEventModalOpen(false)}
+                className="absolute top-6 right-6 p-2 bg-white/20 hover:bg-white/30 rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
+              <div className="mt-2">
+                <span className="px-3 py-1 bg-white/20 text-[10px] font-black uppercase tracking-widest rounded-full backdrop-blur-md border border-white/10 flex items-center gap-2 w-fit">
+                  {selectedEvent.isManual ? <Calendar size={12} /> : <TicketIcon size={12} />}
+                  {selectedEvent.isManual ? 'Manual Internal Event' : 'Service Request Ticket'}
+                </span>
+                <h2 className="text-2xl font-black mt-2 leading-tight">{selectedEvent.title}</h2>
+              </div>
+            </div>
+            <div className="p-8">
+              <div className="grid grid-cols-2 gap-4 mb-8">
+                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl border border-gray-100">
+                  <div className={`w-10 h-10 ${selectedEvent.isManual ? 'bg-purple-100 text-purple-600' : 'bg-indigo-100 text-indigo-600'} rounded-xl flex items-center justify-center`}>
+                    <Calendar size={20} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Event Date</p>
+                    <p className="font-bold text-gray-800 text-xs">{new Date(selectedEvent.date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl border border-gray-100">
+                  <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center">
+                    <User size={20} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Booked By</p>
+                    <p className="font-bold text-gray-800 text-xs">{selectedEvent.requester}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-6 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${selectedEvent.isManual ? 'bg-purple-600 text-white' : 'bg-indigo-600 text-white'}`}>
+                    {selectedEvent.isManual ? <Settings size={14} /> : <Package size={14} />}
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest">Category Source</p>
+                    <p className="font-bold text-indigo-900 text-xs uppercase">{selectedEvent.category}</p>
+                  </div>
+                </div>
+                {!selectedEvent.isManual && (
+                  <div className="px-3 py-1 bg-white border border-indigo-100 rounded-full text-[10px] font-black text-indigo-600 shadow-sm">
+                    REF: SR-TICKET
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="font-black text-gray-800 text-sm uppercase tracking-widest flex items-center gap-2">
+                  <FileText size={16} className="text-indigo-500" /> Event Details
+                </h3>
+                <div className="p-5 bg-gray-50 rounded-2xl border border-gray-100 text-sm text-gray-600 leading-relaxed max-h-48 overflow-y-auto custom-scrollbar">
+                  {selectedEvent.isManual ? (
+                    selectedEvent.raw?.description || 'No additional description provided.'
+                  ) : (
+                    <div 
+                      className="prose prose-sm max-w-none prose-p:my-1 prose-td:p-1"
+                      dangerouslySetInnerHTML={{ __html: selectedEvent.raw?.description || 'No additional details available.' }} 
+                    />
+                  )}
+                </div>
+              </div>
+
+              <button 
+                onClick={() => setIsEventModalOpen(false)}
+                className="w-full mt-8 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-lg shadow-indigo-100 transition-all active:scale-95"
+              >
+                Close Details
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
