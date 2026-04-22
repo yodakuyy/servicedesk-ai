@@ -1021,6 +1021,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
         const matchingPolicy = slaPolicies.find(policy => {
             if (linkedSlaIds.length > 0 && !linkedSlaIds.includes(policy.id)) return false;
             if (!policy.conditions || !Array.isArray(policy.conditions)) return false;
+            
             return policy.conditions.every((cond: any) => {
                 let ticketVal: any;
                 switch (cond.field) {
@@ -1031,21 +1032,22 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                     default: return false;
                 }
                 if (!ticketVal) return false;
-                // Normalize for comparison (handle spaces vs underscores)
-                const valNormalized = String(cond.value).toLowerCase().replace(/\s+/g, '_');
-                const ticketValNormalized = String(ticketVal).toLowerCase().replace(/\s+/g, '_');
-
+                
+                // Normalize both for comparison
+                const valNormalized = String(cond.value).toLowerCase().replace(/[\s_]+/g, '');
+                const ticketValNormalized = String(ticketVal).toLowerCase().replace(/[\s_]+/g, '');
+                
                 if (cond.operator === 'equals') return ticketValNormalized === valNormalized;
                 if (cond.operator === 'not_equals') return ticketValNormalized !== valNormalized;
                 if (cond.operator === 'in') {
-                    const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                    const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/[\s_]+/g, ''));
                     return values.includes(ticketValNormalized);
                 }
                 if (cond.operator === 'not_in') {
-                    const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                    const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/[\s_]+/g, ''));
                     return !values.includes(ticketValNormalized);
                 }
-                return false;
+                return ticketValNormalized === valNormalized;
             });
         });
 
@@ -2729,41 +2731,51 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                             // SLA Calculation (Dynamic)
                             const schedule = ticket.group?.business_hours?.weekly_schedule || [];
+                            
+                            // Check if terminal/paused using DB flags
                             const isTerminal = ticket.ticket_statuses?.sla_behavior === 'stop' || ticket.ticket_statuses?.is_final === true;
+                            const isPaused = ticket.ticket_statuses?.sla_behavior === 'pause';
+                            const slaBehavior = ticket.ticket_statuses?.sla_behavior || 'run';
 
-                            // Check if already responded to decide which SLA to show
-                            // Note: messages isn't available for ALL tickets at once, so we assume response if status bukan Open
-                            const likelyHasResponse = ticket.ticket_statuses?.status_name !== 'Open';
-                            const activeSlaType = likelyHasResponse ? 'resolution' : 'response';
+                            // Improved response detection: system auto-replies don't count
+                            // Note: messages isn't available for ALL tickets at once in the list view usually,
+                            // but some systems pre-calculate first_response_at on the ticket record.
+                            // If first_response_at is not on the ticket, we use status as a proxy.
+                            const hasResponse = !!ticket.first_response_at || (ticket.ticket_statuses?.status_name !== 'Open');
+                            const activeSlaType = hasResponse ? 'resolution' : 'response';
 
-                            // Find matching policy (must match ALL conditions including company/department)
+                            // Find matching policy (must match ALL conditions)
                             const linkedSlaIds = ticket.group?.group_sla_policies?.map((ug: any) => ug.sla_policy_id) || [];
                             const matchingPolicy = slaPolicies.find(policy => {
                                 if (linkedSlaIds.length > 0 && !linkedSlaIds.includes(policy.id)) return false;
                                 if (!policy.conditions || !Array.isArray(policy.conditions)) return false;
+                                
                                 return policy.conditions.every((cond: any) => {
-                                    let val: any;
+                                    let ticketVal: any;
                                     switch (cond.field) {
-                                        case 'company': val = ticket.group?.company?.company_name; break;
-                                        case 'ticket_type': val = ticket.ticket_type; break;
-                                        case 'category': val = ticket.ticket_categories?.name; break;
-                                        case 'priority': val = ticket.priority; break;
-                                        default: return false; // Unknown condition = no match
+                                        case 'company': ticketVal = ticket.group?.company?.company_name; break;
+                                        case 'ticket_type': ticketVal = ticket.ticket_type; break;
+                                        case 'category': ticketVal = ticket.ticket_categories?.name; break;
+                                        case 'priority': ticketVal = ticket.priority; break;
+                                        default: return false;
                                     }
-                                    if (!val) return false;
-                                    const valNormalized = String(val).toLowerCase().replace(/\s+/g, '_');
-                                    const condValNormalized = String(cond.value).toLowerCase().replace(/\s+/g, '_');
-                                    if (cond.operator === 'equals') return valNormalized === condValNormalized;
-                                    if (cond.operator === 'not_equals') return valNormalized !== condValNormalized;
+                                    if (!ticketVal) return false;
+                                    
+                                    // Normalize both for comparison
+                                    const valNormalized = String(cond.value).toLowerCase().replace(/[\s_]+/g, '');
+                                    const ticketValNormalized = String(ticketVal).toLowerCase().replace(/[\s_]+/g, '');
+                                    
+                                    if (cond.operator === 'equals') return ticketValNormalized === valNormalized;
+                                    if (cond.operator === 'not_equals') return ticketValNormalized !== valNormalized;
                                     if (cond.operator === 'in') {
-                                        const values = condValNormalized.split(',').map((s: string) => s.trim());
-                                        return values.includes(valNormalized);
+                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/[\s_]+/g, ''));
+                                        return values.includes(ticketValNormalized);
                                     }
                                     if (cond.operator === 'not_in') {
-                                        const values = condValNormalized.split(',').map((s: string) => s.trim());
-                                        return !values.includes(valNormalized);
+                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/[\s_]+/g, ''));
+                                        return !values.includes(ticketValNormalized);
                                     }
-                                    return valNormalized === condValNormalized;
+                                    return ticketValNormalized === valNormalized;
                                 });
                             });
 
@@ -2775,7 +2787,6 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                             const totalPaused = ticket.total_paused_minutes || 0;
                             const pausedAt = ticket.paused_at;
-                            const isPaused = ticket.ticket_statuses?.sla_behavior === 'pause';
 
                             let elapsed = calculateBusinessElapsed(ticketCreatedAt, now, schedule);
                             elapsed = Math.max(0, elapsed - totalPaused);
@@ -2819,10 +2830,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     </div>
                                 </div>
                             );
+
                             const remaining = Math.max(0, targetMins - elapsed);
                             const remH = Math.floor(remaining / 60);
                             const remM = remaining % 60;
-                            const isBreached = remaining === 0 && !isTerminal;
+                            
+                            // A ticket is breached if elapsed > target and it's NOT final.
+                            // Also, if it's currently paused, we don't mark as overdue in the same way.
+                            const isBreached = elapsed > targetMins && !isTerminal;
 
                             return (
                                 <div
@@ -2858,8 +2873,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     <div className="flex justify-between items-center text-[11px] font-medium mb-2">
                                         <span className="text-gray-400 truncate max-w-[150px]">{ticket.requester?.full_name || 'Anonymous'}</span>
                                         {!isTerminal && (
-                                            <span className={`${isBreached ? 'text-rose-600' : 'text-red-500'} font-bold text-[10px]`}>
-                                                {isBreached ? 'OVERDUE' : `${String(remH).padStart(2, '0')}:${String(remM).padStart(2, '0')}:00`}
+                                            <span className={`${isBreached ? 'text-rose-600' : isPaused ? 'text-amber-500' : 'text-red-500'} font-bold text-[10px]`}>
+                                                {isBreached ? 'OVERDUE' : isPaused ? 'PAUSED' : `${String(remH).padStart(2, '0')}:${String(remM).padStart(2, '0')}:00`}
                                             </span>
                                         )}
                                     </div>
@@ -3223,6 +3238,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             const matchingPolicy = slaPolicies.find(policy => {
                                 if (linkedSlaIds.length > 0 && !linkedSlaIds.includes(policy.id)) return false;
                                 if (!policy.conditions || !Array.isArray(policy.conditions)) return false;
+                                
                                 return policy.conditions.every((cond: any) => {
                                     let ticketVal: any;
                                     switch (cond.field) {
@@ -3233,21 +3249,22 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                         default: return false;
                                     }
                                     if (!ticketVal) return false;
-                                    // Normalize for comparison (handle spaces vs underscores)
-                                    const valNormalized = String(cond.value).toLowerCase().replace(/\s+/g, '_');
-                                    const ticketValNormalized = String(ticketVal).toLowerCase().replace(/\s+/g, '_');
-
+                                    
+                                    // Normalize both for comparison
+                                    const valNormalized = String(cond.value).toLowerCase().replace(/[\s_]+/g, '');
+                                    const ticketValNormalized = String(ticketVal).toLowerCase().replace(/[\s_]+/g, '');
+                                    
                                     if (cond.operator === 'equals') return ticketValNormalized === valNormalized;
                                     if (cond.operator === 'not_equals') return ticketValNormalized !== valNormalized;
                                     if (cond.operator === 'in') {
-                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/[\s_]+/g, ''));
                                         return values.includes(ticketValNormalized);
                                     }
                                     if (cond.operator === 'not_in') {
-                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/[\s_]+/g, ''));
                                         return !values.includes(ticketValNormalized);
                                     }
-                                    return false;
+                                    return ticketValNormalized === valNormalized;
                                 });
                             });
 
@@ -3262,12 +3279,13 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             // Find termination time from logs (OLDEST terminal status change)
                             const terminalLogs = activityLogs.filter(l => {
                                 const actionLower = (l.action || '').toLowerCase();
-                                return actionLower.includes('resolved') ||
+                                const isTerminalAction = actionLower.includes('resolved') ||
                                     actionLower.includes('closed') ||
                                     actionLower.includes('canceled') ||
                                     actionLower.includes('cancelled') ||
                                     actionLower.includes('approved') ||
                                     actionLower.includes('rejected');
+                                return isTerminalAction;
                             });
                             const oldestTerminalLog = terminalLogs.length > 0 ? terminalLogs[terminalLogs.length - 1] : null;
 
@@ -3860,31 +3878,33 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             const matchingPolicy = slaPolicies.find(policy => {
                                 if (linkedSlaIds.length > 0 && !linkedSlaIds.includes(policy.id)) return false;
                                 if (!policy.conditions || !Array.isArray(policy.conditions)) return false;
+                                
                                 return policy.conditions.every((cond: any) => {
-                                    let ticketValue: any;
+                                    let ticketVal: any;
                                     switch (cond.field) {
-                                        case 'company': ticketValue = selectedTicket.group?.company?.company_name; break;
-                                        case 'ticket_type': ticketValue = selectedTicket.ticket_type; break;
-                                        case 'category': ticketValue = selectedTicket.ticket_categories?.name; break;
-                                        case 'priority': ticketValue = selectedTicket.priority; break;
+                                        case 'company': ticketVal = selectedTicket.group?.company?.company_name; break;
+                                        case 'ticket_type': ticketVal = selectedTicket.ticket_type; break;
+                                        case 'category': ticketVal = selectedTicket.ticket_categories?.name; break;
+                                        case 'priority': ticketVal = selectedTicket.priority; break;
                                         default: return false;
                                     }
-                                    if (!ticketValue) return false;
-                                    // Normalize for comparison (handle spaces vs underscores)
-                                    const valNormalized = String(cond.value).toLowerCase().replace(/\s+/g, '_');
-                                    const ticketValNormalized = String(ticketValue).toLowerCase().replace(/\s+/g, '_');
-
+                                    if (!ticketVal) return false;
+                                    
+                                    // Normalize both for comparison
+                                    const valNormalized = String(cond.value).toLowerCase().replace(/[\s_]+/g, '');
+                                    const ticketValNormalized = String(ticketVal).toLowerCase().replace(/[\s_]+/g, '');
+                                    
                                     if (cond.operator === 'equals') return ticketValNormalized === valNormalized;
                                     if (cond.operator === 'not_equals') return ticketValNormalized !== valNormalized;
                                     if (cond.operator === 'in') {
-                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/[\s_]+/g, ''));
                                         return values.includes(ticketValNormalized);
                                     }
                                     if (cond.operator === 'not_in') {
-                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/\s+/g, '_'));
+                                        const values = String(cond.value).toLowerCase().split(',').map(s => s.trim().replace(/[\s_]+/g, ''));
                                         return !values.includes(ticketValNormalized);
                                     }
-                                    return false;
+                                    return ticketValNormalized === valNormalized;
                                 });
                             });
 

@@ -313,44 +313,124 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                     // We join with ticket_statuses to ensure we only get "Approved" events
                     const { data: calTickets } = await supabase
                         .from('tickets')
-                        .select('id, subject, description, category_id, ticket_statuses!status_id!inner(status_name)')
-                        .in('category_id', catIds)
-                        .eq('ticket_statuses.status_name', 'Approved');
+                        .select(`
+                            id, subject, description, category_id, 
+                            ticket_statuses!status_id!inner(status_name),
+                            requester:profiles!requester_id(full_name)
+                        `)
+                        .in('category_id', catIds);
 
-                    if (calTickets) {
+                    // Filter for Approved status (case-insensitive) locally to be safe
+                    const approvedTickets = calTickets?.filter(t => 
+                        (t.ticket_statuses as any)?.status_name?.toLowerCase() === 'approved'
+                    );
+
+                    if (approvedTickets) {
                         const events: any[] = [];
-                        calTickets.forEach(t => {
+                        approvedTickets.forEach(t => {
                             const desc = t.description || '';
                             
-                            // Extract Date (YYYY-MM-DD or MM/DD/YYYY)
-                            // We look for the standard date format or the one in the table
-                            const dateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}\/\d{1,2}\/\d{4})/;
-                            const dateMatch = desc.match(dateRegex);
+                            // Extract Date
+                            const dateCellRegex = /<td[^>]*>Event Date.*?<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+                            const dateCellMatch = desc.match(dateCellRegex);
+                            let rawDate = "";
                             
-                            if (dateMatch) {
-                                const eventDate = new Date(dateMatch[0]);
-                                const today = new Date();
-                                today.setHours(0, 0, 0, 0); // Reset time to compare only dates
-                                
-                                if (eventDate < today) return; // Skip past events
-
-                                // Extract Event Name if possible
-                                const nameRegex = /<td[^>]*>Event Name<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
-                                const nameMatch = desc.match(nameRegex);
-                                const eventName = nameMatch ? nameMatch[1].trim() : t.subject;
-
-                                events.push({
-                                    id: t.id,
-                                    title: eventName,
-                                    category: calCats.find(c => c.id === t.category_id)?.name,
-                                    date: dateMatch[0],
-                                    raw: t
-                                });
+                            if (dateCellMatch) {
+                                rawDate = dateCellMatch[1].replace(/&nbsp;/g, ' ').replace(/<[^>]*>/g, '').trim();
+                            } else {
+                                const generalDateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/;
+                                const generalMatch = desc.match(generalDateRegex);
+                                if (generalMatch) rawDate = generalMatch[0];
                             }
+                            
+                            if (!rawDate) return;
+
+                            let eventDate: Date;
+                            const namedMonthRegex = /^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/;
+                            const namedMatch = rawDate.match(namedMonthRegex);
+                            
+                            if (namedMatch) {
+                                const day = parseInt(namedMatch[1]);
+                                const monthStr = namedMatch[2].toLowerCase();
+                                const year = parseInt(namedMatch[3]);
+                                const months: { [key: string]: number } = {
+                                    'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'mei': 4, 'may': 4, 'jun': 5,
+                                    'jul': 6, 'agu': 7, 'ags': 7, 'aug': 7, 'sep': 8, 'okt': 9, 'oct': 9,
+                                    'nov': 10, 'des': 11, 'dec': 11
+                                };
+                                const month = months[monthStr.substring(0, 3)] ?? 0;
+                                eventDate = new Date(year, month, day);
+                            } else {
+                                eventDate = new Date(rawDate);
+                            }
+
+                            if (isNaN(eventDate.getTime())) return;
+                            
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            if (eventDate < today) return;
+
+                            const nameRegex = /<td[^>]*>Event Name<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+                            const nameMatch = desc.match(nameRegex);
+                            const eventName = nameMatch ? nameMatch[1].replace(/<[^>]*>/g, '').trim() : t.subject;
+
+                            events.push({
+                                id: t.id,
+                                title: eventName,
+                                category: calCats.find(c => c.id === t.category_id)?.name,
+                                date: eventDate.toISOString().split('T')[0],
+                                requester: (t.requester as any)?.full_name || 'Anonymous',
+                                raw: t,
+                                isManual: false
+                            });
                         });
+
+                        // 3. FETCH MANUAL EVENTS
+                        const { data: manualEvents } = await supabase
+                            .from('calendar_events')
+                            .select('*, creator:profiles!created_by(full_name)')
+                            .eq('is_public', true)
+                            .or(`company_id.is.null,company_id.eq.${effectiveCompanyId || 0}`)
+                            .gte('event_date', new Date().toISOString().split('T')[0]);
+
+                        if (manualEvents) {
+                            manualEvents.forEach(me => {
+                                events.push({
+                                    id: me.id,
+                                    title: me.title,
+                                    category: me.category_name || 'Internal Event',
+                                    date: me.event_date,
+                                    requester: me.creator?.full_name || 'Admin',
+                                    raw: me,
+                                    isManual: true
+                                });
+                            });
+                        }
+
                         setCalendarEvents(events
                             .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
                         );
+                    }
+                } else {
+                    // Even if no ticket categories, still fetch manual events
+                     const { data: manualEvents } = await supabase
+                            .from('calendar_events')
+                            .select('*, creator:profiles!created_by(full_name)')
+                            .eq('is_public', true)
+                            .or(`company_id.is.null,company_id.eq.${effectiveCompanyId || 0}`)
+                            .gte('event_date', new Date().toISOString().split('T')[0]);
+
+                    if (manualEvents) {
+                        const events = manualEvents.map(me => ({
+                            id: me.id,
+                            title: me.title,
+                            category: me.category_name || 'Internal Event',
+                            date: me.event_date,
+                            requester: me.creator?.full_name || 'Admin',
+                            raw: me,
+                            isManual: true
+                        }));
+                        setCalendarEvents(events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
                     }
                 }
             } catch (err) {
@@ -758,29 +838,29 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
             </div>
 
             {/* Event Calendar Section */}
-            {calendarEvents.length > 0 && (
-                <div className="bg-white rounded-3xl border border-gray-100 shadow-xl shadow-indigo-100/20 overflow-hidden">
-                    <div className="p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-end">
-                        <div className="space-y-1">
-                            <h2 className="text-2xl font-black text-gray-900 leading-tight">Public Events & Bookings</h2>
-                            <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Live schedule across all departments</p>
-                        </div>
-                        <div className="flex items-center gap-6">
-                            {calendarEvents.length > 8 && (
-                                <button
-                                    onClick={() => setShowAllEvents(!showAllEvents)}
-                                    className="text-xs font-black text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-4 py-2 rounded-xl transition-all active:scale-95"
-                                >
-                                    {showAllEvents ? 'Show Less' : `View All (${calendarEvents.length})`}
-                                </button>
-                            )}
-                            <div className="flex items-center gap-2 text-xs font-bold text-gray-500">
-                                <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
-                                Booked Event
-                            </div>
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-xl shadow-indigo-100/20 overflow-hidden">
+                <div className="p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-end">
+                    <div className="space-y-1">
+                        <h2 className="text-2xl font-black text-gray-900 leading-tight">Public Events & Bookings</h2>
+                        <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Live schedule across all departments</p>
+                    </div>
+                    <div className="flex items-center gap-6">
+                        {calendarEvents.length > 8 && (
+                            <button
+                                onClick={() => setShowAllEvents(!showAllEvents)}
+                                className="text-xs font-black text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-4 py-2 rounded-xl transition-all active:scale-95"
+                            >
+                                {showAllEvents ? 'Show Less' : `View All (${calendarEvents.length})`}
+                            </button>
+                        )}
+                        <div className="flex items-center gap-2 text-xs font-bold text-gray-500">
+                            <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
+                            Booked Event
                         </div>
                     </div>
-                    <div className="p-8">
+                </div>
+                <div className="p-8">
+                    {calendarEvents.length > 0 ? (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                             {calendarEvents
                                 .slice(0, showAllEvents ? undefined : 8)
@@ -793,17 +873,31 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                                         <Calendar size={16} className="text-gray-300 group-hover:text-indigo-400" />
                                     </div>
                                     <h4 className="font-bold text-gray-800 text-sm mb-1 group-hover:text-indigo-600 truncate">{ev.title}</h4>
-                                    <div className="flex items-center gap-2 text-xs font-bold text-gray-400">
-                                        <Clock size={12} />
-                                        {new Date(ev.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    <div className="flex flex-col gap-1.5 mt-2">
+                                        <div className="flex items-center gap-2 text-[11px] font-bold text-gray-400">
+                                            <Clock size={12} />
+                                            {new Date(ev.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                                        </div>
+                                        <div className="flex items-center gap-2 text-[10px] font-black text-indigo-400/80 uppercase tracking-tight">
+                                            <div className="w-1 h-1 rounded-full bg-indigo-300"></div>
+                                            Booked by: {ev.requester}
+                                        </div>
                                     </div>
                                     <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-500/5 rounded-bl-full -translate-y-2 translate-x-2 group-hover:bg-indigo-500/10 transition-colors"></div>
                                 </div>
                             ))}
                         </div>
-                    </div>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                            <div className="w-16 h-16 bg-gray-50 text-gray-300 rounded-2xl flex items-center justify-center mb-4">
+                                <Calendar size={32} />
+                            </div>
+                            <h3 className="text-gray-900 font-bold mb-1">No Upcoming Events</h3>
+                            <p className="text-gray-500 text-sm max-w-xs">There are no bookings or public events scheduled at this time. Check back later for updates!</p>
+                        </div>
+                    )}
                 </div>
-            )}
+            </div>
 
             {/* Recent Tickets Table */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -931,7 +1025,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                                                     Create Ticket
                                                 </button>
                                                 <button
-                                                    onClick={() => setChatMessages(prev => [...prev, { sender: 'bot', text: "Great! Glad I could help. Have a nice day! 😊" }])}
+                                                    onClick={() => setChatMessages(prev => [...prev, { sender: 'bot', text: "Great! Glad I could help. Have a nice day! \ud83d\ude0a" }])}
                                                     className="px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 hover:text-white transition-all border border-emerald-100"
                                                 >
                                                     Yes, Thanks!
@@ -970,7 +1064,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                                 disabled={!chatInput.trim() || isBotTyping}
                                 className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:bg-gray-400 transition-colors shadow-sm"
                             >
-                                <Send size={18} />
+                                <Bot size={18} />
                             </button>
                         </form>
                     </div>

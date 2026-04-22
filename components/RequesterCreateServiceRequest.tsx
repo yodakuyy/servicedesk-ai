@@ -317,45 +317,48 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
 
             setIsCheckingAvailability(true);
             try {
-                // Search for ANY approved ticket in this category that HAS the same date in its description
-                // We use ILIKE because custom fields are stored in the HTML description table
-                const { data, error } = await supabase
+                // 1. Search for ANY approved ticket in this category that HAS the same date
+                const { data: ticketConflict, error: ticketError } = await supabase
                     .from('tickets')
                     .select('id, subject, description, ticket_statuses!status_id!inner(status_name)')
                     .eq('category_id', selectedCategoryId)
                     .eq('ticket_statuses.status_name', 'Approved')
                     .ilike('description', `%${dateOnly}%`);
 
-                if (error) throw error;
+                if (ticketError) throw ticketError;
 
-                // Filter specifically for "Approved" or "In Progress" type behaviors
-                // For now, let's trust "any existing confirmed order for this day"
-                if (data && data.length > 0) {
-                    // Try to find a real match in the HTML structure to avoid false positives
-                    const match = data.find(ticket => {
-                        const desc = ticket.description || '';
-                        // Looking for something like: <td>Event Date & Time</td>...<td>2024-04-14</td>
-                        return desc.includes(dateOnly);
-                    });
+                // 2. Search for ANY manual entry in calendar_events for the SAME category and SAME date
+                const { data: manualConflict, error: manualError } = await supabase
+                    .from('calendar_events')
+                    .select('id, title')
+                    .eq('category_name', selectedCategoryName)
+                    .eq('event_date', dateOnly)
+                    .limit(1);
 
+                if (manualError) throw manualError;
+
+                if (ticketConflict && ticketConflict.length > 0) {
+                    const match = ticketConflict.find(ticket => (ticket.description || '').includes(dateOnly));
                     if (match) {
-                        // Try to extract "Event Name" from the HTML description
                         let eventName = match.subject;
                         const eventNameRegex = /<td[^>]*>Event Name<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
                         const nameMatch = match.description?.match(eventNameRegex);
-                        if (nameMatch && nameMatch[1]) {
-                            eventName = nameMatch[1].trim();
-                        }
+                        if (nameMatch && nameMatch[1]) eventName = nameMatch[1].trim();
 
-                        setAvailabilityError(`⚠️ Sorry, the kitchen is FULLY BOOKED on ${dateOnly} for event: "${eventName}". Please select another date. You can check the Public Calendar on the Dashboard to see available dates.`);
-                    } else {
-                        setAvailabilityError(null);
+                        setAvailabilityError(`⚠️ Sorry, the "${selectedCategoryName}" is FULLY BOOKED on ${dateOnly} for event: "${eventName}". Please check the dashboard calendar for another date.`);
+                        return;
                     }
-                } else {
-                    setAvailabilityError(null);
                 }
+
+                if (manualConflict && manualConflict.length > 0) {
+                     setAvailabilityError(`⚠️ Sorry, the "${selectedCategoryName}" is BOOKED for an internal event: "${manualConflict[0].title}" on ${dateOnly}. Please select another date.`);
+                     return;
+                }
+
+                setAvailabilityError(null);
             } catch (err) {
                 console.error('Availability check failed:', err);
+                setAvailabilityError(null);
             } finally {
                 setIsCheckingAvailability(false);
             }

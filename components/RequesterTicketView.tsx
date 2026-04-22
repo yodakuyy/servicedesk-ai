@@ -512,7 +512,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                         {isInfoExpanded && (
                             <div className="px-6 pb-6 pt-2 border-t border-gray-100 grid md:grid-cols-2 gap-4">
                                 <InfoItem label="Ticket Number" value={ticket.ticket_number} />
-                                <InfoItem label="Created At" value={new Date(ticket.created_at).toLocaleString()} />
+                                <InfoItem label="Created At" value={new Date(ticket.created_at).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })} />
                                 <InfoItem label="Type" value={ticket.ticket_type ? ticket.ticket_type.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : '-'} />
                                 <InfoItem label="Assignment Group" value={ticket.assignment_group_id ? (ticket.group?.name || 'Assigned') : 'Queueing'} />
                                 <InfoItem label="PIC / Handled By" value={ticket.agent?.full_name || 'Waiting for Agent...'} />
@@ -601,7 +601,9 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                                     ? `Admin ${ticket.group?.company?.company_name || ticket.group?.name || 'DIT'}` 
                                                     : (msg.sender?.full_name || 'Support Agent')}
                                             </span>
-                                            <span className="text-[10px] text-slate-400 font-medium">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                            <span className="text-[10px] text-slate-400 font-medium">
+                                                {new Date(msg.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}, {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            </span>
                                             {msg.sender_role === 'requester' ? (
                                                 <span className="bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
                                                     Requester

@@ -76,6 +76,7 @@ import AllNotifications from './AllNotifications';
 import { useNotifications } from '../hooks/useNotifications';
 import { useRealtimeToast } from '../hooks/useRealtimeToast';
 import { processAutoCloseRules } from '../lib/autoClose';
+import CalendarManagement from './CalendarManagement';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -171,7 +172,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     notifications: false
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'change-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'announcement-management' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'my-notifications' | 'all-notifications' | 'access-policy' | 'create-incident' | 'reports'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'change-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'announcement-management' | 'calendar-management' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'my-notifications' | 'all-notifications' | 'access-policy' | 'create-incident' | 'reports'>('dashboard');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile' | 'user-dashboard'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
@@ -740,17 +741,37 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         }
 
         // 10. TEAM PULSE
-        let teamPulse = [];
+        let teamPulse: any[] = [];
         try {
+          // Robust Company ID detection for filtering
+          let effectiveCompanyId = userProfile?.company_id;
+          if (!effectiveCompanyId) {
+             const profileStr = localStorage.getItem('profile');
+             if (profileStr) {
+                 try {
+                     const localProfile = JSON.parse(profileStr);
+                     effectiveCompanyId = localProfile.company_id;
+                 } catch (e) {}
+             }
+          }
+
           const { data: rpcData, error: rpcError } = await supabase.rpc('get_team_pulse');
           if (rpcError) throw rpcError;
+          
           if (rpcData) {
             // Filter only agents from the current department
-            const { data: deptAgents } = await supabase.from('profiles').select('id').eq('company_id', userProfile.company_id);
+            const { data: deptAgents } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('company_id', effectiveCompanyId || 0);
+            
             const deptAgentIds = new Set(deptAgents?.map(a => a.id) || []);
 
             teamPulse = rpcData
-              .filter((agent: any) => deptAgentIds.has(agent.agent_id))
+              .filter((agent: any) => {
+                 const id = agent.agent_id || agent.id;
+                 return id && deptAgentIds.has(id);
+              })
               .map((agent: any) => {
                 const active = Number(agent.active_count);
                 const resolved = Number(agent.resolved_today_count);
@@ -763,7 +784,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                 score = Math.min(100, Math.max(0, score));
 
                 return {
-                  name: agent.full_name || agent.email || 'Unknown Agent',
+                  name: agent.full_name || agent.name || agent.email || 'Unknown Agent',
                   active: active,
                   overdue: Number(agent.overdue_count || 0),
                   resolved: resolved,
@@ -1408,6 +1429,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
     if (currentView === 'escalation-rules') {
       return <EscalationRules />;
+    }
+
+    if (currentView === 'calendar-management') {
+      return <CalendarManagement />;
     }
 
     if (currentView === 'auto-assignment') {
@@ -2181,6 +2206,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                     <div className="bg-gray-100/30 pb-1">
                       <div onClick={() => setCurrentView('portal-highlights')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'portal-highlights' ? 'text-indigo-600' : 'text-gray-500'}`}>Portal Highlights</div>
                       <div onClick={() => setCurrentView('announcement-management')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'announcement-management' ? 'text-indigo-600' : 'text-gray-500'}`}>Announcement</div>
+                      <div onClick={() => setCurrentView('calendar-management')} className={`pl-16 pr-6 py-2 text-sm cursor-pointer hover:bg-gray-100 transition-colors ${currentView === 'calendar-management' ? 'text-indigo-600' : 'text-gray-500'}`}>Calendar Entry</div>
                     </div>
                   )}
 
