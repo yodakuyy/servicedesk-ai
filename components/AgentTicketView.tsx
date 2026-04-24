@@ -116,6 +116,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
     const [now, setNow] = useState(new Date());
 
+    // --- HYBRID VIEW LOGIC ---
+    // Identify if the current agent is just a requester for the selected ticket
+    // (i.e., they created it but are not the PIC and not in the group handling it)
+    const isRequesterOnly = selectedTicket && 
+        selectedTicket.requester_id === userProfile?.id && 
+        selectedTicket.assigned_to !== userProfile?.id && 
+        !agentGroups.includes(selectedTicket.assignment_group_id);
+
     // --- REAL-TIME TICKER ---
     useEffect(() => {
         const timer = setInterval(() => {
@@ -128,10 +136,34 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
     useEffect(() => {
         if (initialTicketId && initialTicketId !== selectedTicketId) {
             setSelectedTicketId(initialTicketId);
-            // Switch to 'all' queue to ensure we can view the ticket regardless of assignment
+            // Initially set to 'all' to ensure it can be viewed, but we'll refine this once the ticket loads
             setQueueFilter('all');
         }
     }, [initialTicketId]);
+
+    // Smart Queue Switching: When a ticket is loaded via initialTicketId, 
+    // switch to the most relevant tab (Assigned vs My Tickets vs Team)
+    useEffect(() => {
+        if (selectedTicket && initialTicketId === selectedTicket.id) {
+            if (selectedTicket.assigned_to === userProfile?.id) {
+                setQueueFilter('assigned');
+            } else if (selectedTicket.requester_id === userProfile?.id) {
+                setQueueFilter('submitted');
+            } else {
+                // If I'm not the requester and not assigned, keep it in 'all' (Team)
+                setQueueFilter('all');
+            }
+        }
+    }, [selectedTicket?.id, initialTicketId]);
+
+    // Auto-collapse sidebar for 'My Tickets' for a cleaner experience
+    useEffect(() => {
+        if (queueFilter === 'submitted') {
+            setIsRightPanelOpen(false);
+        } else if (queueFilter === 'assigned') {
+            setIsRightPanelOpen(true);
+        }
+    }, [queueFilter]);
 
     // SLA Data States
     const [slaPolicies, setSlaPolicies] = useState<any[]>([]);
@@ -2999,7 +3031,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                         <div className="relative">
                                             <select
                                                 value={selectedTicket.status_id}
-                                                disabled={isUpdatingStatus || ['Closed', 'Canceled', 'Resolved'].includes(selectedTicket.ticket_statuses?.status_name) || !checkPermission('update', selectedTicket).allowed}
+                                                disabled={isUpdatingStatus || ['Closed', 'Canceled', 'Resolved'].includes(selectedTicket.ticket_statuses?.status_name) || !checkPermission('update', selectedTicket).allowed || isRequesterOnly}
                                                 onChange={(e) => handleStatusUpdate(e.target.value)}
                                                 title={!checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : ''}
                                                 className={`appearance-none pl-3 pr-8 py-1 rounded text-[10px] font-black tracking-widest uppercase border transition-all
@@ -3077,6 +3109,8 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             </div>
                             {(() => {
                                 const isTerminalStatus = selectedTicket.ticket_statuses?.is_final === true;
+                                if (isRequesterOnly) return null; // Hide all action buttons for requesters
+
                                 return (
                                     <div className="flex gap-2">
                                         <button
@@ -3375,7 +3409,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                     {/* Panel Content Area */}
                     <div className="flex-1 overflow-y-auto bg-white p-6 relative custom-scrollbar">
                         {activeTab === 'conversation' && (
-                            <div className="space-y-8 max-w-4xl mx-auto pb-10">
+                            <div className={`space-y-8 pb-10 ${isRequesterOnly ? 'max-w-full' : 'max-w-4xl mx-auto'}`}>
                                 {selectedTicket.description && (
                                     <div className="flex gap-4 group">
                                         <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-[11px] font-black flex-shrink-0 text-white shadow-lg shadow-indigo-100">
@@ -3454,7 +3488,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                         </div>
                                     </div>
                                 )}
-                                {messages.map((msg) => {
+                                {messages
+                                    .filter(m => !isRequesterOnly || !m.is_internal) // Hide internal notes from requesters
+                                    .map((msg) => {
                                     const isAgent = msg.sender_role === 'agent';
                                     const isInternal = msg.is_internal;
 
@@ -3534,7 +3570,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         )}
 
                         {activeTab === 'details' && (
-                            <div className="grid grid-cols-2 gap-x-12 gap-y-8 max-w-4xl mx-auto p-4">
+                            <div className={`grid grid-cols-2 gap-x-12 gap-y-8 p-4 ${isRequesterOnly ? 'max-w-full' : 'max-w-4xl mx-auto'}`}>
                                 <div>
                                     <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300 mb-6 border-b border-gray-100 pb-2">System Information</h4>
                                     <div className="space-y-5">
@@ -3564,7 +3600,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                         <div className="flex items-center gap-2 mt-1">
                                                             <button
                                                                 onClick={() => setIsEditingPriority(true)}
-                                                                disabled={!checkPermission('update', selectedTicket).allowed}
+                                                                disabled={!checkPermission('update', selectedTicket).allowed || isRequesterOnly}
                                                                 className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all border
                                                                     ${!checkPermission('update', selectedTicket).allowed
                                                                         ? 'text-gray-300 bg-gray-50 border-gray-100 cursor-not-allowed'
@@ -3650,7 +3686,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                             {!selectedTicket.is_category_verified && (
                                                                 <button
                                                                     onClick={handleVerifyCategory}
-                                                                    disabled={!checkPermission('update', selectedTicket).allowed}
+                                                                    disabled={!checkPermission('update', selectedTicket).allowed || isRequesterOnly}
                                                                     className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all
                                                                         ${!checkPermission('update', selectedTicket).allowed
                                                                             ? 'text-gray-300 bg-gray-100 cursor-not-allowed'
@@ -3662,7 +3698,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                                             )}
                                                             <button
                                                                 onClick={() => setIsEditingCategory(true)}
-                                                                disabled={!checkPermission('update', selectedTicket).allowed}
+                                                                disabled={!checkPermission('update', selectedTicket).allowed || isRequesterOnly}
                                                                 className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded shadow-sm transition-all border
                                                                     ${!checkPermission('update', selectedTicket).allowed
                                                                         ? 'text-gray-300 bg-gray-50 border-gray-100 cursor-not-allowed'
@@ -3825,7 +3861,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         )}
 
                         {activeTab === 'workflow' && (
-                            <div className="max-w-3xl mx-auto py-4">
+                            <div className={`py-4 ${isRequesterOnly ? 'max-w-full' : 'max-w-3xl mx-auto'}`}>
                                 <div className="space-y-8">
                                     {[
                                         { step: 'Identification', date: selectedTicket.created_at, status: 'completed', desc: 'Incident logged via Portal' },
@@ -4137,7 +4173,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             };
 
                             return (
-                                <div className="max-w-4xl mx-auto space-y-6">
+                                <div className={`space-y-6 ${isRequesterOnly ? 'max-w-full' : 'max-w-4xl mx-auto'}`}>
                                     <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 flex items-center justify-between">
                                         <div>
                                             <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">Applied SLA Policy</h4>
@@ -4287,7 +4323,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         })()}
 
                         {activeTab === 'activities' && (
-                            <div className="max-w-4xl mx-auto space-y-4">
+                            <div className={`space-y-4 ${isRequesterOnly ? 'max-w-full' : 'max-w-4xl mx-auto'}`}>
                                 {activityLogs.map((log) => {
                                     // Replace 'Customer' with 'Requester' in action text
                                     const actionText = (log.action || '').replace(/Customer/gi, 'Requester');
@@ -4357,7 +4393,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         )}
 
                         {activeTab === 'attachments' && (
-                            <div className="max-w-4xl mx-auto p-4 space-y-4">
+                            <div className={`p-4 space-y-4 ${isRequesterOnly ? 'max-w-full' : 'max-w-4xl mx-auto'}`}>
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">Attached Files</h3>
                                     {selectedTicket.ticket_statuses?.is_final !== true && (
@@ -4449,12 +4485,14 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     >
                                         Reply
                                     </button>
-                                    <button
-                                        onClick={() => setIsInternalNote(true)}
-                                        className={`text-xs font-black uppercase tracking-widest pb-3 transition-all ${isInternalNote ? 'text-amber-600 border-b-2 border-amber-600' : 'text-gray-400 hover:text-gray-500'}`}
-                                    >
-                                        Internal Note
-                                    </button>
+                                    {!isRequesterOnly && (
+                                        <button
+                                            onClick={() => setIsInternalNote(true)}
+                                            className={`text-xs font-black uppercase tracking-widest pb-3 transition-all ${isInternalNote ? 'text-amber-600 border-b-2 border-amber-600' : 'text-gray-400 hover:text-gray-500'}`}
+                                        >
+                                            Internal Note
+                                        </button>
+                                    )}
                                 </div>
 
                                 {!isInternalNote && !canPublicReply ? (
