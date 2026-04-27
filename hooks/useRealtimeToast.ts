@@ -20,6 +20,8 @@ interface RealtimeNotification {
  */
 export function useRealtimeToast(
     userId: string | null,
+    companyId?: number | null,
+    departmentName?: string | null,
     onNavigateToTicket?: (ticketId: string) => void
 ) {
     const { addToast } = useToast();
@@ -31,7 +33,7 @@ export function useRealtimeToast(
         hasSetup.current = true;
 
         const channel = supabase
-            .channel('toast-notifications')
+            .channel(`toast-notifications-${Math.random().toString(36).substring(7)}`)
             .on(
                 'postgres_changes',
                 {
@@ -41,7 +43,23 @@ export function useRealtimeToast(
                     filter: `user_id=eq.${userId}`
                 },
                 (payload) => {
-                    const newNotification = payload.new as RealtimeNotification;
+                    const newNotification = payload.new as any;
+
+                    // Filtering for department/company context
+                    if (newNotification.company_id && companyId && Number(newNotification.company_id) !== Number(companyId)) {
+                        console.log('Realtime toast skipped: Different company_id');
+                        return;
+                    }
+
+                    if (!newNotification.company_id || !companyId) {
+                        const currentDeptName = departmentName || 'DIT';
+                        if (newNotification.title.includes('[') && newNotification.title.includes(']')) {
+                            if (!newNotification.title.toLowerCase().includes(`[${currentDeptName.toLowerCase()}]`)) {
+                                console.log('Realtime toast skipped: Different department prefix');
+                                return;
+                            }
+                        }
+                    }
 
                     // Show toast
                     addToast({
@@ -74,7 +92,7 @@ export function useRealtimeToast(
             hasSetup.current = false;
             supabase.removeChannel(channel);
         };
-    }, [userId, addToast, onNavigateToTicket]);
+    }, [userId, companyId, departmentName, addToast, onNavigateToTicket]);
 }
 
 export default useRealtimeToast;

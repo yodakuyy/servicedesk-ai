@@ -15,10 +15,31 @@ export interface Notification {
     read_at: string | null;
 }
 
-export function useNotifications(userId: string | null) {
+export function useNotifications(userId: string | null, companyId?: number | null, departmentName?: string | null) {
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
     const [loading, setLoading] = useState(true);
+
+    // Filter helper for client-side legacy support
+    const filterNotification = useCallback((n: Notification) => {
+        // 1. If company_id matches exactly, show it
+        if (n.company_id && companyId && Number(n.company_id) === Number(companyId)) return true;
+        
+        // 2. For legacy notifications (null company_id or when we don't have companyId filter), filter by title prefix
+        if (!n.company_id || !companyId) {
+            const currentDeptName = departmentName || 'DIT';
+            
+            // If it has a tag like [DIT] or [Legal] but it's not our current dept, hide it
+            if (n.title.includes('[') && n.title.includes(']')) {
+                return n.title.toLowerCase().includes(`[${currentDeptName.toLowerCase()}]`);
+            }
+            
+            // If no tag and no company_id, show it (global/default)
+            return true;
+        }
+        
+        return false;
+    }, [companyId, departmentName]);
 
     // Reset read notifications from previous days
     const resetDailyNotifications = useCallback(async () => {
@@ -45,32 +66,34 @@ export function useNotifications(userId: string | null) {
 
         try {
             // Fetch the list of notifications (limited)
-            const { data, error } = await supabase
+            let query = supabase
                 .from('notifications')
                 .select('*')
-                .eq('user_id', userId)
+                .eq('user_id', userId);
+            
+            // Optional: If we want to filter at DB level for performance, but careful with legacy
+            // .or(`company_id.eq.${companyId},company_id.is.null`)
+            
+            const { data, error } = await query
                 .order('created_at', { ascending: false })
-                .limit(50);
+                .limit(100); // Fetch more to allow client-side filtering
 
             if (error) throw error;
 
-            // Fetch the ACTUAL total unread count from DB
-            const { count, error: countError } = await supabase
-                .from('notifications')
-                .select('*', { count: 'exact', head: true })
-                .eq('user_id', userId)
-                .eq('is_read', false);
-
-            if (countError) throw countError;
-
-            setNotifications(data || []);
-            setUnreadCount(count || 0);
+            // Apply client-side filtering for department separation
+            const filteredData = (data || []).filter(filterNotification);
+            
+            setNotifications(filteredData.slice(0, 50));
+            
+            // Count unread from filtered data
+            const unread = filteredData.filter(n => !n.is_read).length;
+            setUnreadCount(unread);
         } catch (error) {
             console.error('Error fetching notifications:', error);
         } finally {
             setLoading(false);
         }
-    }, [userId]);
+    }, [userId, filterNotification]);
 
     // Mark notification as read
     const markAsRead = useCallback(async (notificationId: string) => {
@@ -96,22 +119,28 @@ export function useNotifications(userId: string | null) {
         if (!userId) return;
 
         try {
+            // Update all notifications for this user in DB
+            // But we should only mark as read the ones that are VISIBLE in this department context
+            // To be precise, we filter by IDs of visible unread notifications
+            const unreadIds = notifications.filter(n => !n.is_read).map(n => n.id);
+            
+            if (unreadIds.length === 0) return;
+
             const { error } = await supabase
                 .from('notifications')
                 .update({ is_read: true, read_at: new Date().toISOString() })
-                .eq('user_id', userId)
-                .eq('is_read', false);
+                .in('id', unreadIds);
 
             if (error) throw error;
 
             setNotifications(prev =>
-                prev.map(n => ({ ...n, is_read: true, read_at: new Date().toISOString() }))
+                prev.map(n => unreadIds.includes(n.id) ? { ...n, is_read: true, read_at: new Date().toISOString() } : n)
             );
             setUnreadCount(0);
         } catch (error) {
             console.error('Error marking all as read:', error);
         }
-    }, [userId]);
+    }, [userId, notifications]);
 
     // Delete notification
     const deleteNotification = useCallback(async (notificationId: string) => {
@@ -139,10 +168,13 @@ export function useNotifications(userId: string | null) {
         if (!userId) return;
 
         try {
+            const visibleIds = notifications.map(n => n.id);
+            if (visibleIds.length === 0) return;
+
             const { error } = await supabase
                 .from('notifications')
                 .delete()
-                .eq('user_id', userId);
+                .in('id', visibleIds);
 
             if (error) throw error;
 
@@ -151,7 +183,7 @@ export function useNotifications(userId: string | null) {
         } catch (error) {
             console.error('Error clearing notifications:', error);
         }
-    }, [userId]);
+    }, [userId, notifications]);
 
     // Initial fetch with daily reset
     useEffect(() => {
@@ -169,7 +201,7 @@ export function useNotifications(userId: string | null) {
         if (!userId) return;
 
         const channel = supabase
-            .channel('notifications-realtime')
+            .channel(`notifications-realtime-${Math.random().toString(36).substring(7)}`)
             .on(
                 'postgres_changes',
                 {
@@ -179,8 +211,15 @@ export function useNotifications(userId: string | null) {
                     filter: `user_id=eq.${userId}`
                 },
                 (payload) => {
-                    console.log('New notification received:', payload);
                     const newNotification = payload.new as Notification;
+                    
+                    // Filter before adding to state
+                    if (!filterNotification(newNotification)) {
+                        console.log('New notification skipped (different department):', newNotification);
+                        return;
+                    }
+
+                    console.log('New notification received for this department:', payload);
                     setNotifications(prev => [newNotification, ...prev]);
                     setUnreadCount(prev => prev + 1);
 
@@ -206,17 +245,21 @@ export function useNotifications(userId: string | null) {
                     const updatedNotification = payload.new as Notification;
                     const oldNotification = payload.old as Notification;
 
-                    setNotifications(prev =>
-                        prev.map(n => n.id === updatedNotification.id ? updatedNotification : n)
-                    );
+                    // If it was visible or is now visible, update it
+                    if (filterNotification(updatedNotification)) {
+                        setNotifications(prev =>
+                            prev.map(n => n.id === updatedNotification.id ? updatedNotification : n)
+                        );
 
-                    // Update unread count if is_read status changed
-                    if (!oldNotification.is_read && updatedNotification.is_read) {
-                        // Was unread, now read -> decrease count
-                        setUnreadCount(prev => Math.max(0, prev - 1));
-                    } else if (oldNotification.is_read && !updatedNotification.is_read) {
-                        // Was read, now unread -> increase count
-                        setUnreadCount(prev => prev + 1);
+                        // Update unread count if is_read status changed
+                        if (!oldNotification.is_read && updatedNotification.is_read) {
+                            setUnreadCount(prev => Math.max(0, prev - 1));
+                        } else if (oldNotification.is_read && !updatedNotification.is_read) {
+                            setUnreadCount(prev => prev + 1);
+                        }
+                    } else {
+                        // If it's no longer visible (e.g. company changed), remove it
+                        setNotifications(prev => prev.filter(n => n.id !== updatedNotification.id));
                     }
                 }
             )
@@ -243,7 +286,7 @@ export function useNotifications(userId: string | null) {
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [userId]);
+    }, [userId, filterNotification]);
 
     return {
         notifications,

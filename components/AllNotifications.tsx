@@ -24,11 +24,13 @@ import {
 
 interface AllNotificationsProps {
     userId: string | null;
+    companyId?: number | null;
+    departmentName?: string | null;
     onBack: () => void;
     onNavigateTicket: (id: string, companyId?: number | null) => void;
 }
 
-const AllNotifications: React.FC<AllNotificationsProps> = ({ userId, onBack, onNavigateTicket }) => {
+const AllNotifications: React.FC<AllNotificationsProps> = ({ userId, companyId, departmentName, onBack, onNavigateTicket }) => {
     const {
         notifications,
         unreadCount,
@@ -37,7 +39,7 @@ const AllNotifications: React.FC<AllNotificationsProps> = ({ userId, onBack, onN
         markAllAsRead,
         deleteNotification,
         clearAll
-    } = useNotifications(userId);
+    } = useNotifications(userId, companyId, departmentName);
 
     const [filter, setFilter] = React.useState<'all' | 'unread'>('all');
     const [searchQuery, setSearchQuery] = React.useState('');

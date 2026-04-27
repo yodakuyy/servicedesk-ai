@@ -319,9 +319,11 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
                         .select(`
                             id, subject, description, category_id, 
                             ticket_statuses!status_id!inner(status_name),
-                            requester:profiles!requester_id(full_name)
+                            requester:profiles!requester_id(full_name),
+                            ticket_categories!category_id!inner(company_id)
                         `)
-                        .in('category_id', catIds);
+                        .in('category_id', catIds)
+                        .or(`company_id.eq.${companyId},company_id.is.null`, { foreignTable: 'ticket_categories' });
 
                     const approvedTickets = calTickets?.filter(t => {
                         const status = (t.ticket_statuses as any)?.status_name?.toLowerCase();
@@ -389,11 +391,17 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
 
                 // 2. FETCH MANUAL EVENTS
                 console.log("UserDashboard: Fetching manual events...");
-                const { data: manualEvents, error: manualErr } = await supabase
+                let manualEventsQuery = supabase
                     .from('calendar_events')
                     .select('*')
                     .or('is_public.eq.true,is_public.is.null')
                     .gte('event_date', new Date().toISOString().split('T')[0]);
+
+                if (companyId) {
+                    manualEventsQuery = manualEventsQuery.or(`company_id.eq.${companyId},company_id.is.null`);
+                }
+
+                const { data: manualEvents, error: manualErr } = await manualEventsQuery;
 
                 if (manualErr) {
                     console.error("UserDashboard: Manual events fetch error:", manualErr);

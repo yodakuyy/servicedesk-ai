@@ -241,32 +241,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   const [isCalendarLoading, setIsCalendarLoading] = useState(false);
   const [showAllEvents, setShowAllEvents] = useState(false);
 
-  // Shared notification state - single source of truth
-  const { notifications: allNotifications, markAsRead, markAllAsRead, deleteNotification, clearAll } = useNotifications(userProfile?.id);
-
-  // Filter notifications by current department
-  const notifications = allNotifications.filter(n => {
-    // 1. If company_id matches exactly, show it
-    if (n.company_id && Number(n.company_id) === Number(userProfile?.company_id)) return true;
-    
-    // 2. For legacy notifications (null company_id), filter by title prefix
-    if (!n.company_id) {
-      const currentDeptName = userProfile?.company_name || 'DIT';
-      
-      // If it has a tag like [DIT] or [Legal] but it's not our current dept, hide it
-      if (n.title.includes('[') && n.title.includes(']')) {
-        return n.title.toLowerCase().includes(`[${currentDeptName.toLowerCase()}]`);
-      }
-      
-      // If no tag and no company_id, show only in home department to be safe
-      return true;
-    }
-    
-    return false;
-  });
-  
-  // Calculate unread count only for the current department
-  const unreadCount = notifications.filter(n => !n.is_read).length;
+  // Shared notification state - single source of truth - now filtered by department within the hook
+  const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll } = useNotifications(
+    userProfile?.id, 
+    userProfile?.company_id,
+    userProfile?.company_name
+  );
 
   // Handle initial view prop changes (Deep Linking)
   useEffect(() => {
@@ -276,10 +256,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
   }, [initialView]);
 
   // Enable realtime toast notifications
-  useRealtimeToast(userProfile?.id, (ticketId) => {
-    setSelectedTicketId(ticketId);
-    setCurrentView('incidents');
-  });
+  useRealtimeToast(
+    userProfile?.id, 
+    userProfile?.company_id,
+    userProfile?.company_name,
+    (ticketId) => {
+      setSelectedTicketId(ticketId);
+      setCurrentView('incidents');
+    }
+  );
 
   // Global navigation listener for child components (e.g. Checklist deep-links)
   useEffect(() => {
@@ -392,47 +377,52 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           return;
         }
 
-        // Fetch current department groups for filtering
-        const { data: deptGroups } = await supabase.from('groups').select('id').eq('company_id', userProfile.company_id);
+        // 0. Parallel Fetching for core data (Statuses, Groups, Business Hours)
+        const [
+          allStatusesRes,
+          deptGroupsRes,
+          holidaysRes,
+          bhRes
+        ] = await Promise.all([
+          supabase.from('ticket_statuses').select('status_id, status_name, sla_behavior, is_final'),
+          supabase.from('groups').select('id').eq('company_id', userProfile.company_id),
+          supabase.from('holidays').select('holiday_date'),
+          supabase.from('business_hours').select('id, weekly_schedule')
+        ]);
+
+        const allStatuses = allStatusesRes.data || [];
+        const deptGroups = deptGroupsRes.data || [];
+        const dashHolidays = holidaysRes.data || [];
+        const dashBusinessHours = bhRes.data || [];
         const allDeptGroupIds = deptGroups?.map(g => g.id) || [];
 
         let myGroupIds: string[] = [];
         if (isDeptAdmin && userProfile.company_id) {
-          // Department Admins are restricted to their specific department's groups
           myGroupIds = allDeptGroupIds;
         } else if (isAgent || isSupervisor) {
-          // Agents and Supervisors see only their assigned groups, but within the current department
           const { data: groups } = await supabase.from('user_groups').select('group_id').eq('user_id', userProfile.id);
           if (groups) {
             myGroupIds = groups.map(g => g.group_id).filter(id => allDeptGroupIds.includes(id));
           }
-        } else if (isSuperAdmin) {
-          // Super Admins see everything - we leave myGroupIds empty to skip .in() filtering in some queries, 
-          // or we handle null if preferred. Here we'll use empty and conditional queries.
-          myGroupIds = [];
         }
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-        // 0. Fetch All Statuses for filtering (including sla_behavior and is_final for dynamic detection)
-        const { data: allStatuses } = await supabase.from('ticket_statuses').select('status_id, status_name, sla_behavior, is_final');
-
-        // 1. Get Status IDs for "Open" definition (Open + In Progress only)
         const openStatusIds = allStatuses
           ?.filter(s => ['open', 'in progress'].includes(s.status_name.toLowerCase()))
           .map(s => s.status_id) || [];
 
-        // 1.5 Get Pending/Waiting Status IDs (dynamically from sla_behavior = 'pause')
         const pendingStatusIds = allStatuses
           ?.filter(s => s.sla_behavior === 'pause')
           .map(s => s.status_id) || [];
 
-        // 2. Get All Active Status IDs (Excluding terminal statuses: sla_behavior='stop' or is_final=true)
         const activeStatusIds = allStatuses
           ?.filter(s => s.sla_behavior !== 'stop' && !s.is_final)
           .map(s => s.status_id) || [];
 
-        // 2. NEW TICKETS (Last 7 days)
+        // 1. Prepare All Parallel Ticket Queries
+        const midNight = new Date(); midNight.setHours(0, 0, 0, 0);
+        const sevenDaysAgoDate = new Date(); sevenDaysAgoDate.setDate(sevenDaysAgoDate.getDate() - 6);
+        const fourHoursAgo = new Date(); fourHoursAgo.setHours(fourHoursAgo.getHours() - 4);
+        
         let newTicketsQuery = supabase
           .from('tickets')
           .select(`
@@ -448,18 +438,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         if (isAgent) {
           newTicketsQuery = newTicketsQuery.eq('assigned_to', userProfile.id);
         } else {
-          newTicketsQuery = newTicketsQuery.gte('created_at', sevenDaysAgo.toISOString());
-          if (myGroupIds.length > 0) {
-            newTicketsQuery = newTicketsQuery.in('assignment_group_id', myGroupIds);
-          } else if (!isSuperAdmin && userProfile.company_id) {
-            // If not Super Admin and we have a company but no specific groups (shouldn't happen for agents usually)
-            // we might still want a safety filter, but for Super Admin we avoid it.
-            newTicketsQuery = newTicketsQuery.in('assignment_group_id', allDeptGroupIds);
-          }
+          newTicketsQuery = newTicketsQuery.gte('created_at', sevenDaysAgoDate.toISOString());
+          if (myGroupIds.length > 0) newTicketsQuery = newTicketsQuery.in('assignment_group_id', myGroupIds);
+          else if (!isSuperAdmin && userProfile.company_id) newTicketsQuery = newTicketsQuery.in('assignment_group_id', allDeptGroupIds);
         }
-        const { data: newTickets } = await newTicketsQuery;
 
-        // 3. TEAM/MY OPEN TICKETS (Specifically Open & In Progress)
         let openTicketsQuery = supabase
           .from('tickets')
           .select(`
@@ -469,19 +452,130 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           `)
           .in('status_id', openStatusIds)
           .order('created_at', { ascending: false });
-
         if (isAgent) openTicketsQuery = openTicketsQuery.eq('assigned_to', userProfile.id);
         else if (myGroupIds.length > 0) openTicketsQuery = openTicketsQuery.in('assignment_group_id', myGroupIds);
-        const { data: openTicketsFullList } = await openTicketsQuery;
 
-        // 4. OVERDUE TICKETS (Business Hours + Holidays Aware)
-        // Fetch holidays and business hours for proper calculation
-        const [holidaysRes, bhRes] = await Promise.all([
-          supabase.from('holidays').select('holiday_date'),
-          supabase.from('business_hours').select('id, weekly_schedule')
+        let overdueQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, subject, priority, created_at, updated_at, total_paused_minutes, paused_at,
+            assignment_group_id,
+            requester:profiles!fk_tickets_requester(full_name),
+            assigned_agent:profiles!fk_tickets_assigned_agent(full_name),
+            group:groups!assignment_group_id(business_hour_id, business_hours(weekly_schedule))
+          `)
+          .in('status_id', activeStatusIds.filter(id => !pendingStatusIds.includes(id)))
+          .lt('created_at', fourHoursAgo.toISOString())
+          .order('created_at', { ascending: true });
+        if (isAgent) overdueQuery = overdueQuery.eq('assigned_to', userProfile.id);
+        else if (myGroupIds.length > 0) overdueQuery = overdueQuery.in('assignment_group_id', myGroupIds);
+
+        let unassignedQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, subject, priority, created_at,
+            requester:profiles!fk_tickets_requester(full_name)
+          `)
+          .is('assigned_to', null)
+          .in('status_id', activeStatusIds)
+          .order('created_at', { ascending: false });
+        if (myGroupIds.length > 0) unassignedQuery = unassignedQuery.in('assignment_group_id', myGroupIds);
+
+        let pendingQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, subject, priority, created_at,
+            requester:profiles!fk_tickets_requester(full_name),
+            assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
+          `)
+          .in('status_id', pendingStatusIds);
+        if (isAgent) pendingQuery = pendingQuery.eq('assigned_to', userProfile.id);
+        else if (myGroupIds.length > 0) pendingQuery = pendingQuery.in('assignment_group_id', myGroupIds);
+
+        let resolvedQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, subject, priority, created_at, updated_at,
+            requester:profiles!fk_tickets_requester(full_name),
+            assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
+          `)
+          .in('status_id', allStatuses.filter(s => ['Resolved', 'Closed'].includes(s.status_name)).map(s => s.status_id))
+          .gte('updated_at', midNight.toISOString())
+          .order('updated_at', { ascending: false });
+        if (isAgent) resolvedQuery = resolvedQuery.eq('assigned_to', userProfile.id);
+        else if (myGroupIds.length > 0) resolvedQuery = resolvedQuery.in('assignment_group_id', myGroupIds);
+
+        let satisfactionQuery = supabase
+          .from('tickets')
+          .select(`
+            id, ticket_number, satisfaction_rating, user_feedback, updated_at,
+            requester:profiles!fk_tickets_requester(full_name)
+          `)
+          .not('satisfaction_rating', 'is', null)
+          .order('updated_at', { ascending: false });
+        if (isAgent) satisfactionQuery = satisfactionQuery.eq('assigned_to', userProfile.id);
+        else if (myGroupIds.length > 0) satisfactionQuery = satisfactionQuery.in('assignment_group_id', myGroupIds);
+
+        let incidentQuery = supabase
+          .from('tickets')
+          .select('category_id, ticket_categories(name)')
+          .eq('ticket_type', 'incident');
+        if (isAgent) incidentQuery = incidentQuery.eq('assigned_to', userProfile.id);
+        else if (myGroupIds.length > 0) incidentQuery = incidentQuery.in('assignment_group_id', myGroupIds);
+
+        let srQuery = supabase
+          .from('tickets')
+          .select('category_id, ticket_categories(name)')
+          .eq('ticket_type', 'service_request');
+        if (isAgent) srQuery = srQuery.eq('assigned_to', userProfile.id);
+        else if (myGroupIds.length > 0) srQuery = srQuery.in('assignment_group_id', myGroupIds);
+
+        let trendQuery = supabase
+          .from('tickets')
+          .select('created_at, ticket_type')
+          .gte('created_at', sevenDaysAgoDate.toISOString().split('T')[0]);
+        if (isAgent) trendQuery = trendQuery.eq('assigned_to', userProfile.id);
+        else if (myGroupIds.length > 0) trendQuery = trendQuery.in('assignment_group_id', myGroupIds);
+
+        // 2. Execute All Queries in Parallel
+        const [
+          newTicketsRes,
+          openTicketsRes,
+          overdueRes,
+          unassignedRes,
+          pendingRes,
+          resolvedRes,
+          satisfactionRes,
+          incidentCatRes,
+          srCatRes,
+          trendRes
+        ] = await Promise.all([
+          newTicketsQuery,
+          openTicketsQuery,
+          overdueQuery,
+          unassignedQuery,
+          pendingQuery,
+          resolvedQuery,
+          satisfactionQuery,
+          incidentQuery,
+          srQuery,
+          trendQuery
         ]);
-        const dashHolidays = holidaysRes.data || [];
-        const dashBusinessHours = bhRes.data || [];
+
+        // 3. Team Pulse (Keep separate for better error isolation)
+        const { data: rpcData, error: rpcError } = await supabase.rpc('get_team_pulse');
+
+        const newTickets = newTicketsRes.data;
+        const openTicketsFullList = openTicketsRes.data;
+        const potentialOverdue = overdueRes.data;
+        const unassignedTicketsFullList = unassignedRes.data;
+        const pendingTicketsFullList = pendingRes.data;
+        const resolvedTicketsFullList = resolvedRes.data;
+        const satisfactionData = satisfactionRes.data;
+        const incidentCategories = incidentCatRes.data;
+        const srCategories = srCatRes.data;
+        const trendTickets = trendRes.data;
+
         const defaultSchedule = dashBusinessHours.length > 0 ? dashBusinessHours[0].weekly_schedule : null;
 
         // Helper: Calculate business elapsed minutes (same logic as AgentTicketView)
@@ -532,192 +626,58 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           return Math.floor(elapsedMinutes);
         };
 
-        const fourHoursAgo = new Date();
-        fourHoursAgo.setHours(fourHoursAgo.getHours() - 4);
-
-        let overdueQuery = supabase
-          .from('tickets')
-          .select(`
-            id, ticket_number, subject, priority, created_at, updated_at, total_paused_minutes, paused_at,
-            assignment_group_id,
-            requester:profiles!fk_tickets_requester(full_name),
-            assigned_agent:profiles!fk_tickets_assigned_agent(full_name),
-            group:groups!assignment_group_id(business_hour_id, business_hours(weekly_schedule))
-          `)
-          // Exclude Pending/Waiting tickets from Overdue
-          .in('status_id', activeStatusIds.filter(id => !pendingStatusIds.includes(id)))
-          .lt('created_at', fourHoursAgo.toISOString())
-          .order('created_at', { ascending: true });
-
-        if (isAgent) overdueQuery = overdueQuery.eq('assigned_to', userProfile.id);
-        else if (myGroupIds.length > 0) overdueQuery = overdueQuery.in('assignment_group_id', myGroupIds);
-        const { data: potentialOverdue } = await overdueQuery;
-
         // Filter based on Priority SLA using BUSINESS HOURS (not wall clock)
         const overdueTicketsFullList = (potentialOverdue || []).filter((t: any) => {
           const created = new Date(t.created_at);
           const now = new Date();
-
-          // Get the group's business hours schedule, or use default
           const groupSchedule = t.group?.business_hours?.[0]?.weekly_schedule || 
                                 t.group?.business_hours?.weekly_schedule || 
                                 defaultSchedule;
-
-          // Calculate business elapsed minutes (holidays + business hours aware)
           let activeMinutes = calcBusinessElapsed(created, now, groupSchedule);
-
-          // Subtract paused time
           const pausedMinutes = t.total_paused_minutes || 0;
           activeMinutes = Math.max(0, activeMinutes - pausedMinutes);
-
-          // If currently paused, subtract current pause duration
           if (t.paused_at) {
             const pausedSince = new Date(t.paused_at);
             const currentPauseMinutes = calcBusinessElapsed(pausedSince, now, groupSchedule);
             activeMinutes = Math.max(0, activeMinutes - currentPauseMinutes);
           }
-
           const activeHours = activeMinutes / 60;
-
-          // SLA Map (Hours)
-          let limit = 24; // Default Fallback
+          let limit = 24; 
           const p = (t.priority || '').toLowerCase();
-
           if (p.includes('urgent') || p.includes('critical')) limit = 4;
           else if (p.includes('high')) limit = 8;
-          else if (p.includes('medium')) limit = 48; // 2 Days
-          else if (p.includes('low')) limit = 120; // 5 Days
-
+          else if (p.includes('medium')) limit = 48; 
+          else if (p.includes('low')) limit = 120; 
           return activeHours > limit;
         });
 
-        // 5. UNASSIGNED TICKETS
-        let unassignedQuery = supabase
-          .from('tickets')
-          .select(`
-            id, ticket_number, subject, priority, created_at,
-            requester:profiles!fk_tickets_requester(full_name)
-          `)
-          .is('assigned_to', null)
-          .in('status_id', activeStatusIds)
-          .order('created_at', { ascending: false });
-
-        // Filter Unassigned by Group
-        if (myGroupIds.length > 0) {
-          unassignedQuery = unassignedQuery.in('assignment_group_id', myGroupIds);
-        }
-        const { data: unassignedTicketsFullList } = await unassignedQuery;
-
-        // 5.5 PENDING TICKETS (Full List for Modal)
-        let pendingQuery = supabase
-          .from('tickets')
-          .select(`
-            id, ticket_number, subject, priority, created_at,
-            requester:profiles!fk_tickets_requester(full_name),
-            assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
-          `)
-          .in('status_id', pendingStatusIds);
-        if (isAgent) pendingQuery = pendingQuery.eq('assigned_to', userProfile.id);
-        else if (myGroupIds.length > 0) pendingQuery = pendingQuery.in('assignment_group_id', myGroupIds);
-        const { data: pendingTicketsFullList } = await pendingQuery;
         const pendingCount = pendingTicketsFullList?.length || 0;
-
-        // 6. RESOLVED TODAY (Full List)
-        const midNight = new Date(); midNight.setHours(0, 0, 0, 0);
-        let resolvedQuery = supabase
-          .from('tickets')
-          .select(`
-            id, ticket_number, subject, priority, created_at, updated_at,
-            requester:profiles!fk_tickets_requester(full_name),
-            assigned_agent:profiles!fk_tickets_assigned_agent(full_name)
-          `)
-          .in('status_id', (
-            await supabase.from('ticket_statuses').select('status_id').in('status_name', ['Resolved', 'Closed'])
-          ).data?.map(s => s.status_id) || [])
-          .gte('updated_at', midNight.toISOString())
-          .order('updated_at', { ascending: false });
-
-        if (isAgent) resolvedQuery = resolvedQuery.eq('assigned_to', userProfile.id);
-        else if (myGroupIds.length > 0) resolvedQuery = resolvedQuery.in('assignment_group_id', myGroupIds);
-        const { data: resolvedTicketsFullList } = await resolvedQuery;
-
-        // 7. SATISFACTION REVIEWS
-        let satisfactionQuery = supabase
-          .from('tickets')
-          .select(`
-            id, ticket_number, satisfaction_rating, user_feedback, updated_at,
-            requester:profiles!fk_tickets_requester(full_name)
-          `)
-          .not('satisfaction_rating', 'is', null)
-          .order('updated_at', { ascending: false });
-
-        if (isAgent) satisfactionQuery = satisfactionQuery.eq('assigned_to', userProfile.id);
-        else if (myGroupIds.length > 0) satisfactionQuery = satisfactionQuery.in('assignment_group_id', myGroupIds);
-
-        const { data: satisfactionData } = await satisfactionQuery;
-
         const satisfactionReviewsList = satisfactionData || [];
         const avgSatisfaction = satisfactionReviewsList.length
           ? (satisfactionReviewsList.reduce((acc, curr) => acc + (curr.satisfaction_rating || 0), 0) / satisfactionReviewsList.length).toFixed(1)
           : "0.0";
-
-        // 8. TOP CATEGORIES
-        let incidentQuery = supabase
-          .from('tickets')
-          .select('category_id, ticket_categories(name)')
-          .eq('ticket_type', 'incident');
-
-        if (isAgent) incidentQuery = incidentQuery.eq('assigned_to', userProfile.id);
-        else if (myGroupIds.length > 0) incidentQuery = incidentQuery.in('assignment_group_id', myGroupIds);
-
-        const { data: incidentCategories } = await incidentQuery;
 
         const categoryCount: Record<string, number> = {};
         incidentCategories?.forEach(t => {
           const catName = (t.ticket_categories as any)?.name || 'Uncategorized';
           categoryCount[catName] = (categoryCount[catName] || 0) + 1;
         });
-
         const colors = ['#ef4444', '#f97316', '#eab308', '#06b6d4', '#6366f1'];
         const topIncidents = Object.entries(categoryCount)
           .sort((a, b) => b[1] - a[1])
           .slice(0, 5)
           .map(([name, count], i) => ({ name, count, fill: colors[i] || '#9ca3af' }));
 
-        let srQuery = supabase
-          .from('tickets')
-          .select('category_id, ticket_categories(name)')
-          .eq('ticket_type', 'service_request');
-
-        if (isAgent) srQuery = srQuery.eq('assigned_to', userProfile.id);
-        else if (myGroupIds.length > 0) srQuery = srQuery.in('assignment_group_id', myGroupIds);
-
-        const { data: srCategories } = await srQuery;
-
         const srCategoryCount: Record<string, number> = {};
         srCategories?.forEach(t => {
           const catName = (t.ticket_categories as any)?.name || 'Uncategorized';
           srCategoryCount[catName] = (srCategoryCount[catName] || 0) + 1;
         });
-
         const srColors = ['#3b82f6', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b'];
         const topSR = Object.entries(srCategoryCount)
           .sort((a, b) => b[1] - a[1])
           .slice(0, 5)
           .map(([name, count], i) => ({ name, count, fill: srColors[i] || '#9ca3af' }));
-
-        // 9. WEEKLY TREND
-        const sevenDaysAgoDate = new Date();
-        sevenDaysAgoDate.setDate(sevenDaysAgoDate.getDate() - 6);
-        let trendQuery = supabase
-          .from('tickets')
-          .select('created_at, ticket_type')
-          .gte('created_at', sevenDaysAgoDate.toISOString().split('T')[0]);
-
-        if (isAgent) trendQuery = trendQuery.eq('assigned_to', userProfile.id);
-        else if (myGroupIds.length > 0) trendQuery = trendQuery.in('assignment_group_id', myGroupIds);
-
-        const { data: trendTickets } = await trendQuery;
 
         const weeklyTrendMap: Record<string, { incidents: number; requests: number }> = {};
         const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -747,7 +707,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           });
         }
 
-        // 10. TEAM PULSE
+        // 10. TEAM PULSE logic continues...
         let teamPulse: any[] = [];
         try {
           // Robust Company ID detection for filtering
@@ -762,22 +722,37 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
              }
           }
 
-          const { data: rpcData, error: rpcError } = await supabase.rpc('get_team_pulse');
-          if (rpcError) throw rpcError;
-          
           if (rpcData) {
-            // Filter only agents from the current department
-            const { data: deptAgents } = await supabase
-              .from('profiles')
-              .select('id')
-              .eq('company_id', effectiveCompanyId || 0);
+            // Filter only agents who belong to the user's groups (unless Super Admin)
+            let agentIdsForPulse: Set<string>;
             
-            const deptAgentIds = new Set(deptAgents?.map(a => a.id) || []);
+            if (isSuperAdmin || (isAdmin && !isDeptAdmin)) {
+              // Super Admins see all agents in the department
+              const { data: deptAgents } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('company_id', effectiveCompanyId || 0);
+              agentIdsForPulse = new Set(deptAgents?.map(a => a.id) || []);
+            } else if (myGroupIds.length > 0) {
+              // Supervisors and Agents see only their groups
+              const { data: groupAgents } = await supabase
+                .from('user_groups')
+                .select('user_id')
+                .in('group_id', myGroupIds);
+              agentIdsForPulse = new Set(groupAgents?.map(a => a.user_id) || []);
+            } else {
+              // Fallback to department agents if no groups defined
+              const { data: deptAgents } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('company_id', effectiveCompanyId || 0);
+              agentIdsForPulse = new Set(deptAgents?.map(a => a.id) || []);
+            }
 
             teamPulse = rpcData
               .filter((agent: any) => {
                  const id = agent.agent_id || agent.id;
-                 return id && deptAgentIds.has(id);
+                 return id && agentIdsForPulse.has(id);
               })
               .map((agent: any) => {
                 const active = Number(agent.active_count);
@@ -804,8 +779,40 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
           }
         } catch (err) { console.error("Team Pulse RPC failed", err); }
 
-        if (teamPulse.length === 0) {
-          teamPulse = [{ name: 'Data Belum Tersedia', active: 0, resolved: 0, status: 'Free', score: 100, isSPV: false }];
+        // 11. Calculate Trend Percentage
+        const now = new Date();
+        const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+        let queryA = supabase
+          .from('tickets')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', twentyFourHoursAgo.toISOString());
+
+        if (isAgent) queryA = queryA.eq('assigned_to', userProfile.id);
+        else if (myGroupIds.length > 0) queryA = queryA.in('assignment_group_id', myGroupIds);
+
+        const { count: countA } = await queryA;
+
+        let queryB = supabase
+          .from('tickets')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', fortyEightHoursAgo.toISOString())
+          .lt('created_at', twentyFourHoursAgo.toISOString());
+
+        if (isAgent) queryB = queryB.eq('assigned_to', userProfile.id);
+        else if (myGroupIds.length > 0) queryB = queryB.in('assignment_group_id', myGroupIds);
+
+        const { count: countB } = await queryB;
+
+        const valA = countA || 0;
+        const valB = countB || 0;
+        let trendPercentage = "0%";
+        if (valB === 0) {
+          trendPercentage = valA > 0 ? `+${valA * 100}%` : "0%";
+        } else {
+          const diff = ((valA - valB) / valB) * 100;
+          trendPercentage = `${diff >= 0 ? '+' : ''}${diff.toFixed(0)}%`;
         }
 
         setDashboardData({
@@ -825,41 +832,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
             unassigned: unassignedTicketsFullList?.length || 0,
             pending: pendingCount || 0,
             satisfaction: avgSatisfaction,
-            trend: await (async () => {
-              const now = new Date();
-              const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-              const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-
-              let queryA = supabase
-                .from('tickets')
-                .select('*', { count: 'exact', head: true })
-                .gte('created_at', twentyFourHoursAgo.toISOString());
-
-              if (isAgent) queryA = queryA.eq('assigned_to', userProfile.id);
-              else if (myGroupIds.length > 0) queryA = queryA.in('assignment_group_id', myGroupIds);
-
-              const { count: countA } = await queryA;
-
-              let queryB = supabase
-                .from('tickets')
-                .select('*', { count: 'exact', head: true })
-                .gte('created_at', fortyEightHoursAgo.toISOString())
-                .lt('created_at', twentyFourHoursAgo.toISOString());
-
-              if (isAgent) queryB = queryB.eq('assigned_to', userProfile.id);
-              else if (myGroupIds.length > 0) queryB = queryB.in('assignment_group_id', myGroupIds);
-
-              const { count: countB } = await queryB;
-
-              const valA = countA || 0;
-              const valB = countB || 0;
-              if (valB === 0) return valA > 0 ? `+${valA * 100}%` : "0%";
-              const diff = ((valA - valB) / valB) * 100;
-              return `${diff >= 0 ? '+' : ''}${diff.toFixed(0)}%`;
-            })()
+            trend: trendPercentage
           },
           weeklyTrend,
-          teamPulse
+          teamPulse: teamPulse.length > 0 ? teamPulse : [{ name: 'Data Belum Tersedia', active: 0, resolved: 0, status: 'Free', score: 100, isSPV: false }]
         });
 
       } catch (error) {
@@ -988,7 +964,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         // 1. FETCH TICKET-BASED EVENTS
         const { data: allTickets } = await supabase
           .from('tickets')
-          .select('id, subject, description, ticket_statuses!status_id!inner(status_name), requester:requester_id(full_name)');
+          .select(`
+            id, subject, description, ticket_statuses!status_id!inner(status_name), 
+            requester:requester_id(full_name),
+            ticket_categories!category_id!inner(company_id)
+          `)
+          .or(`company_id.eq.${userProfile?.company_id},company_id.is.null`, { foreignTable: 'ticket_categories' });
         
         if (allTickets) {
           allTickets.forEach(t => {
@@ -1052,11 +1033,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         }
 
         // 2. FETCH MANUAL EVENTS
-        const { data: manualEvents } = await supabase
+        let manualEventsQuery = supabase
           .from('calendar_events')
           .select('*, profiles:created_by(full_name)')
           .or('is_public.eq.true,is_public.is.null')
           .gte('event_date', new Date().toISOString().split('T')[0]);
+
+        if (userProfile?.company_id) {
+          manualEventsQuery = manualEventsQuery.or(`company_id.eq.${userProfile.company_id},company_id.is.null`);
+        }
+
+        const { data: manualEvents } = await manualEventsQuery;
 
         if (manualEvents) {
           manualEvents.forEach(me => {
@@ -1570,6 +1557,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
       return (
         <AllNotifications
           userId={userProfile?.id}
+          companyId={userProfile?.company_id}
+          departmentName={userProfile?.company_name}
           onBack={() => setCurrentView('dashboard')}
           onNavigateTicket={async (refId, targetDeptId) => {
             // Check if the ticket belongs to a different department
