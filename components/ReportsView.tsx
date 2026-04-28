@@ -3,7 +3,7 @@ import {
     BarChart3, FileSpreadsheet, Clock, AlertTriangle,
     Download, Filter, Calendar, TrendingUp, Users,
     ArrowUpRight, ArrowDownRight, Search, ChevronLeft, ChevronRight,
-    TrendingDown, CheckCircle2, Package, FileText, GitBranch, X
+    TrendingDown, CheckCircle2, Package, FileText, GitBranch, X, Star, Trophy, Medal, Zap, Crown, Sparkles
 } from 'lucide-react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -76,7 +76,7 @@ const calculateBusinessElapsed = (startDate: Date, endDate: Date, schedule: any[
 };
 
 const ReportsView: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<'overview' | 'export' | 'sla'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'export' | 'sla' | 'leaderboard'>('overview');
     const [dateRange, setDateRange] = useState({
         start: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
         end: new Date().toISOString().split('T')[0]
@@ -95,11 +95,22 @@ const ReportsView: React.FC = () => {
         overdue: 0,
         unassigned: 0,
         critical: 0,
-        stale: 0
+        stale: 0,
+        avgCsat: '0.0'
     });
     const [agentPerformance, setAgentPerformance] = useState<any[]>([]);
     const [slaStatusData, setSlaStatusData] = useState<any[]>([]);
     const [categoryTrends, setCategoryTrends] = useState<any[]>([]);
+    const [assignmentGroups, setAssignmentGroups] = useState<any[]>([]);
+    const [userMemberGroups, setUserMemberGroups] = useState<string[]>([]);
+    const [userRole, setUserRole] = useState<{ isSuperAdmin: boolean, hasFullDeptAccess: boolean }>({ isSuperAdmin: false, hasFullDeptAccess: false });
+    const [leaderboardGroup, setLeaderboardGroup] = useState<string>('all');
+    const [leaderboardData, setLeaderboardData] = useState<{
+        volume: any[],
+        speed: any[],
+        quality: any[],
+        overallMvp: any | null
+    }>({ volume: [], speed: [], quality: [], overallMvp: null });
     const [recentTickets, setRecentTickets] = useState<any[]>([]);
     const [breachedTickets, setBreachedTickets] = useState<any[]>([]);
     const [isBreachModalOpen, setIsBreachModalOpen] = useState(false);
@@ -113,6 +124,8 @@ const ReportsView: React.FC = () => {
     const [slaPolicies, setSlaPolicies] = useState<any[]>([]);
     const [slaTargets, setSlaTargets] = useState<any[]>([]);
     const [allCategories, setAllCategories] = useState<any[]>([]);
+    const [csatDetails, setCsatDetails] = useState<any[]>([]);
+    const [isCsatModalOpen, setIsCsatModalOpen] = useState(false);
     const [statusMap, setStatusMap] = useState<Record<string, string>>({});
     const [isExporting, setIsExporting] = useState(false);
     const [drillDown, setDrillDown] = useState<{ title: string, tickets: any[] } | null>(null);
@@ -260,31 +273,43 @@ const ReportsView: React.FC = () => {
             const isAdmin = currentUser?.role_id === 1 || currentUser?.role_id === '1';
             const isDeptAdmin = currentUser?.is_department_admin === true;
             const isSuperAdmin = isAdmin && !isDeptAdmin;
+            const hasFullDeptAccess = isAdmin || isDeptAdmin;
+            setUserRole({ isSuperAdmin, hasFullDeptAccess });
 
             // 0. Fetch Policies, Targets & All Categories for Breadcrumbs
             let pQuery = supabase.from('sla_policies').select('*').eq('is_active', true);
             if (currentUser?.company_id) {
                 pQuery = pQuery.eq('company_id', currentUser.company_id);
             }
-
-            const [pRes, tRes, cRes, sRes, hRes] = await Promise.all([
+            const [pRes, tRes, cRes, sRes, hRes, groupRes, csatRes, mgRes] = await Promise.all([
                 pQuery,
                 supabase.from('sla_targets').select('*'),
                 supabase.from('ticket_categories').select('id, name, parent_id'),
                 supabase.from('ticket_statuses').select('status_id, status_name'),
-                supabase.from('holidays').select('holiday_date, name')
+                supabase.from('holidays').select('holiday_date, name'),
+                supabase.from('groups').select('id, name'),
+                supabase.from('ticket_csat').select(`
+                    *,
+                    ticket:tickets(ticket_number, subject),
+                    agent:profiles!agent_id(full_name)
+                `).order('created_at', { ascending: false }),
+                supabase.from('user_groups').select('group_id').eq('user_id', currentUser.id)
             ]);
-            // Set holidays for business hours calculation
-            setReportHolidays(hRes.data || []);
+            
+            if (mgRes.data) {
+                setUserMemberGroups(mgRes.data.map((mg: any) => mg.group_id));
+            }
+            if (hRes.data) setReportHolidays(hRes.data || []);
             if (pRes.data) setSlaPolicies(pRes.data);
             if (tRes.data) setSlaTargets(tRes.data);
-            const categories = cRes.data || [];
-            setAllCategories(categories);
-            const statusMap: Record<string, string> = {};
+            if (cRes.data) setAllCategories(cRes.data);
             if (sRes.data) {
-                sRes.data.forEach((s: any) => statusMap[s.status_id] = s.status_name);
-                setStatusMap(statusMap);
+                const sMap: Record<string, string> = {};
+                sRes.data.forEach((s: any) => sMap[s.status_id] = s.status_name);
+                setStatusMap(sMap);
             }
+            if (groupRes.data) setAssignmentGroups(groupRes.data);
+            if (csatRes.data) setCsatDetails(csatRes.data);
 
             // 1. Fetch All Tickets in Range
             let query = supabase
@@ -293,7 +318,7 @@ const ReportsView: React.FC = () => {
                     id, ticket_number, subject, priority, created_at, updated_at, ticket_type, 
                     total_paused_minutes, paused_at, status_id, category_id, assignment_group_id,
                     ticket_statuses!fk_tickets_status (status_name),
-                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id),
+                    assigned_agent:profiles!fk_tickets_assigned_agent (id, full_name, role_id),
                     group:groups!assignment_group_id!inner (
                         id, 
                         company_id,
@@ -384,7 +409,7 @@ const ReportsView: React.FC = () => {
                     const type = (t.ticket_type || '').toLowerCase().replace(/_/g, ' ');
                     return type === 'change request' || type === 'change';
                 });
-                const resolvedTickets = validTickets.filter((t: any) => ['resolved', 'closed'].includes((t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase()));
+                let resolvedTickets = validTickets.filter((t: any) => ['resolved', 'closed'].includes((t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name)?.toLowerCase()));
 
                 // Calculate Avg Resolve Time
                 let totalHandlingMins = 0;
@@ -455,8 +480,12 @@ const ReportsView: React.FC = () => {
                     overdue: overdueCount,
                     unassigned: unassignedCount,
                     critical: criticalCount,
-                    stale: staleCount
+                    stale: staleCount,
+                    avgCsat: csatRes.data && csatRes.data.length > 0 
+                        ? (csatRes.data.reduce((acc: number, curr: any) => acc + curr.rating, 0) / csatRes.data.length).toFixed(1)
+                        : '0.0'
                 });
+                if (csatRes.data) setCsatDetails(csatRes.data);
 
                 // B. Agent Performance (Group by Agent)
                 const agentMap: Record<string, { incident: number, request: number, change: number, total: number }> = {};
@@ -494,7 +523,7 @@ const ReportsView: React.FC = () => {
                 // D. Category Trends
                 const catMap: Record<string, number> = {};
                 validTickets.forEach(t => {
-                    const breadcrumb = t.category_id ? getBreadcrumb(t.category_id, categories) : 'Uncategorized';
+                    const breadcrumb = t.category_id ? getBreadcrumb(t.category_id, cRes.data || []) : 'Uncategorized';
                     catMap[breadcrumb] = (catMap[breadcrumb] || 0) + 1;
                 });
                 const catChartData = Object.entries(catMap).map(([name, count]) => ({
@@ -513,6 +542,101 @@ const ReportsView: React.FC = () => {
             setIsInitialLoading(false);
         }
     };
+
+    // Recalculate leaderboard whenever tickets or filter changes
+    useEffect(() => {
+        if (!recentTickets || recentTickets.length === 0) return;
+
+        const resolvedTickets = recentTickets.filter((t: any) => {
+            const sName = (t.ticket_statuses?.status_name || t.ticket_statuses?.[0]?.status_name || '').toLowerCase();
+            const isResolved = sName === 'resolved' || sName === 'closed';
+            let matchesGroup = true;
+            if (userRole.hasFullDeptAccess) {
+                matchesGroup = leaderboardGroup === 'all' || t.assignment_group_id === leaderboardGroup;
+            } else {
+                // Regular agents only see their own groups
+                matchesGroup = userMemberGroups.includes(t.assignment_group_id);
+            }
+            
+            return isResolved && matchesGroup;
+        });
+
+        const agentStats: Record<string, { id: string, name: string, count: number, totalTime: number, ratings: number[] }> = {};
+        
+        resolvedTickets.forEach((t: any) => {
+            const name = t.assigned_agent?.full_name || t.assigned_agent?.[0]?.full_name || 'Unassigned';
+            const agentId = t.assigned_agent?.id || 'unassigned';
+            if (!agentStats[name]) agentStats[name] = { id: agentId, name, count: 0, totalTime: 0, ratings: [] };
+            
+            agentStats[name].count++;
+            const sla = checkTicketSla(t, slaPolicies, slaTargets);
+            agentStats[name].totalTime += sla.netResolve;
+        });
+
+        // Add ratings from CSAT
+        if (csatDetails) {
+            csatDetails.forEach((c: any) => {
+                const name = c.agent?.full_name || 'Unknown';
+                if (agentStats[name]) {
+                    // Check if this CSAT ticket matches the group filter if applied
+                    const ticket = recentTickets.find(t => t.ticket_number === c.ticket?.ticket_number);
+                    if (leaderboardGroup === 'all' || ticket?.assignment_group_id === leaderboardGroup) {
+                        agentStats[name].ratings.push(c.rating);
+                    }
+                }
+            });
+        }
+
+        const agentList = Object.values(agentStats).filter(a => a.name !== 'Unassigned');
+
+        const volumeRanking = [...agentList].sort((a, b) => b.count - a.count).slice(0, 5);
+        const speedRanking = [...agentList]
+            .filter(a => a.count >= 1) // Qualify with 1 ticket
+            .sort((a, b) => (a.totalTime / a.count) - (b.totalTime / b.count))
+            .slice(0, 5);
+        const qualityRanking = [...agentList]
+            .filter(a => a.ratings.length >= 1)
+            .sort((a, b) => {
+                const avgA = a.ratings.reduce((p, c) => p + c, 0) / a.ratings.length;
+                const avgB = b.ratings.reduce((p, c) => p + c, 0) / b.ratings.length;
+                return avgB - avgA;
+            })
+            .slice(0, 5);
+
+        const maxVol = Math.max(...agentList.map(a => a.count), 1);
+        const minTime = Math.min(...agentList.map(a => (a.totalTime / a.count) || 1), 1);
+
+        const mvpRanking = [...agentList].sort((a, b) => {
+            const avgRatingA = a.ratings.length > 0 ? a.ratings.reduce((p, c) => p + c, 0) / a.ratings.length : 3.0;
+            const avgRatingB = b.ratings.length > 0 ? b.ratings.reduce((p, c) => p + c, 0) / b.ratings.length : 3.0;
+            
+            const avgTimeA = (a.totalTime / a.count) || 1;
+            const avgTimeB = (b.totalTime / b.count) || 1;
+
+            // Normalized Scores (0-100 scale then apply weights)
+            // 40% Volume, 20% CSAT, 40% Speed
+            const volScoreA = (a.count / maxVol) * 40;
+            const volScoreB = (b.count / maxVol) * 40;
+            
+            const csatScoreA = (avgRatingA / 5) * 20;
+            const csatScoreB = (avgRatingB / 5) * 20;
+            
+            const speedScoreA = (minTime / avgTimeA) * 40;
+            const speedScoreB = (minTime / avgTimeB) * 40;
+
+            const finalA = volScoreA + csatScoreA + speedScoreA;
+            const finalB = volScoreB + csatScoreB + speedScoreB;
+            
+            return finalB - finalA;
+        });
+
+        setLeaderboardData({
+            volume: volumeRanking,
+            speed: speedRanking,
+            quality: qualityRanking,
+            overallMvp: mvpRanking[0] || null
+        });
+    }, [recentTickets, leaderboardGroup, csatDetails, slaPolicies, slaTargets, userMemberGroups, userRole]);
 
     const formatHandlingTime = (ticket: any) => {
         const start = new Date(ticket.created_at).getTime();
@@ -1063,6 +1187,13 @@ const ReportsView: React.FC = () => {
                 >
                     <Clock size={16} /> SLA Reports
                 </button>
+                <button
+                    onClick={() => setActiveTab('leaderboard')}
+                    className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2
+                        ${activeTab === 'leaderboard' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'}`}
+                >
+                    <Trophy size={16} /> Leaderboard
+                </button>
             </div>
 
             {/* Main Content Area */}
@@ -1120,6 +1251,15 @@ const ReportsView: React.FC = () => {
                             icon={<BarChart3 className="text-rose-600" />}
                             bg="bg-rose-50"
                             onClick={() => setDrillDown({ title: 'All Tickets In Period', tickets: recentTickets })}
+                        />
+                        <KPICard
+                            title="Average CSAT"
+                            value={`${stats.avgCsat} / 5`}
+                            trend="Rating"
+                            trendUp={parseFloat(stats.avgCsat) >= 4}
+                            icon={<Star className="text-amber-500" />}
+                            bg="bg-amber-50"
+                            onClick={() => setIsCsatModalOpen(true)}
                         />
                     </div>
 
@@ -1954,6 +2094,192 @@ const ReportsView: React.FC = () => {
                 )
             }
 
+            {
+                activeTab === 'leaderboard' && (
+                    <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-12">
+                        {/* Filter Section - Only show for SuperAdmin */}
+                        {userRole.isSuperAdmin && (
+                            <div className="flex justify-between items-center bg-white p-4 rounded-[24px] border border-slate-100 shadow-sm">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
+                                        <Filter size={16} />
+                                    </div>
+                                    <span className="text-xs font-black text-slate-900 uppercase tracking-widest">Department View</span>
+                                </div>
+                                <select
+                                    value={leaderboardGroup}
+                                    onChange={(e) => setLeaderboardGroup(e.target.value)}
+                                    className="bg-slate-50 border-none rounded-xl px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-600 outline-none focus:ring-2 focus:ring-indigo-100"
+                                >
+                                    <option value="all">All Teams (DIT)</option>
+                                    {assignmentGroups.map(g => (
+                                        <option key={g.id} value={g.id}>{g.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {/* MVP Header Section */}
+                        <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600 rounded-[40px] p-12 text-white shadow-2xl shadow-indigo-200">
+                            <div className="absolute top-0 right-0 p-12 opacity-10 rotate-12">
+                                <Trophy size={200} />
+                            </div>
+                            <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+                                <div className="text-center md:text-left">
+                                    <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/20 backdrop-blur-md rounded-full text-[10px] font-black uppercase tracking-widest mb-6 border border-white/20">
+                                        <Trophy size={14} className="text-amber-300" /> Agent Hall of Fame
+                                    </div>
+                                    <h2 className="text-5xl font-black mb-4 tracking-tighter uppercase">THE OVERALL MVP</h2>
+                                    <p className="text-indigo-100 font-bold max-w-md uppercase tracking-widest text-xs opacity-80 leading-relaxed">Celebrating our top performing agents who drive excellence and user satisfaction every single day.</p>
+                                </div>
+                                
+                                {leaderboardData.overallMvp && (
+                                    <div className="flex flex-col items-center bg-white/10 backdrop-blur-xl p-8 rounded-[32px] border border-white/20 shadow-2xl scale-110 relative">
+                                        {/* Trophy Badge */}
+                                        <div className="absolute -top-4 -right-4 w-12 h-12 bg-gradient-to-br from-amber-300 to-yellow-500 rounded-2xl flex items-center justify-center shadow-xl border-2 border-white rotate-12 animate-bounce">
+                                            <Trophy size={24} className="text-white" />
+                                        </div>
+                                        
+                                        <div className="w-24 h-24 bg-gradient-to-tr from-amber-400 to-yellow-200 rounded-full flex items-center justify-center text-amber-900 font-black text-4xl shadow-xl border-4 border-white mb-4">
+                                            {leaderboardData.overallMvp.name.charAt(0)}
+                                        </div>
+                                        <h3 className="text-2xl font-black uppercase flex items-center gap-2">
+                                            <Sparkles size={20} className="text-amber-300 animate-pulse" />
+                                            {leaderboardData.overallMvp.name}
+                                            <Sparkles size={20} className="text-amber-300 animate-pulse" />
+                                        </h3>
+                                        <p className="text-[10px] font-black text-amber-200 uppercase tracking-[0.2em] mt-1">Consistency King</p>
+                                        <div className="mt-6 flex gap-4">
+                                            <div className="text-center">
+                                                <p className="text-lg font-black">{leaderboardData.overallMvp.count}</p>
+                                                <p className="text-[8px] font-black uppercase text-indigo-200">Tickets</p>
+                                            </div>
+                                            <div className="w-px h-8 bg-white/20" />
+                                            <div className="text-center">
+                                                <p className="text-lg font-black">{leaderboardData.overallMvp.ratings.length > 0 ? (leaderboardData.overallMvp.ratings.reduce((p:any,c:any)=>p+c,0)/leaderboardData.overallMvp.ratings.length).toFixed(1) : '-'}</p>
+                                                <p className="text-[8px] font-black uppercase text-indigo-200">Rating</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Podium Categories */}
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                            {/* Volume Leaderboard */}
+                            <div className="bg-white rounded-[32px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 flex flex-col">
+                                <div className="flex items-center gap-3 mb-10">
+                                    <div className="p-3 bg-rose-50 rounded-2xl text-rose-500">
+                                        <Medal size={20} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Volume Masters</h3>
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Most tickets resolved</p>
+                                    </div>
+                                </div>
+                                <div className="space-y-4 flex-1">
+                                    {leaderboardData.volume.length === 0 ? (
+                                        <p className="text-center py-10 text-slate-300 text-xs font-bold uppercase">No data</p>
+                                    ) : (
+                                        leaderboardData.volume.map((agent, i) => (
+                                            <div key={agent.id} className={`flex items-center justify-between p-4 rounded-2xl transition-all hover:translate-x-1 ${i === 0 ? 'bg-amber-50/50 border border-amber-100' : 'hover:bg-slate-50'}`}>
+                                                <div className="flex items-center gap-4">
+                                                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs ${i === 0 ? 'bg-amber-400 text-white shadow-lg shadow-amber-200' : i === 1 ? 'bg-slate-300 text-white' : i === 2 ? 'bg-orange-300 text-white' : 'bg-slate-100 text-slate-400'} relative`}>
+                                                        {i === 0 ? <Crown size={14} className="animate-pulse" /> : i === 1 ? <Medal size={14} /> : i === 2 ? <Medal size={14} /> : i + 1}
+                                                    </div>
+                                                    <span className="text-xs font-black text-slate-700 uppercase">{agent.name}</span>
+                                                </div>
+                                                <div className="flex flex-col items-end">
+                                                    <span className="text-sm font-black text-slate-900">{agent.count}</span>
+                                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Tickets</span>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Speed Leaderboard */}
+                            <div className="bg-white rounded-[32px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 flex flex-col">
+                                <div className="flex items-center gap-3 mb-10">
+                                    <div className="p-3 bg-blue-50 rounded-2xl text-blue-500">
+                                        <Zap size={20} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Speed Demons</h3>
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Fastest average resolution</p>
+                                    </div>
+                                </div>
+                                <div className="space-y-4 flex-1">
+                                    {leaderboardData.speed.length === 0 ? (
+                                        <p className="text-center py-10 text-slate-300 text-xs font-bold uppercase">No data</p>
+                                    ) : (
+                                        leaderboardData.speed.map((agent, i) => {
+                                            const avgMins = Math.round(agent.totalTime / agent.count);
+                                            const h = Math.floor(avgMins / 60);
+                                            const m = avgMins % 60;
+                                            return (
+                                                <div key={agent.id} className={`flex items-center justify-between p-4 rounded-2xl transition-all hover:translate-x-1 ${i === 0 ? 'bg-indigo-50/50 border border-indigo-100' : 'hover:bg-slate-50'}`}>
+                                                    <div className="flex items-center gap-4">
+                                                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs ${i === 0 ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-200' : 'bg-slate-100 text-slate-400'}`}>
+                                                            {i === 0 ? <Crown size={14} className="animate-pulse" /> : i + 1}
+                                                        </div>
+                                                        <span className="text-xs font-black text-slate-700 uppercase">{agent.name}</span>
+                                                    </div>
+                                                    <div className="flex flex-col items-end">
+                                                        <span className="text-sm font-black text-slate-900">{h > 0 ? `${h}h ` : ''}{m}m</span>
+                                                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Avg Time</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Quality Leaderboard */}
+                            <div className="bg-white rounded-[32px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 flex flex-col">
+                                <div className="flex items-center gap-3 mb-10">
+                                    <div className="p-3 bg-amber-50 rounded-2xl text-amber-500">
+                                        <Star size={20} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Service Stars</h3>
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Highest average CSAT</p>
+                                    </div>
+                                </div>
+                                <div className="space-y-4 flex-1">
+                                    {leaderboardData.quality.length === 0 ? (
+                                        <p className="text-center py-10 text-slate-300 text-xs font-bold uppercase">No data</p>
+                                    ) : (
+                                        leaderboardData.quality.map((agent, i) => {
+                                            const avgRating = (agent.ratings.reduce((p:any, c:any) => p + c, 0) / agent.ratings.length).toFixed(1);
+                                            return (
+                                                <div key={agent.id} className={`flex items-center justify-between p-4 rounded-2xl transition-all hover:translate-x-1 ${i === 0 ? 'bg-emerald-50/50 border border-emerald-100' : 'hover:bg-slate-50'}`}>
+                                                    <div className="flex items-center gap-4">
+                                                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs ${i === 0 ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-200' : 'bg-slate-100 text-slate-400'}`}>
+                                                            {i === 0 ? <Crown size={14} className="animate-pulse" /> : i + 1}
+                                                        </div>
+                                                        <span className="text-xs font-black text-slate-700 uppercase">{agent.name}</span>
+                                                    </div>
+                                                    <div className="flex flex-col items-end">
+                                                        <div className="flex items-center gap-1 text-sm font-black text-slate-900">
+                                                            {avgRating} <Star size={10} className="fill-amber-400 text-amber-400" />
+                                                        </div>
+                                                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{agent.ratings.length} Ratings</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
             {/* SLA Breach Modal */}
             {
                 isBreachModalOpen && (
@@ -2249,6 +2575,94 @@ const ReportsView: React.FC = () => {
                                 <button
                                     onClick={() => setDrillDown(null)}
                                     className="px-6 py-2 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-all active:scale-95"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+            {
+                isCsatModalOpen && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+                        <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-300 border border-white">
+                            <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                                <div className="flex items-center gap-4">
+                                    <div className="p-3 bg-amber-50 rounded-2xl text-amber-500">
+                                        <Star size={24} fill="currentColor" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Customer Feedback Details</h2>
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-0.5">Showing all ratings and comments</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setIsCsatModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                                    <X size={20} />
+                                </button>
+                            </div>
+                            
+                            <div className="flex-1 overflow-y-auto">
+                                <div className="min-w-full inline-block align-middle">
+                                    <div className="overflow-hidden">
+                                        <table className="min-w-full divide-y divide-slate-100">
+                                            <thead className="bg-slate-50/50 sticky top-0 z-10">
+                                                <tr>
+                                                    <th className="px-8 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
+                                                    <th className="px-8 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Ticket</th>
+                                                    <th className="px-8 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Agent</th>
+                                                    <th className="px-8 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Rating</th>
+                                                    <th className="px-8 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Comment</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="bg-white divide-y divide-slate-50">
+                                                {csatDetails.length === 0 ? (
+                                                    <tr>
+                                                        <td colSpan={5} className="px-8 py-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">
+                                                            No feedback data available yet.
+                                                        </td>
+                                                    </tr>
+                                                ) : (
+                                                    csatDetails.map((item, i) => (
+                                                        <tr key={i} className="hover:bg-slate-50/50 transition-colors group">
+                                                            <td className="px-8 py-4 whitespace-nowrap text-[11px] font-bold text-slate-500">
+                                                                {new Date(item.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                                            </td>
+                                                            <td className="px-8 py-4 whitespace-nowrap">
+                                                                <span className="text-xs font-black text-indigo-600 uppercase tracking-tight">{(item.ticket as any)?.ticket_number}</span>
+                                                            </td>
+                                                            <td className="px-8 py-4 whitespace-nowrap text-xs font-bold text-slate-700">
+                                                                {(item.agent as any)?.full_name || 'Unassigned'}
+                                                            </td>
+                                                            <td className="px-8 py-4 whitespace-nowrap">
+                                                                <div className="flex gap-0.5">
+                                                                    {[1, 2, 3, 4, 5].map(s => (
+                                                                        <Star 
+                                                                            key={s} 
+                                                                            size={12} 
+                                                                            className={s <= item.rating ? "fill-amber-400 text-amber-400" : "text-slate-200"} 
+                                                                        />
+                                                                    ))}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-8 py-4">
+                                                                <p className="text-xs font-medium text-slate-600 italic max-w-md truncate group-hover:whitespace-normal group-hover:overflow-visible transition-all">
+                                                                    {item.comment ? `"${item.comment}"` : '-'}
+                                                                </p>
+                                                            </td>
+                                                        </tr>
+                                                    ))
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="px-8 py-5 bg-slate-50 border-t border-slate-100 flex justify-end">
+                                <button 
+                                    onClick={() => setIsCsatModalOpen(false)}
+                                    className="px-8 py-2.5 bg-slate-900 text-white rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-800 transition-all shadow-lg active:scale-95"
                                 >
                                     Close
                                 </button>

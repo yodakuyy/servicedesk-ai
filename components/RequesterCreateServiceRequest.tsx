@@ -313,6 +313,14 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
             }
 
             const targetDate = selectedDate.split('T')[0];
+            const now = new Date();
+            const selectedDateObj = new Date(selectedDate);
+
+            // 1. Check for past date/time
+            if (selectedDateObj < now) {
+                setAvailabilityError(`⚠️ Sorry, you cannot book an event for a past date or time. Please select a future date.`);
+                return;
+            }
 
             setIsCheckingAvailability(true);
             try {
@@ -640,10 +648,14 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                 return <input type="number" className={commonClasses} placeholder={field.placeholder} value={formValues[field.id] || ''} onChange={e => handleInputChange(field.id, e.target.value)} />;
 
             case 'date':
-                return <input type="date" className={commonClasses} value={formValues[field.id] || ''} onChange={e => handleInputChange(field.id, e.target.value)} />;
+                const todayDate = new Date().toISOString().split('T')[0];
+                return <input type="date" min={todayDate} className={commonClasses} value={formValues[field.id] || ''} onChange={e => handleInputChange(field.id, e.target.value)} />;
 
             case 'datetime':
-                return <input type="datetime-local" className={commonClasses} value={formValues[field.id] || ''} onChange={e => handleInputChange(field.id, e.target.value)} />;
+                const nowDateTime = new Date();
+                nowDateTime.setMinutes(nowDateTime.getMinutes() - nowDateTime.getTimezoneOffset());
+                const minDateTime = nowDateTime.toISOString().slice(0, 16);
+                return <input type="datetime-local" min={minDateTime} className={commonClasses} value={formValues[field.id] || ''} onChange={e => handleInputChange(field.id, e.target.value)} />;
 
             case 'dropdown':
                 return (

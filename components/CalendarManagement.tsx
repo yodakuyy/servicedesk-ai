@@ -80,6 +80,16 @@ const CalendarManagement: React.FC = () => {
             return;
         }
 
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        const selectedDate = new Date(form.event_date);
+        selectedDate.setHours(0, 0, 0, 0);
+
+        if (selectedDate < now) {
+            Swal.fire('Error', 'You cannot create or edit an event for a past date. Please select a future date.', 'error');
+            return;
+        }
+
         setSaving(true);
         try {
             const { data: { user } } = await supabase.auth.getUser();
@@ -391,6 +401,7 @@ const CalendarManagement: React.FC = () => {
                                     <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-2">Event Date</label>
                                     <input
                                         type="date"
+                                        min={new Date().toISOString().split('T')[0]}
                                         value={form.event_date}
                                         onChange={(e) => setForm({ ...form, event_date: e.target.value })}
                                         className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50"

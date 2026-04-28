@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   Ticket as TicketIcon,
@@ -173,7 +174,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
     notifications: false
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'user-dashboard' | 'my-dashboard' | 'incidents' | 'knowledge' | 'help-center' | 'outofoffice' | 'ticket-detail' | 'my-tickets' | 'my-incidents' | 'service-requests' | 'change-requests' | 'my-service-request' | 'user-incidents' | 'escalated-tickets' | 'user-management' | 'group-management' | 'business-hours' | 'department-management' | 'profile' | 'team-availability' | 'availability' | 'categories' | 'status-management' | 'workflow-mapping' | 'workflow-template' | 'service-request-fields' | 'sla-management' | 'sla-policies' | 'escalation-rules' | 'portal-highlights' | 'announcement-management' | 'calendar-management' | 'auto-assignment' | 'auto-close-rules' | 'notifications' | 'my-notifications' | 'all-notifications' | 'access-policy' | 'create-incident' | 'reports'>('dashboard');
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Derive currentView from URL path
+  // If path is "/dashboard/my-tickets", view is "my-tickets"
+  // If path is "/dashboard", view is "dashboard"
+  const currentView = useMemo(() => {
+    const pathSegments = location.pathname.split('/').filter(Boolean);
+    // pathSegments might be ['dashboard', 'my-tickets']
+    if (pathSegments.length > 1 && pathSegments[0] === 'dashboard') {
+      return pathSegments[1] as any;
+    }
+    return 'dashboard';
+  }, [location.pathname]);
+
+  const setCurrentView = (view: string) => {
+    navigate(`/dashboard/${view}`);
+  };
+
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [previousView, setPreviousView] = useState<'incidents' | 'my-tickets' | 'profile' | 'user-dashboard'>('incidents');
   const [accessibleMenus, setAccessibleMenus] = useState<any[]>([]);
@@ -250,10 +269,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
 
   // Handle initial view prop changes (Deep Linking)
   useEffect(() => {
-    if (initialView) {
-      setCurrentView(initialView as any);
+    if (initialView && location.pathname === '/dashboard') {
+      navigate(`/dashboard/${initialView}`, { replace: true });
     }
-  }, [initialView]);
+  }, [initialView, location.pathname, navigate]);
 
   // Enable realtime toast notifications
   useRealtimeToast(
@@ -506,15 +525,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         else if (myGroupIds.length > 0) resolvedQuery = resolvedQuery.in('assignment_group_id', myGroupIds);
 
         let satisfactionQuery = supabase
-          .from('tickets')
+          .from('ticket_csat')
           .select(`
-            id, ticket_number, satisfaction_rating, user_feedback, updated_at,
-            requester:profiles!fk_tickets_requester(full_name)
+            id, rating, comment, created_at,
+            ticket:tickets!ticket_id!inner(id, ticket_number, subject, assigned_to, assignment_group_id),
+            requester:profiles!requester_id(full_name),
+            agent:profiles!agent_id(full_name)
           `)
-          .not('satisfaction_rating', 'is', null)
-          .order('updated_at', { ascending: false });
-        if (isAgent) satisfactionQuery = satisfactionQuery.eq('assigned_to', userProfile.id);
-        else if (myGroupIds.length > 0) satisfactionQuery = satisfactionQuery.in('assignment_group_id', myGroupIds);
+          .order('created_at', { ascending: false });
+        if (isAgent) satisfactionQuery = satisfactionQuery.eq('ticket.assigned_to', userProfile.id);
+        else if (myGroupIds.length > 0) satisfactionQuery = satisfactionQuery.in('ticket.assignment_group_id', myGroupIds);
+        else if (userProfile.company_id && !isSuperAdmin) satisfactionQuery = satisfactionQuery.in('ticket.assignment_group_id', allDeptGroupIds);
 
         let incidentQuery = supabase
           .from('tickets')
@@ -654,7 +675,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         const pendingCount = pendingTicketsFullList?.length || 0;
         const satisfactionReviewsList = satisfactionData || [];
         const avgSatisfaction = satisfactionReviewsList.length
-          ? (satisfactionReviewsList.reduce((acc, curr) => acc + (curr.satisfaction_rating || 0), 0) / satisfactionReviewsList.length).toFixed(1)
+          ? (satisfactionReviewsList.reduce((acc, curr) => acc + (curr.rating || 0), 0) / satisfactionReviewsList.length).toFixed(1)
           : "0.0";
 
         const categoryCount: Record<string, number> = {};
@@ -1259,33 +1280,33 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
                       <tr>
                         <td colSpan={5} className="px-6 py-8 text-center text-gray-400 text-sm italic">No reviews found</td>
                       </tr>
-                    ) : detailModal.data.map((ticket, i) => (
-                      <tr key={ticket.id} className="hover:bg-gray-50 transition-colors group">
+                    ) : detailModal.data.map((item, i) => (
+                      <tr key={item.id} className="hover:bg-gray-50 transition-colors group">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
                             <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-[10px] font-bold text-indigo-600 border border-indigo-100">
-                              {ticket.requester?.full_name?.charAt(0).toUpperCase()}
+                              {item.requester?.full_name?.charAt(0).toUpperCase()}
                             </div>
-                            <span className="font-bold text-gray-700">{ticket.requester?.full_name}</span>
+                            <span className="font-bold text-gray-700">{item.requester?.full_name}</span>
                           </div>
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex gap-0.5">
-                            {[1, 2, 3, 4, 5].map(s => <Star key={s} size={12} className={s <= (ticket.satisfaction_rating || 0) ? "fill-yellow-400 text-yellow-400" : "text-gray-200"} />)}
+                            {[1, 2, 3, 4, 5].map(s => <Star key={s} size={12} className={s <= (item.rating || 0) ? "fill-yellow-400 text-yellow-400" : "text-gray-200"} />)}
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-xs font-black text-indigo-600 tracking-wider">#{ticket.ticket_number}</td>
+                        <td className="px-6 py-4 text-xs font-black text-indigo-600 tracking-wider">#{item.ticket?.ticket_number}</td>
                         <td className="px-6 py-4 min-w-[250px]">
                           <p className="text-xs text-gray-600 italic whitespace-normal line-clamp-2 leading-relaxed">
-                            {ticket.user_feedback ? `"${ticket.user_feedback}"` : '- No feedback provided -'}
+                            {item.comment ? `"${item.comment}"` : '- No feedback provided -'}
                           </p>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <button
-                            onClick={() => { handleViewTicket(ticket.id); setDetailModal(p => ({ ...p, isOpen: false })); }}
+                            onClick={() => { handleViewTicket(item.ticket?.id); setDetailModal(p => ({ ...p, isOpen: false })); }}
                             className="px-3 py-1.5 bg-indigo-50 text-indigo-700 text-[10px] font-black rounded-lg hover:bg-indigo-600 hover:text-white transition-all uppercase tracking-widest"
                           >
-                            Open Profile
+                            Open Ticket
                           </button>
                         </td>
                       </tr>

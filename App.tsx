@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { supabase } from './lib/supabase'
 import React, { useState } from 'react';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import LoginSection from './components/LoginSection';
 import VisualSection from './components/VisualSection';
 import DepartmentSelection from './components/DepartmentSelection';
@@ -53,101 +54,53 @@ toastStyles.textContent = `
 document.head.appendChild(toastStyles);
 
 const App: React.FC = () => {
-  // Determine initial view from hash to prevent flicker
-  const getInitialState = () => {
-    const hash = typeof window !== 'undefined' ? window.location.hash : '';
-    if (hash === '#kb-portal' || hash === '#/kb-portal') return { view: 'kb-portal' as const, subView: undefined };
-    if (hash === '#dashboard/tickets' || hash === '#dashboard') return { view: 'dashboard' as const, subView: 'user-dashboard' };
-    if (hash === '#presentation') return { view: 'presentation' as const, subView: undefined };
-    return { view: 'login' as const, subView: undefined };
-  };
-
-  const initialState = getInitialState();
-  const [currentView, setCurrentView] = useState<'login' | 'departments' | 'dashboard' | 'kb-portal' | 'presentation'>(initialState.view);
-  const [dashboardInitialView, setDashboardInitialView] = useState<string | undefined>(initialState.subView);
-
-  // Check URL hash for direct portal access and deep linking
-  useEffect(() => {
-    const checkHash = () => {
-      const hash = window.location.hash;
-      if (hash === '#kb-portal' || hash === '#/kb-portal') {
-        setCurrentView('kb-portal');
-      } else if (hash === '#dashboard/tickets' || hash === '#dashboard') {
-        setDashboardInitialView('user-dashboard');
-        setCurrentView('dashboard');
-      } else if (hash === '#presentation') {
-        setCurrentView('presentation');
-      }
-    };
-
-    checkHash();
-    window.addEventListener('hashchange', checkHash);
-    return () => window.removeEventListener('hashchange', checkHash);
-  }, []);
-
-  // KB Portal - Public access (no login required)
-  if (currentView === 'kb-portal') {
-    return (
-      <ToastProvider>
-        <RequesterKBPortal onClose={() => {
-          window.location.hash = '';
-          setCurrentView('login');
-        }} />
-      </ToastProvider>
-    );
-  }
-
-  if (currentView === 'presentation') {
-    return (
-      <PresentationView onExit={() => {
-        window.location.hash = '';
-        setCurrentView('login');
-      }} />
-    );
-  }
-
-  if (currentView === 'dashboard') {
-    return (
-      <ToastProvider>
-        <Dashboard
-          onLogout={() => setCurrentView('login')}
-          onChangeDepartment={() => setCurrentView('departments')}
-          initialView={dashboardInitialView}
-        />
-      </ToastProvider>
-    );
-  }
-
-  if (currentView === 'departments') {
-    return (
-      <ToastProvider>
-        <DepartmentSelection
-          onSelectDepartment={(deptId) => {
-            console.log(`Selected department: ${deptId}`);
-            setCurrentView('dashboard');
-          }}
-        />
-      </ToastProvider>
-    );
-  }
+  const navigate = useNavigate();
+  const location = useLocation();
 
   return (
     <ToastProvider>
-      <div className="min-h-screen w-full flex bg-white">
-        {/* Left Side - Login Form */}
-        <div className="w-full lg:w-1/2 flex flex-col justify-center items-center p-8 lg:p-16 xl:p-24 overflow-y-auto">
-          <LoginSection onLogin={() => setCurrentView('departments')} />
-        </div>
+      <Routes>
+        <Route path="/login" element={
+          <div className="min-h-screen w-full flex bg-white">
+            <div className="w-full lg:w-1/2 flex flex-col justify-center items-center p-8 lg:p-16 xl:p-24 overflow-y-auto">
+              <LoginSection onLogin={() => navigate('/departments')} />
+            </div>
+            <div className="hidden lg:flex w-1/2 bg-brand-primary relative overflow-hidden items-center justify-center">
+              <VisualSection />
+            </div>
+          </div>
+        } />
+        
+        <Route path="/departments" element={
+          <DepartmentSelection
+            onSelectDepartment={(deptId) => {
+              console.log(`Selected department: ${deptId}`);
+              navigate('/dashboard');
+            }}
+          />
+        } />
 
-        {/* Right Side - Visuals (Hidden on mobile) */}
-        <div className="hidden lg:flex w-1/2 bg-brand-primary relative overflow-hidden items-center justify-center">
-          <VisualSection />
-        </div>
-      </div>
+        <Route path="/dashboard/*" element={
+          <Dashboard
+            onLogout={() => navigate('/login')}
+            onChangeDepartment={() => navigate('/departments')}
+          />
+        } />
+
+        <Route path="/kb-portal" element={
+          <RequesterKBPortal onClose={() => navigate('/login')} />
+        } />
+
+        <Route path="/presentation" element={
+          <PresentationView onExit={() => navigate('/login')} />
+        } />
+
+        {/* Default Redirects */}
+        <Route path="/" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
     </ToastProvider>
   );
 };
-
-
 
 export default App;

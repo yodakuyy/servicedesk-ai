@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
     ChevronLeft, Send, Paperclip, MessageSquare, ChevronDown, ChevronUp,
-    CheckCircle2, Circle, HelpCircle, FileText, Info, Loader2, X, Lock, ExternalLink, CheckCircle
+    CheckCircle2, Circle, HelpCircle, FileText, Info, Loader2, X, Lock, ExternalLink, CheckCircle, Star
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
+import CSATModal from './CSATModal';
 
 interface RequesterTicketViewProps {
     ticketId?: string | null;
@@ -18,6 +19,9 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
     const [loading, setLoading] = useState(true);
     const [messages, setMessages] = useState<any[]>([]);
     const [isSending, setIsSending] = useState(false);
+    const [showCSATModal, setShowCSATModal] = useState(false);
+    const [hasCSAT, setHasCSAT] = useState(false);
+    const [isCheckingCSAT, setIsCheckingCSAT] = useState(false);
 
     const fetchMessages = async () => {
         if (!ticketId) return;
@@ -66,7 +70,25 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
             }
         };
 
+        const checkCSAT = async () => {
+            if (!ticketId) return;
+            setIsCheckingCSAT(true);
+            try {
+                const { data } = await supabase
+                    .from('ticket_csat')
+                    .select('id')
+                    .eq('ticket_id', ticketId)
+                    .maybeSingle();
+                setHasCSAT(!!data);
+            } catch (err) {
+                console.error("Error checking CSAT:", err);
+            } finally {
+                setIsCheckingCSAT(false);
+            }
+        };
+
         fetchTicketDetails();
+        checkCSAT();
     }, [ticketId]);
 
     const handleImagePreview = async (src: string) => {
@@ -350,68 +372,40 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                             onClick={async () => {
                                 // @ts-ignore
                                 const Swal = (await import('sweetalert2')).default;
-                                const { value: result } = await Swal.fire({
+                                const { isConfirmed } = await Swal.fire({
                                     title: 'Mark as Resolved?',
-                                    text: "Are you sure this issue is resolved?",
+                                    text: "Are you sure this issue has been resolved to your satisfaction?",
                                     icon: 'question',
                                     showCancelButton: true,
                                     confirmButtonColor: '#10b981',
                                     cancelButtonColor: '#d33',
-                                    confirmButtonText: 'Yes, it is resolved!',
-                                    html: `
-                                        <p class="mb-4 text-sm text-gray-600">You can optionally provide feedback:</p>
-                                        <div class="star-rating flex justify-center gap-1 mb-4 text-2xl" style="flex-direction: row-reverse;">
-                                            <input type="radio" name="swal-rating" value="5" id="r5" class="hidden"/>
-                                            <label for="r5" class="cursor-pointer text-gray-300 hover:text-yellow-400 transition-colors">★</label>
-                                            <input type="radio" name="swal-rating" value="4" id="r4" class="hidden"/>
-                                            <label for="r4" class="cursor-pointer text-gray-300 hover:text-yellow-400 transition-colors">★</label>
-                                            <input type="radio" name="swal-rating" value="3" id="r3" class="hidden"/>
-                                            <label for="r3" class="cursor-pointer text-gray-300 hover:text-yellow-400 transition-colors">★</label>
-                                            <input type="radio" name="swal-rating" value="2" id="r2" class="hidden"/>
-                                            <label for="r2" class="cursor-pointer text-gray-300 hover:text-yellow-400 transition-colors">★</label>
-                                            <input type="radio" name="swal-rating" value="1" id="r1" class="hidden"/>
-                                            <label for="r1" class="cursor-pointer text-gray-300 hover:text-yellow-400 transition-colors">★</label>
-                                        </div>
-                                        <style>
-                                            .star-rating input:checked ~ label { color: #facc15; }
-                                            .star-rating label:hover, .star-rating label:hover ~ label { color: #facc15; }
-                                        </style>
-                                        <textarea id="swal-feedback" class="swal2-textarea" placeholder="Optional feedback..." style="margin: 0; width: 100%; font-size: 0.9em;"></textarea>
-                                    `,
-                                    preConfirm: () => {
-                                        const ratingEl = document.querySelector('input[name="swal-rating"]:checked') as HTMLInputElement;
-                                        const feedbackEl = document.getElementById('swal-feedback') as HTMLTextAreaElement;
-                                        return {
-                                            rating: ratingEl ? parseInt(ratingEl.value) : null,
-                                            feedback: feedbackEl ? feedbackEl.value : null
-                                        };
-                                    }
+                                    confirmButtonText: 'Yes, it is resolved!'
                                 });
 
-                                if (result) {
+                                if (isConfirmed) {
                                     try {
                                         setLoading(true);
                                         const { data: { user } } = await supabase.auth.getUser();
                                         if (!user) throw new Error('Not authenticated');
 
-                                        // Call the RPC function
+                                        // Call the RPC function but with null rating/feedback to just close the ticket
                                         const { data: rpcData, error: rpcError } = await supabase.rpc('user_close_ticket', {
                                             p_ticket_id: ticketId,
                                             p_user_id: user.id,
-                                            p_satisfaction_rating: result.rating,
-                                            p_feedback: result.feedback
+                                            p_satisfaction_rating: null,
+                                            p_feedback: null
                                         });
 
                                         if (rpcError) throw rpcError;
 
                                         if (rpcData && rpcData.success) {
-                                            // Refresh ticket status
+                                            // Refresh ticket status locally
                                             setTicket((prev: any) => ({
                                                 ...prev,
                                                 ticket_statuses: { status_name: 'Resolved' }
                                             }));
 
-                                            // Refetch messages to show the feedback message immediately
+                                            // Refetch messages
                                             const { data: newMessages } = await supabase
                                                 .from('ticket_messages')
                                                 .select('*, sender:profiles!sender_id(full_name)')
@@ -423,7 +417,16 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                                 setMessages(newMessages);
                                             }
 
-                                            Swal.fire('Resolved!', 'Ticket has been closed successfully.', 'success');
+                                            // Success notification and trigger CSAT modal
+                                            await Swal.fire({
+                                                icon: 'success',
+                                                title: 'Ticket Resolved!',
+                                                text: 'Thank you for confirming. Please take a moment to rate our service.',
+                                                timer: 2000,
+                                                showConfirmButton: false
+                                            });
+
+                                            setShowCSATModal(true);
                                         } else {
                                             throw new Error(rpcData?.error || 'Failed to close ticket');
                                         }
@@ -436,7 +439,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                     }
                                 }
                             }}
-                            className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-100 flex items-center gap-2"
+                            className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
                         >
                             <CheckCircle size={16} /> Mark as Resolved
                         </button>
@@ -449,6 +452,26 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
             </header>
 
             <main className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
+                {/* CSAT Prompt Banner */}
+                {isResolved && !hasCSAT && !isCheckingCSAT && (
+                    <div className="bg-gradient-to-r from-indigo-600 to-violet-700 rounded-3xl p-6 text-white shadow-xl shadow-indigo-100 flex flex-col md:flex-row items-center justify-between gap-6 animate-in slide-in-from-top-4 duration-500">
+                        <div className="flex items-center gap-5">
+                            <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md">
+                                <Star size={32} className="fill-white text-white" />
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-black uppercase tracking-tight">Help us improve!</h3>
+                                <p className="text-indigo-100 text-sm font-medium opacity-90">How would you rate the service you received for this ticket?</p>
+                            </div>
+                        </div>
+                        <button 
+                            onClick={() => setShowCSATModal(true)}
+                            className="px-8 py-3 bg-white text-indigo-600 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-indigo-50 transition-all shadow-lg active:scale-95 whitespace-nowrap"
+                        >
+                            Rate Now
+                        </button>
+                    </div>
+                )}
 
                 {/* Ticket Header & Status */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -673,6 +696,17 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     )}
                 </div>
             </main>
+
+            {showCSATModal && (
+                <CSATModal
+                    ticketId={ticket.id}
+                    ticketNumber={ticket.ticket_number}
+                    agentId={ticket.assigned_to}
+                    agentName={ticket.agent?.full_name}
+                    onClose={() => setShowCSATModal(false)}
+                    onSuccess={() => setHasCSAT(true)}
+                />
+            )}
         </div>
     );
 };
