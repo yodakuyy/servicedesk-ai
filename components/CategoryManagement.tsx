@@ -713,7 +713,7 @@ const CategoryManagement: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-10 space-y-10 custom-scrollbar max-w-5xl w-full">
+                        <div className="flex-1 overflow-y-auto p-10 space-y-10 custom-scrollbar w-full">
                             {/* Name Filed */}
                             <div className="space-y-2">
                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Name</label>

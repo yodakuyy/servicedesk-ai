@@ -41,25 +41,6 @@ export function useNotifications(userId: string | null, companyId?: number | nul
         return false;
     }, [companyId, departmentName]);
 
-    // Reset read notifications from previous days
-    const resetDailyNotifications = useCallback(async () => {
-        if (!userId) return;
-
-        try {
-            // Call the database function to reset notifications read on previous days
-            const { error } = await supabase.rpc('reset_daily_read_notifications');
-            if (error) {
-                // If function doesn't exist yet, silently ignore
-                if (!error.message.includes('does not exist')) {
-                    console.warn('Daily reset function not available:', error.message);
-                }
-            }
-        } catch (error) {
-            // Silently ignore if function not available
-            console.warn('Could not reset daily notifications:', error);
-        }
-    }, [userId]);
-
     // Fetch notifications
     const fetchNotifications = useCallback(async () => {
         if (!userId) return;
@@ -185,16 +166,10 @@ export function useNotifications(userId: string | null, companyId?: number | nul
         }
     }, [userId, notifications]);
 
-    // Initial fetch with daily reset
+    // Initial fetch
     useEffect(() => {
-        const initializeNotifications = async () => {
-            // First, reset notifications read on previous days
-            await resetDailyNotifications();
-            // Then fetch current notifications
-            await fetchNotifications();
-        };
-        initializeNotifications();
-    }, [fetchNotifications, resetDailyNotifications]);
+        fetchNotifications();
+    }, [fetchNotifications]);
 
     // Real-time subscription
     useEffect(() => {

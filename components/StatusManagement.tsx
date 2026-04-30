@@ -294,7 +294,7 @@ const StatusManagement: React.FC = () => {
     // Empty state
     if (!loading && statuses.length === 0) {
         return (
-            <div className="p-8 max-w-7xl mx-auto">
+            <div className="p-8 w-full">
                 <div className="mb-8">
                     <h1 className="text-2xl font-bold text-gray-800">Status Management</h1>
                     <p className="text-gray-500">Manage master ticket statuses used across all departments</p>
@@ -321,7 +321,7 @@ const StatusManagement: React.FC = () => {
     }
 
     return (
-        <div className="p-8 max-w-7xl mx-auto">
+        <div className="p-8 w-full">
             {/* Header */}
             <div className="mb-8">
                 <h1 className="text-2xl font-bold text-gray-800">Status Management</h1>

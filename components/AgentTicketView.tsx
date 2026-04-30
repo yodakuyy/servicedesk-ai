@@ -2971,7 +2971,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
             {/* 2. CENTER PANEL - Workspace */}
             {isCreating ? (
                 <div className="flex-1 bg-white overflow-y-auto custom-scrollbar">
-                    <div className="max-w-4xl mx-auto py-8">
+                    <div className="w-full py-8 px-8">
                         {ticketTypeFilter === 'service_request' || ticketTypeFilter === 'change_request' ? (
                             <RequesterCreateServiceRequest
                                 userProfile={userProfile}
@@ -3412,7 +3412,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                     {/* Panel Content Area */}
                     <div className="flex-1 overflow-y-auto bg-white p-6 relative custom-scrollbar">
                         {activeTab === 'conversation' && (
-                            <div className={`space-y-8 pb-10 ${isRequesterOnly ? 'max-w-full' : 'max-w-4xl mx-auto'}`}>
+                            <div className="space-y-8 pb-10 px-8">
                                 {selectedTicket.description && (
                                     <div className="flex gap-4 group">
                                         <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-[11px] font-black flex-shrink-0 text-white shadow-lg shadow-indigo-100">
@@ -3573,7 +3573,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         )}
 
                         {activeTab === 'details' && (
-                            <div className={`grid grid-cols-2 gap-x-12 gap-y-8 p-4 ${isRequesterOnly ? 'max-w-full' : 'max-w-4xl mx-auto'}`}>
+                            <div className="grid grid-cols-2 gap-x-12 gap-y-8 p-4 px-8">
                                 <div>
                                     <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300 mb-6 border-b border-gray-100 pb-2">System Information</h4>
                                     <div className="space-y-5">
@@ -4176,7 +4176,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             };
 
                             return (
-                                <div className={`space-y-6 ${isRequesterOnly ? 'max-w-full' : 'max-w-4xl mx-auto'}`}>
+                                <div className="space-y-6 px-8">
                                     <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 flex items-center justify-between">
                                         <div>
                                             <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">Applied SLA Policy</h4>
@@ -4326,7 +4326,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         })()}
 
                         {activeTab === 'activities' && (
-                            <div className={`space-y-4 ${isRequesterOnly ? 'max-w-full' : 'max-w-4xl mx-auto'}`}>
+                            <div className="space-y-4 px-8">
                                 {activityLogs.map((log) => {
                                     // Replace 'Customer' with 'Requester' in action text
                                     const actionText = (log.action || '').replace(/Customer/gi, 'Requester');
@@ -4396,7 +4396,7 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                         )}
 
                         {activeTab === 'attachments' && (
-                            <div className={`p-4 space-y-4 ${isRequesterOnly ? 'max-w-full' : 'max-w-4xl mx-auto'}`}>
+                            <div className="p-4 space-y-4 px-8">
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">Attached Files</h3>
                                     {selectedTicket.ticket_statuses?.is_final !== true && (

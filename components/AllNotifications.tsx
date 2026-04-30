@@ -75,7 +75,7 @@ const AllNotifications: React.FC<AllNotificationsProps> = ({ userId, companyId, 
 
     if (loading) {
         return (
-            <div className="p-8 max-w-5xl mx-auto h-full flex flex-col items-center justify-center">
+            <div className="p-8 w-full h-full flex flex-col items-center justify-center">
                 <div className="animate-spin text-indigo-600 mb-4">
                     <Bell size={40} />
                 </div>
@@ -85,7 +85,7 @@ const AllNotifications: React.FC<AllNotificationsProps> = ({ userId, companyId, 
     }
 
     return (
-        <div className="px-8 pb-8 pt-4 max-w-5xl mx-auto h-[calc(100vh-100px)] flex flex-col bg-[#f3f4f6]">
+        <div className="px-8 pb-8 pt-4 w-full h-[calc(100vh-100px)] flex flex-col bg-[#f3f4f6]">
             {/* Header Area */}
             <div className="mb-6 flex-shrink-0">
                 <div className="flex items-center gap-4 mb-4">

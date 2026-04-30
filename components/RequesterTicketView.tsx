@@ -285,7 +285,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
     ];
 
     return (
-        <div className="flex flex-col h-full bg-slate-50 font-sans max-w-5xl mx-auto shadow-sm min-h-screen">
+        <div className="flex flex-col h-full bg-slate-50 font-sans w-full shadow-sm min-h-screen">
             {/* Top Navigation */}
             <header className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center sticky top-0 z-20">
                 <button onClick={onBack} className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 font-medium transition-colors">

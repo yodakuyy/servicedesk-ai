@@ -649,7 +649,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
     }
 
     return (
-        <div className="fixed inset-0 bg-[#f3f4f6] z-[99999] flex flex-col overflow-hidden">
+        <div className="absolute inset-0 bg-[#f3f4f6] z-[99999] flex flex-col overflow-hidden">
             {/* Header */}
             <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-4">
@@ -695,7 +695,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
             {/* Reviewer Feedback Banner - Only show for draft status */}
             {article.reviewer_feedback && article.status === 'draft' && (
                 <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 shrink-0">
-                    <div className="flex items-start gap-3 max-w-4xl mx-auto">
+                    <div className="flex items-start gap-3 w-full">
                         <div className="p-2 bg-amber-100 rounded-lg shrink-0">
                             <MessageSquare size={18} className="text-amber-600" />
                         </div>
@@ -717,7 +717,7 @@ const ArticleEditor: React.FC<ArticleEditorProps> = ({ articleId, onClose, onSav
             <div className="flex-1 overflow-hidden flex">
                 {/* Left Panel - Form */}
                 <div className="flex-1 overflow-y-auto p-6">
-                    <div className="max-w-4xl mx-auto space-y-6">
+                    <div className="w-full space-y-6">
                         {/* Basic Info Card */}
                         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
                             <h2 className="text-base font-bold text-gray-800 flex items-center gap-2">

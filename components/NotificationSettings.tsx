@@ -526,7 +526,7 @@ const NotificationSettings: React.FC = () => {
     );
 
     return (
-        <div className="p-8 max-w-5xl mx-auto">
+        <div className="p-8 w-full">
             {/* Premium Toast Notification */}
             {toast.show && (
                 <div className={`fixed top-8 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-6 py-3 rounded-2xl shadow-2xl transition-all duration-300 transform scale-100 ${toast.type === 'success'

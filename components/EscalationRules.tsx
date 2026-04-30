@@ -738,7 +738,7 @@ const EscalationRules: React.FC = () => {
     // EDITOR VIEW
     return (
         <div className="w-full bg-slate-50/50">
-            <div className="p-8 pb-64 max-w-4xl mx-auto">
+            <div className="p-8 pb-64 w-full">
                 <div className="flex items-center gap-4 mb-8">
                     <button onClick={() => setView('list')} className="p-2 hover:bg-gray-100 rounded-lg"><ArrowLeft size={20} className="text-gray-500" /></button>
                     <div>

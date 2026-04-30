@@ -726,7 +726,7 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
     };
 
     return (
-        <div className="max-w-4xl mx-auto p-8 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 bg-gray-50/50 min-h-screen">
+        <div className="w-full p-8 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 bg-gray-50/50 min-h-screen">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <button onClick={handleBack} className="flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-gray-900 transition-colors">

@@ -43,7 +43,7 @@ const RequesterTicketList: React.FC<RequesterTicketListProps> = ({ onTicketClick
     const filteredTickets = tickets.filter(t => t.subject.toLowerCase().includes(searchTerm.toLowerCase()) || t.id.toLowerCase().includes(searchTerm.toLowerCase()));
 
     return (
-        <div className="flex flex-col h-full bg-slate-50 font-sans max-w-5xl mx-auto shadow-sm min-h-screen">
+        <div className="flex flex-col h-full bg-slate-50 font-sans w-full shadow-sm min-h-screen">
             {/* Header */}
             <div className="bg-white border-b border-gray-200 px-6 py-5 sticky top-0 z-10">
                 <div className="flex justify-between items-center mb-4">

@@ -784,7 +784,7 @@ const HelpCenter: React.FC = () => {
     // ==========================================
     if (view === 'policies') {
         return (
-            <div className="p-8 max-w-5xl mx-auto">
+            <div className="p-8 w-full">
                 <button onClick={goBack} className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 mb-6 transition-colors">
                     <ArrowLeft size={20} /> <span className="font-medium">Back to Help Center</span>
                 </button>
@@ -919,7 +919,7 @@ const HelpCenter: React.FC = () => {
     // ==========================================
     if (view === 'contact') {
         return (
-            <div className="p-8 max-w-4xl mx-auto">
+            <div className="p-8 w-full">
                 <button onClick={goBack} className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 mb-6 transition-colors">
                     <ArrowLeft size={20} /> <span className="font-medium">Back to Help Center</span>
                 </button>
@@ -999,7 +999,7 @@ const HelpCenter: React.FC = () => {
     // ==========================================
     if (view === 'updates') {
         return (
-            <div className="p-8 max-w-4xl mx-auto">
+            <div className="p-8 w-full">
                 <button onClick={goBack} className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 mb-6 transition-colors">
                     <ArrowLeft size={20} /> <span className="font-medium">Back to Help Center</span>
                 </button>
@@ -1072,7 +1072,7 @@ const HelpCenter: React.FC = () => {
     // Original Article Detail View (placed after new views to fix index)
     if (view === 'detail' && selectedArticle) {
         return (
-            <div className="p-8 max-w-4xl mx-auto">
+            <div className="p-8 w-full">
                 {/* Back Button */}
                 <button
                     onClick={goBack}
@@ -1319,7 +1319,7 @@ const HelpCenter: React.FC = () => {
                 {/* Right Panel - Article Detail */}
                 <div className="flex-1 overflow-y-auto">
                     {selectedArticle ? (
-                        <div className="max-w-4xl mx-auto p-8">
+                        <div className="w-full p-8">
                             {/* Article Header */}
                             <div className="mb-8">
                                 {/* Title */}
@@ -1515,7 +1515,7 @@ const HelpCenter: React.FC = () => {
                         <HelpCircle size={300} />
                     </div>
 
-                    <div className="relative max-w-3xl mx-auto">
+                    <div className="relative w-full px-12">
                         <button onClick={goBack} className="flex items-center gap-2 text-white/80 hover:text-white mb-8 transition-colors group">
                             <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" /> Back to Help Center
                         </button>
@@ -1525,8 +1525,7 @@ const HelpCenter: React.FC = () => {
                             <p className="text-purple-100 text-lg">Find quick answers to common questions about our services.</p>
                         </div>
 
-                        {/* Search Local FAQ */}
-                        <div className="relative max-w-xl mx-auto">
+                        <div className="relative w-full max-w-3xl">
                             <Search size={20} className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400" />
                             <input
                                 type="text"
@@ -1540,7 +1539,7 @@ const HelpCenter: React.FC = () => {
                 </div>
 
                 {/* Accordion Content */}
-                <div className="max-w-3xl mx-auto px-6 py-12 -mt-4 relative z-10">
+                <div className="w-full px-12 py-12 -mt-4 relative z-10">
                     {filteredFAQ.length > 0 ? (
                         <div className="space-y-4">
                             {filteredFAQ.map((article) => {
@@ -1714,7 +1713,7 @@ const HelpCenter: React.FC = () => {
 
     // Home View
     return (
-        <div className="p-8 max-w-7xl mx-auto">
+        <div className="p-8 w-full">
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-center mb-10 gap-4">
                 <h1 className="text-3xl font-bold text-gray-800">

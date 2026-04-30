@@ -401,7 +401,7 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null; onClose?: () => v
             <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
                 {/* Header */}
                 <div className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-10">
-                    <div className="max-w-4xl mx-auto px-6 py-4">
+                    <div className="w-full px-6 py-4">
                         <button
                             onClick={() => setSelectedArticle(null)}
                             className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 transition-colors"
@@ -413,7 +413,7 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null; onClose?: () => v
                 </div>
 
                 {/* Article Content */}
-                <div className="max-w-4xl mx-auto px-6 py-8">
+                <div className="w-full px-6 py-8">
                     <article className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
                         {/* Article Header */}
                         <div className="p-8 border-b border-gray-100">
@@ -569,7 +569,7 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null; onClose?: () => v
                 <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500"></div>
                 <div className="absolute inset-0 opacity-50" style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")" }}></div>
 
-                    <div className="max-w-4xl mx-auto px-6 pt-8 text-center relative z-10">
+                    <div className="w-full px-6 pt-8 text-center relative z-10">
                         {onClose && (
                             <button
                                 onClick={onClose}

@@ -545,7 +545,7 @@ const SLAManagement: React.FC<SLAManagementProps> = ({ onEditPolicy }) => {
     const totalTicketsAffected = slaConfigs.reduce((sum, s) => sum + s.used_by_count, 0);
 
     return (
-        <div className="p-8 max-w-7xl mx-auto">
+        <div className="p-8 w-full">
             {/* Header */}
             <div className="mb-8">
                 <h1 className="text-2xl font-bold text-gray-800">SLA Management</h1>

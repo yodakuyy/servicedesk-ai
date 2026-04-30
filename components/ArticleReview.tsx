@@ -320,7 +320,7 @@ const ArticleReview: React.FC<ArticleReviewProps> = ({ articleId, onClose, onUpd
     }
 
     return (
-        <div className="fixed inset-0 bg-[#f3f4f6] z-50 flex flex-col overflow-hidden">
+        <div className="absolute inset-0 bg-[#f3f4f6] z-50 flex flex-col overflow-hidden">
             {/* Header */}
             <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-4">
@@ -347,7 +347,7 @@ const ArticleReview: React.FC<ArticleReviewProps> = ({ articleId, onClose, onUpd
             <div className="flex-1 overflow-hidden flex">
                 {/* Left Panel - Article Content (Read-only) */}
                 <div className="flex-1 overflow-y-auto p-6">
-                    <div className="max-w-4xl mx-auto space-y-6">
+                    <div className="w-full space-y-6">
                         {/* Article Header */}
                         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
                             <h2 className="text-2xl font-bold text-gray-900 mb-3">{article.title}</h2>
