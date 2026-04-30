@@ -3,6 +3,7 @@ import { ArrowLeft, HelpCircle, Paperclip, Sparkles, Send, ChevronRight, X, Info
 import { supabase } from '../lib/supabase';
 import { applyAutoAssignment, getRoundRobinAgent } from '../lib/autoAssignment';
 import RichTextEditor from './RichTextEditor';
+import { emailService } from '../lib/emailService';
 
 interface RequesterCreateIncidentProps {
     onBack?: () => void;
@@ -316,6 +317,24 @@ const RequesterCreateIncident: React.FC<RequesterCreateIncidentProps> = ({ onBac
                 const path = `tickets/${ticketData.id}/${Date.now()}_${attachment.name}`;
                 await supabase.storage.from('ticket-attachments').upload(path, attachment);
                 await supabase.from('ticket_attachments').insert({ ticket_id: ticketData.id, file_name: attachment.name, file_path: path, mime_type: attachment.type, uploaded_by: userProfile?.id });
+            }
+
+            // --- TRIGGER EMAIL NOTIFICATION ---
+            try {
+                await emailService.triggerEmail({
+                    event_key: 'ticket_created',
+                    company_id: userProfile?.company_id,
+                    recipient_email: someoneElseDetails.email || userProfile?.email,
+                    placeholders: {
+                        requester_name: someoneElseDetails.fullName || userProfile?.full_name || 'User',
+                        ticket_number: ticketData.ticket_number,
+                        ticket_subject: subject,
+                        department_name: userProfile?.company?.company_name || 'Support',
+                        ticket_url: `${window.location.origin}/ticket/${ticketData.id}`
+                    }
+                });
+            } catch (emailErr) {
+                console.warn('Failed to send confirmation email:', emailErr);
             }
 
             setIsSuccess(true);

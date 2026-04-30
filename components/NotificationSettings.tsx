@@ -19,6 +19,10 @@ import {
     FileText
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+// @ts-ignore
+import EmailTemplates from './EmailTemplates.tsx';
+// @ts-ignore
+import SMTPSettings from './SMTPSettings.tsx';
 
 interface NotificationCategory {
     id: string;
@@ -46,7 +50,7 @@ const NotificationSettings: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [hasChanges, setHasChanges] = useState(false);
-    const [activeTab, setActiveTab] = useState<'agent' | 'customer' | 'supervisor'>('agent');
+    const [activeTab, setActiveTab] = useState<'agent' | 'customer' | 'supervisor' | 'email_templates' | 'smtp_settings'>('agent');
     const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({
         show: false,
         message: '',
@@ -315,7 +319,7 @@ const NotificationSettings: React.FC = () => {
     };
 
     const handleToggleSetting = (
-        settingsType: 'agent' | 'customer' | 'supervisor',
+        settingsType: 'agent' | 'customer' | 'supervisor' | 'email_templates',
         settingId: string
     ) => {
         const updateSettings = (settings: NotificationSetting[]) =>
@@ -331,12 +335,14 @@ const NotificationSettings: React.FC = () => {
             case 'supervisor':
                 setSupervisorSettings(updateSettings);
                 break;
+            case 'email_templates':
+                break;
         }
         setHasChanges(true);
     };
 
     const handleToggleChannel = (
-        settingsType: 'agent' | 'customer' | 'supervisor',
+        settingsType: 'agent' | 'customer' | 'supervisor' | 'email_templates',
         settingId: string,
         channel: 'email' | 'push' | 'inApp'
     ) => {
@@ -355,6 +361,8 @@ const NotificationSettings: React.FC = () => {
                 break;
             case 'supervisor':
                 setSupervisorSettings(updateSettings);
+                break;
+            case 'email_templates':
                 break;
         }
         setHasChanges(true);
@@ -447,6 +455,22 @@ const NotificationSettings: React.FC = () => {
             color: 'text-purple-600',
             bgColor: 'bg-purple-50',
             settings: supervisorSettings
+        },
+        {
+            id: 'email_templates' as const,
+            label: 'Email Templates',
+            icon: Mail,
+            color: 'text-amber-600',
+            bgColor: 'bg-amber-50',
+            settings: []
+        },
+        {
+            id: 'smtp_settings' as const,
+            label: 'SMTP Settings',
+            icon: Settings,
+            color: 'text-gray-600',
+            bgColor: 'bg-gray-50',
+            settings: []
         }
     ];
 
@@ -477,7 +501,7 @@ const NotificationSettings: React.FC = () => {
                     {setting.enabled && (
                         <div className="flex items-center gap-3 mt-3">
                             <button
-                                onClick={() => handleToggleChannel(activeTab, setting.id, 'email')}
+                                onClick={() => handleToggleChannel(activeTab as any, setting.id, 'email')}
                                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${setting.channels.email
                                     ? 'bg-blue-100 text-blue-700'
                                     : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
@@ -487,7 +511,7 @@ const NotificationSettings: React.FC = () => {
                                 Email
                             </button>
                             <button
-                                onClick={() => handleToggleChannel(activeTab, setting.id, 'push')}
+                                onClick={() => handleToggleChannel(activeTab as any, setting.id, 'push')}
                                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${setting.channels.push
                                     ? 'bg-purple-100 text-purple-700'
                                     : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
@@ -497,7 +521,7 @@ const NotificationSettings: React.FC = () => {
                                 Push
                             </button>
                             <button
-                                onClick={() => handleToggleChannel(activeTab, setting.id, 'inApp')}
+                                onClick={() => handleToggleChannel(activeTab as any, setting.id, 'inApp')}
                                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${setting.channels.inApp
                                     ? 'bg-emerald-100 text-emerald-700'
                                     : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
@@ -512,7 +536,7 @@ const NotificationSettings: React.FC = () => {
 
                 {/* Main toggle */}
                 <button
-                    onClick={() => handleToggleSetting(activeTab, setting.id)}
+                    onClick={() => handleToggleSetting(activeTab as any, setting.id)}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 flex-shrink-0 ${setting.enabled ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-300 hover:bg-gray-400'
                         }`}
                 >
@@ -635,14 +659,22 @@ const NotificationSettings: React.FC = () => {
 
                 {/* Settings List */}
                 <div className="p-6">
-                    <div className="flex items-center gap-2 mb-4">
-                        <currentTab.icon size={20} className={currentTab.color} />
-                        <h3 className="font-semibold text-gray-800">{currentTab.label}</h3>
-                    </div>
+                    {activeTab === 'email_templates' ? (
+                        <EmailTemplates />
+                    ) : activeTab === 'smtp_settings' ? (
+                        <SMTPSettings />
+                    ) : (
+                        <>
+                            <div className="flex items-center gap-2 mb-4">
+                                <currentTab.icon size={20} className={currentTab.color} />
+                                <h3 className="font-semibold text-gray-800">{currentTab.label}</h3>
+                            </div>
 
-                    <div className="space-y-3">
-                        {currentSettings.map(renderSettingCard)}
-                    </div>
+                            <div className="space-y-3">
+                                {currentSettings.map(renderSettingCard)}
+                            </div>
+                        </>
+                    )}
                 </div>
             </div>
 

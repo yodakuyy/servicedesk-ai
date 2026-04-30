@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase';
 import { applyAutoAssignment, getRoundRobinAgent } from '../lib/autoAssignment';
 // @ts-ignore
 import Swal from 'https://cdn.jsdelivr.net/npm/sweetalert2@11/+esm';
+import { emailService } from '../lib/emailService';
 
 interface RequesterCreateServiceRequestProps {
     onBack?: () => void;
@@ -605,6 +606,24 @@ const RequesterCreateServiceRequest: React.FC<RequesterCreateServiceRequestProps
                 timer: 2000,
                 showConfirmButton: false
             });
+
+            // --- TRIGGER EMAIL NOTIFICATION ---
+            try {
+                await emailService.triggerEmail({
+                    event_key: 'ticket_created',
+                    company_id: userProfile?.company_id,
+                    recipient_email: userProfile?.email,
+                    placeholders: {
+                        requester_name: userProfile?.full_name || 'User',
+                        ticket_number: ticketData.ticket_number,
+                        ticket_subject: selectedCategoryName,
+                        department_name: userProfile?.company?.company_name || 'Support',
+                        ticket_url: `${window.location.origin}/ticket/${ticketData.id}`
+                    }
+                });
+            } catch (emailErr) {
+                console.warn('Failed to send confirmation email:', emailErr);
+            }
 
             if (onSubmitSuccess) onSubmitSuccess();
 

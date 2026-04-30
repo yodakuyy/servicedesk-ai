@@ -11,6 +11,7 @@ import RichTextEditor from './RichTextEditor';
 import RequesterCreateIncident from './RequesterCreateIncident';
 import RequesterCreateServiceRequest from './RequesterCreateServiceRequest';
 import { useAccessControl, type PermissionResult } from '../hooks/useAccessControl';
+import { emailService } from '../lib/emailService';
 
 interface AgentTicketViewProps {
     userProfile?: any;
@@ -1305,6 +1306,26 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
             // Always update ticket updated_at to bump it to top of list
             await supabase.from('tickets').update({ updated_at: new Date().toISOString() }).eq('id', selectedTicketId);
+
+            // --- TRIGGER EMAIL NOTIFICATION TO REQUESTER ---
+            if (!isInternalNote && selectedTicket?.requester?.email) {
+                try {
+                    await emailService.triggerEmail({
+                        event_key: 'agent_replied',
+                        company_id: selectedTicket?.group?.company_id,
+                        recipient_email: selectedTicket.requester.email,
+                        placeholders: {
+                            requester_name: selectedTicket.requester.full_name || 'User',
+                            ticket_number: selectedTicket.ticket_number,
+                            reply_content: newMessage,
+                            department_name: selectedTicket.group?.company?.company_name || 'Support',
+                            ticket_url: `${window.location.origin}/ticket/${selectedTicket.id}`
+                        }
+                    });
+                } catch (emailErr) {
+                    console.warn('Failed to send reply notification email:', emailErr);
+                }
+            }
 
             // Auto-update status (Zero Touch Workflow) - Respecting Workflow Mapping
             const currentStatusName = selectedTicket.ticket_statuses?.status_name;

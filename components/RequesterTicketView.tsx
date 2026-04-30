@@ -6,6 +6,7 @@ import {
 import { supabase } from '../lib/supabase';
 import RichTextEditor from './RichTextEditor';
 import CSATModal from './CSATModal';
+import { emailService } from '../lib/emailService';
 
 interface RequesterTicketViewProps {
     ticketId?: string | null;
@@ -135,6 +136,27 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
 
             setReplyText('');
             await fetchMessages(); // Refresh conversation
+
+            // --- TRIGGER EMAIL NOTIFICATION TO AGENT ---
+            if (ticket?.agent?.email || ticket?.group?.id) {
+                try {
+                    await emailService.triggerEmail({
+                        event_key: 'requester_replied',
+                        company_id: ticket?.group?.company_id,
+                        recipient_email: ticket.agent?.email, // If assigned
+                        placeholders: {
+                            requester_name: user.user_metadata?.full_name || 'User',
+                            ticket_number: ticket.ticket_number,
+                            reply_content: replyText,
+                            agent_name: ticket.agent?.full_name || 'Agent',
+                            department_name: ticket.group?.company?.company_name || 'Support',
+                            ticket_url: `${window.location.origin}/agent/ticket/${ticket.id}`
+                        }
+                    });
+                } catch (emailErr) {
+                    console.warn('Failed to send requester reply notification:', emailErr);
+                }
+            }
 
             // Auto-revert to In Progress if Resolved or Pending
             const currentStatus = ticket.ticket_statuses?.status_name;
@@ -427,6 +449,23 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                             });
 
                                             setShowCSATModal(true);
+
+                                            // --- TRIGGER EMAIL NOTIFICATION (TICKET RESOLVED) ---
+                                            try {
+                                                await emailService.triggerEmail({
+                                                    event_key: 'ticket_resolved',
+                                                    company_id: ticket?.group?.company_id,
+                                                    recipient_email: user.email!,
+                                                    placeholders: {
+                                                        requester_name: user.user_metadata?.full_name || 'User',
+                                                        ticket_number: ticket.ticket_number,
+                                                        department_name: ticket.group?.company?.company_name || 'Support',
+                                                        ticket_url: `${window.location.origin}/ticket/${ticket.id}`
+                                                    }
+                                                });
+                                            } catch (emailErr) {
+                                                console.warn('Failed to send resolution email:', emailErr);
+                                            }
                                         } else {
                                             throw new Error(rpcData?.error || 'Failed to close ticket');
                                         }
