@@ -3109,21 +3109,24 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                             </div>
                             {(() => {
                                 const isTerminalStatus = selectedTicket.ticket_statuses?.is_final === true;
+                                const isResolved = selectedTicket.ticket_statuses?.status_name === 'Resolved';
+                                const shouldDisableActions = isTerminalStatus || isResolved;
+                                
                                 if (isRequesterOnly) return null; // Hide all action buttons for requesters
 
                                 return (
                                     <div className="flex gap-2">
                                         <button
                                             onClick={handleAssignToMe}
-                                            disabled={isAssigning || selectedTicket.assigned_to === userProfile?.id || !checkPermission('update', selectedTicket).allowed || isTerminalStatus}
+                                            disabled={isAssigning || selectedTicket.assigned_to === userProfile?.id || !checkPermission('update', selectedTicket).allowed || shouldDisableActions}
                                             className={`px-4 py-2 text-xs font-bold rounded-lg shadow-md transition-all flex items-center gap-2
                                                 ${selectedTicket.assigned_to === userProfile?.id
                                                     ? 'bg-emerald-50 text-emerald-600 border border-emerald-100 shadow-none cursor-default'
-                                                    : !checkPermission('update', selectedTicket).allowed || isTerminalStatus
+                                                    : !checkPermission('update', selectedTicket).allowed || shouldDisableActions
                                                         ? 'bg-gray-100 text-gray-400 border border-gray-200 shadow-none cursor-not-allowed'
                                                         : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'
                                                 }`}
-                                            title={isTerminalStatus ? 'Ticket is closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : ''}
+                                            title={shouldDisableActions ? 'Ticket is resolved, closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : ''}
                                         >
                                             {isAssigning ? (
                                                 <Loader2 size={12} className="animate-spin" />
@@ -3139,18 +3142,18 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                         {userProfile?.role_id === 2 && (
                                             <div className="relative group">
                                                 <button
-                                                    disabled={isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus}
+                                                    disabled={isTransferring || !checkPermission('update', selectedTicket).allowed || shouldDisableActions}
                                                     className={`p-2 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
-                                                        ${isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus
+                                                        ${isTransferring || !checkPermission('update', selectedTicket).allowed || shouldDisableActions
                                                             ? 'opacity-40 cursor-not-allowed bg-gray-50'
                                                             : 'text-gray-400 hover:text-emerald-600'
                                                         }`}
-                                                    title={isTerminalStatus ? 'Ticket is closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Reassign to Team Member"}
+                                                    title={shouldDisableActions ? 'Ticket is resolved, closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Reassign to Team Member"}
                                                 >
                                                     <Users size={16} />
                                                     <span className="text-[10px] font-black uppercase tracking-widest pr-1 text-emerald-600">Reassign</span>
                                                 </button>
-                                                {!isTransferring && checkPermission('update', selectedTicket).allowed && !isTerminalStatus && (
+                                                {!isTransferring && checkPermission('update', selectedTicket).allowed && !shouldDisableActions && (
                                                     <select
                                                         onChange={(e) => handleReassign(e.target.value)}
                                                         value=""
@@ -3183,15 +3186,15 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                                         <div className="relative group">
                                             <button
-                                                disabled={isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus}
+                                                disabled={isTransferring || !checkPermission('update', selectedTicket).allowed || shouldDisableActions}
                                                 className={`p-2 text-gray-400 hover:text-blue-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
-                                                    ${isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
-                                                title={isTerminalStatus ? 'Ticket is closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Transfer Group"}
+                                                    ${isTransferring || !checkPermission('update', selectedTicket).allowed || shouldDisableActions ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
+                                                title={shouldDisableActions ? 'Ticket is resolved, closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Transfer Group"}
                                             >
                                                 <ArrowRight size={16} />
                                                 <span className="text-[10px] font-black uppercase tracking-widest pr-1">Transfer</span>
                                             </button>
-                                            {!isTransferring && checkPermission('update', selectedTicket).allowed && !isTerminalStatus && (
+                                            {!isTransferring && checkPermission('update', selectedTicket).allowed && !shouldDisableActions && (
                                                 <select
                                                     onChange={(e) => handleTransferGroup(e.target.value)}
                                                     value=""
@@ -3214,15 +3217,15 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
 
                                         <div className="relative group">
                                             <button
-                                                disabled={isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus}
+                                                disabled={isTransferring || !checkPermission('update', selectedTicket).allowed || shouldDisableActions}
                                                 className={`p-2 text-gray-400 hover:text-orange-600 rounded-lg border border-gray-200 transition-colors flex items-center gap-1.5 
-                                                    ${isTransferring || !checkPermission('update', selectedTicket).allowed || isTerminalStatus ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
-                                                title={isTerminalStatus ? 'Ticket is closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Escalate to L2"}
+                                                    ${isTransferring || !checkPermission('update', selectedTicket).allowed || shouldDisableActions ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
+                                                title={shouldDisableActions ? 'Ticket is resolved, closed or canceled' : !checkPermission('update', selectedTicket).allowed ? checkPermission('update', selectedTicket).reason : "Escalate to L2"}
                                             >
                                                 <ArrowUpRight size={16} />
                                                 <span className="text-[10px] font-black uppercase tracking-widest pr-1 text-orange-600">Escalate</span>
                                             </button>
-                                            {!isTransferring && checkPermission('update', selectedTicket).allowed && !isTerminalStatus && (
+                                            {!isTransferring && checkPermission('update', selectedTicket).allowed && !shouldDisableActions && (
                                                 <select
                                                     onChange={(e) => handleEscalate(e.target.value)}
                                                     value=""
@@ -3247,9 +3250,9 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                             )}
                                         </div>
                                         <button
-                                            disabled={isTerminalStatus}
-                                            className={`p-2 text-gray-400 hover:text-gray-600 rounded-lg border border-gray-200 ${isTerminalStatus ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
-                                            title={isTerminalStatus ? 'Ticket is closed or canceled' : ''}
+                                            disabled={shouldDisableActions}
+                                            className={`p-2 text-gray-400 hover:text-gray-600 rounded-lg border border-gray-200 ${shouldDisableActions ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}`}
+                                            title={shouldDisableActions ? 'Ticket is resolved, closed or canceled' : ''}
                                         >
                                             <MoreHorizontal size={16} />
                                         </button>

@@ -77,9 +77,16 @@ const calculateBusinessElapsed = (startDate: Date, endDate: Date, schedule: any[
 
 const ReportsView: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'overview' | 'export' | 'sla' | 'leaderboard'>('overview');
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const startStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const lastDate = new Date(year, month + 1, 0).getDate();
+    const endStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDate).padStart(2, '0')}`;
+
     const [dateRange, setDateRange] = useState({
-        start: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
-        end: new Date().toISOString().split('T')[0]
+        start: startStr,
+        end: endStr
     });
     const [isLoading, setIsLoading] = useState(false);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
