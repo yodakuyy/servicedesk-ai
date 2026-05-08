@@ -296,8 +296,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         }
       }
     };
+
+    const handleForceBack = () => {
+      setSelectedTicketId(null);
+    };
+
     window.addEventListener('navigate', handleNavigate);
-    return () => window.removeEventListener('navigate', handleNavigate);
+    window.addEventListener('force-back-to-list', handleForceBack);
+    return () => {
+      window.removeEventListener('navigate', handleNavigate);
+      window.removeEventListener('force-back-to-list', handleForceBack);
+    };
   }, []);
 
   // Close notification panel when clicking outside

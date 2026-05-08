@@ -18,9 +18,9 @@ const RequesterTicketManager: React.FC<RequesterTicketManagerProps> = ({ userPro
     );
     const [selectedTicketId, setSelectedTicketId] = useState<string | null>(initialTicketId || null);
 
-    // Update view if initialTicketId changes
+    // Update view only if initialTicketId prop changes to a NEW valid ID
     React.useEffect(() => {
-        if (initialTicketId) {
+        if (initialTicketId && initialTicketId !== selectedTicketId) {
             setSelectedTicketId(initialTicketId);
             setCurrentView('detail');
         }
@@ -43,6 +43,13 @@ const RequesterTicketManager: React.FC<RequesterTicketManagerProps> = ({ userPro
         setCurrentView('list');
         setSelectedTicketId(null);
     };
+
+    // Add listener for force back event as a failsafe
+    React.useEffect(() => {
+        const handleForceBack = () => handleBack();
+        window.addEventListener('force-back-to-list', handleForceBack);
+        return () => window.removeEventListener('force-back-to-list', handleForceBack);
+    }, []);
 
     const handleSubmitSuccess = () => {
         setCurrentView('list');

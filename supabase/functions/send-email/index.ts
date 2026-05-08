@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { SmtpClient } from "https://deno.land/x/smtp@v0.7.0/mod.ts"
 
 const corsHeaders = {
@@ -6,8 +5,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-serve(async (req) => {
-  // Handle CORS preflight request
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -16,23 +14,25 @@ serve(async (req) => {
     const { to, subject, html, smtp_config } = await req.json()
 
     if (!smtp_config) {
-      throw new Error('SMTP Configuration is missing')
+      throw new Error('Konfigurasi SMTP tidak ditemukan.')
     }
 
     const client = new SmtpClient()
+    const port = Number(smtp_config.port)
 
-    // Connect to SMTP server
-    await client.connectSync({
-      hostname: smtp_config.host,
-      port: parseInt(smtp_config.port),
-      username: smtp_config.user,
-      password: smtp_config.password,
-      tls: smtp_config.encryption === 'tls' || smtp_config.port == 465,
+    const host = (smtp_config.host || "").trim();
+    console.log(`Mencoba koneksi ke ${host} port ${port}...`)
+
+    await client.connect({
+      hostname: host,
+      port: port,
+      username: (smtp_config.user || "").trim(),
+      password: smtp_config.password, // Tanpa trim buat password biar aman
+      tls: port === 465, 
     })
 
-    // Send Email
     await client.send({
-      from: smtp_config.from_email || smtp_config.user,
+      from: (smtp_config.from_email || smtp_config.user || "").trim(),
       to: to,
       subject: subject,
       content: html,
@@ -47,8 +47,17 @@ serve(async (req) => {
     })
 
   } catch (error) {
-    console.error("Error sending email:", error.message);
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error("SMTP Error Detail:", error)
+    
+    let detail = error.message;
+    if (detail.includes("os error 111")) {
+      detail = "Koneksi Ditolak Microsoft. Coba ganti Host di Settings jadi 'smtp-mail.outlook.com' atau hubungi IT buat buka akses SMTP AUTH.";
+    }
+
+    return new Response(JSON.stringify({ 
+      error: error.message,
+      detail: detail
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
     })

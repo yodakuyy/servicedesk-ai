@@ -24,6 +24,15 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
     const [hasCSAT, setHasCSAT] = useState(false);
     const [isCheckingCSAT, setIsCheckingCSAT] = useState(false);
 
+    const getStatusInfo = (t: any) => {
+        if (!t?.ticket_statuses) return { name: 'Open', is_final: false };
+        const status = Array.isArray(t.ticket_statuses) ? t.ticket_statuses[0] : t.ticket_statuses;
+        return {
+            name: status?.status_name || 'Open',
+            is_final: status?.is_final === true
+        };
+    };
+
     const fetchMessages = async () => {
         if (!ticketId) return;
         const { data, error } = await supabase
@@ -287,24 +296,41 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
         );
     }
 
-    // Map DB status to visual progress
-    const statusName = ticket.ticket_statuses?.status_name || 'Open';
-    const isPending = statusName.toLowerCase().includes('pending');
-    const isResolved = ['Resolved', 'Closed'].includes(statusName);
+    const getStatusName = (t: any) => {
+        if (!t?.ticket_statuses) return 'Open';
+        const s = Array.isArray(t.ticket_statuses) ? t.ticket_statuses[0] : t.ticket_statuses;
+        return (s?.status_name || 'Open').trim();
+    };
 
-    const progressSteps = [
-        { label: 'Ticket Submitted', status: 'completed' },
-        { label: 'Being Reviewed', status: statusName !== 'Open' ? 'completed' : 'current' },
-        {
-            label: 'In Progress',
-            status: statusName === 'In Progress' ? 'current' : (isPending || isResolved ? 'completed' : 'pending')
-        },
-        {
-            label: 'Pending',
-            status: isPending ? 'current' : (isResolved ? 'completed' : 'pending')
-        },
-        { label: 'Resolved', status: statusName === 'Resolved' ? 'current' : (statusName === 'Closed' ? 'completed' : 'pending') }
-    ];
+    const isTicketFinal = (t: any) => {
+        if (!t?.ticket_statuses) return false;
+        const s = Array.isArray(t.ticket_statuses) ? t.ticket_statuses[0] : t.ticket_statuses;
+        if (s?.is_final === true) return true;
+        const name = (s?.status_name || '').toLowerCase();
+        return ['canceled', 'resolved', 'closed'].includes(name.trim());
+    };
+
+    const getProgressSteps = (t: any) => {
+        const name = getStatusName(t);
+        const norm = name.toLowerCase();
+        const final = isTicketFinal(t);
+        const pending = norm.includes('pending');
+        const resolved = ['resolved', 'closed'].includes(norm);
+
+        return [
+            { label: 'Ticket Submitted', status: 'completed' },
+            { label: 'Being Reviewed', status: norm !== 'open' ? 'completed' : 'current' },
+            {
+                label: 'In Progress',
+                status: norm === 'in progress' ? 'current' : (pending || resolved || final ? 'completed' : 'pending')
+            },
+            {
+                label: 'Pending',
+                status: pending ? 'current' : (resolved || (final && norm.includes('canceled')) ? 'completed' : 'pending')
+            },
+            { label: 'Resolved', status: norm === 'resolved' ? 'current' : (norm === 'closed' ? 'completed' : 'pending') }
+        ];
+    };
 
     return (
         <div className="flex flex-col h-full bg-slate-50 font-sans w-full shadow-sm min-h-screen">
@@ -337,47 +363,93 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
 
                                 if (reason) {
                                     try {
-                                        setLoading(true);
-                                        // Fetch 'Canceled' status ID
-                                        const { data: statusData } = await supabase
+                                        // Fetch 'Canceled' status ID (case-insensitive)
+                                        const { data: statusData, error: statusError } = await supabase
                                             .from('ticket_statuses')
                                             .select('status_id')
-                                            .eq('status_name', 'Canceled')
-                                            .single();
+                                            .ilike('status_name', 'canceled')
+                                            .maybeSingle();
+ 
+                                        if (statusError) throw statusError;
+
+                                        if (!statusData) {
+                                            console.error("Status 'Canceled' not found in database");
+                                            Swal.fire('Error', "System error: Status 'Canceled' not found. Please contact IT.", 'error');
+                                            return;
+                                        }
 
                                         if (statusData) {
-                                            // Update ticket
-                                            const { error } = await supabase
+                                            // 1. Update status in database
+                                            // Refresh ticket data first to get latest assigned_agent_id
+                                            const { data: latestTicket } = await supabase
+                                                .from('tickets')
+                                                .select('*, group:groups!assignment_group_id(*)')
+                                                .eq('id', ticketId)
+                                                .single();
+                                            
+                                            const { error: updateError } = await supabase
                                                 .from('tickets')
                                                 .update({ status_id: statusData.status_id })
                                                 .eq('id', ticketId);
-
-                                            if (error) throw error;
-
-                                            // Get user info for log
+ 
+                                            if (updateError) throw updateError;
+ 
+                                            // 2. Trigger back to list IMMEDIATELY (Double Trigger)
+                                            if (onBack) onBack();
+                                            window.dispatchEvent(new CustomEvent('force-back-to-list'));
+ 
+                                            // 3. Log activity & show success in background
                                             const { data: { user } } = await supabase.auth.getUser();
-
-                                            // Log activity
                                             await supabase.from('ticket_activity_log').insert({
                                                 ticket_id: ticketId,
                                                 actor_id: user?.id,
                                                 action: `Ticket canceled by user. Reason: ${reason}`
                                             });
 
-                                            // Refresh UI without reload
-                                            setTicket((prev: any) => ({
-                                                ...prev,
-                                                status_id: statusData.status_id,
-                                                ticket_statuses: { status_name: 'Canceled' }
-                                            }));
+                                            // 4. Notify Assigned Agent or Group Supervisor
+                                            try {
+                                                const currentTicket = latestTicket || ticket;
+                                                let targetUserId = currentTicket.assigned_to;
+                                                
+                                                // If no agent assigned, try to notify group supervisor
+                                                if (!targetUserId && currentTicket.assignment_group_id) {
+                                                    const { data: groupData } = await supabase
+                                                        .from('groups')
+                                                        .select('supervisor_id')
+                                                        .eq('id', currentTicket.assignment_group_id)
+                                                        .single();
+                                                    if (groupData?.supervisor_id) {
+                                                        targetUserId = groupData.supervisor_id;
+                                                    }
+                                                }
 
-                                            Swal.fire('Canceled', 'Ticket has been canceled.', 'success');
+                                                if (targetUserId) {
+                                                    const companyId = currentTicket.group?.company_id || null;
+
+                                                    await supabase.rpc('send_notification', {
+                                                        p_user_id: targetUserId,
+                                                        p_title: `Ticket Canceled by User`,
+                                                        p_message: `Ticket ${currentTicket.ticket_number} has been canceled by the requester. Reason: ${reason}`,
+                                                        p_type: 'ticket_assigned',
+                                                        p_reference_type: 'ticket',
+                                                        p_reference_id: ticketId,
+                                                        p_company_id: companyId
+                                                    });
+                                                }
+                                            } catch (nErr) {
+                                                console.error("Notification Flow Error:", nErr);
+                                            }
+ 
+                                            await Swal.fire({
+                                                title: 'Canceled',
+                                                text: 'Ticket has been canceled successfully.',
+                                                icon: 'success',
+                                                confirmButtonColor: '#4f46e5'
+                                            });
                                         }
                                     } catch (err: any) {
                                         console.error('Error canceling ticket:', err);
                                         Swal.fire('Error', 'Failed to cancel ticket', 'error');
-                                    } finally {
-                                        setLoading(false);
                                     }
                                 }
                             }}
@@ -424,7 +496,10 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                             // Refresh ticket status locally
                                             setTicket((prev: any) => ({
                                                 ...prev,
-                                                ticket_statuses: { status_name: 'Resolved' }
+                                                ticket_statuses: { 
+                                                    status_name: 'Resolved',
+                                                    is_final: true
+                                                }
                                             }));
 
                                             // Refetch messages
@@ -492,7 +567,7 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
 
             <main className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
                 {/* CSAT Prompt Banner */}
-                {isResolved && !hasCSAT && !isCheckingCSAT && (
+                {getStatusName(ticket).toLowerCase() === 'resolved' && !hasCSAT && !isCheckingCSAT && (
                     <div className="bg-gradient-to-r from-indigo-600 to-violet-700 rounded-3xl p-6 text-white shadow-xl shadow-indigo-100 flex flex-col md:flex-row items-center justify-between gap-6 animate-in slide-in-from-top-4 duration-500">
                         <div className="flex items-center gap-5">
                             <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md">
@@ -521,14 +596,14 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                                 <h2 className="text-2xl font-bold text-gray-900 break-words">{ticket.subject}</h2>
                             </div>
                             <div className="flex gap-3 shrink-0 flex-wrap">
-                                <span className={`px-3 py-1 rounded-lg text-sm font-semibold border flex items-center gap-2 ${ticket.ticket_statuses?.is_final === true ? 'bg-red-50 text-red-700 border-red-100' :
-                                    statusName === 'Open' ? 'bg-blue-50 text-blue-700 border-blue-100' :
-                                    statusName === 'Resolved' ? 'bg-green-50 text-green-700 border-green-100' :
-                                    statusName.toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-700 border-orange-100' :
+                                <span className={`px-3 py-1 rounded-lg text-sm font-semibold border flex items-center gap-2 ${isTicketFinal(ticket) ? 'bg-red-50 text-red-700 border-red-100' :
+                                    getStatusName(ticket).toLowerCase() === 'open' ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                                    ['resolved', 'closed'].includes(getStatusName(ticket).toLowerCase()) ? 'bg-green-50 text-green-700 border-green-100' :
+                                    getStatusName(ticket).toLowerCase().includes('pending') ? 'bg-orange-50 text-orange-700 border-orange-100' :
                                     'bg-slate-50 text-slate-700 border-slate-100'
                                     }`}>
-                                    <div className={`w-2 h-2 rounded-full ${statusName === 'Resolved' ? 'bg-green-500' : 'bg-blue-500 animate-pulse'}`}></div>
-                                    Status: {statusName}
+                                    <div className={`w-2 h-2 rounded-full ${isTicketFinal(ticket) ? 'bg-red-500' : ['resolved', 'closed'].includes(getStatusName(ticket).toLowerCase()) ? 'bg-green-500' : 'bg-blue-500 animate-pulse'}`}></div>
+                                    Status: {getStatusName(ticket)}
                                 </span>
                                 <span className={`px-3 py-1 rounded-lg text-sm font-semibold border flex items-center gap-2 ${ticket.priority?.toLowerCase() === 'high' || ticket.priority?.toLowerCase() === 'urgent'
                                     ? 'bg-red-50 text-red-700 border-red-100'
@@ -539,11 +614,10 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                             </div>
                         </div>
 
-                        {/* Visual Progress Steps */}
                         <div className="relative pt-2 pb-4">
                             <div className="absolute top-5 left-0 right-0 h-0.5 bg-gray-100 hidden md:block" style={{ left: '30px', right: '30px' }}></div>
                             <div className="flex flex-col md:flex-row justify-between gap-4 relative z-10">
-                                {progressSteps.map((step, index) => (
+                                {getProgressSteps(ticket).map((step, index) => (
                                     <div key={index} className={`flex md:flex-col items-center gap-3 md:gap-2 flex-1 ${step.status === 'pending' ? 'opacity-50' : ''}`}>
                                         <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 border-2 transition-colors ${step.status === 'completed' || step.status === 'current' ? 'bg-green-100 border-green-500 text-green-600' : 'bg-white border-gray-300 text-gray-300'
                                             } ${step.status === 'current' ? 'ring-4 ring-green-50' : ''}`}>
@@ -701,13 +775,13 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     </div>
 
                     {/* Reply Composer */}
-                    {(ticket.ticket_statuses?.is_final === true) ? (
+                    {isTicketFinal(ticket) ? (
                         <div className="p-8 bg-gray-50 border-t border-gray-100 rounded-b-xl flex flex-col items-center justify-center text-center">
                             <div className="w-12 h-12 bg-gray-200 text-gray-400 rounded-full flex items-center justify-center mb-3">
                                 <Lock size={24} />
                             </div>
                             <h3 className="text-gray-800 font-bold mb-1">
-                                This ticket is {statusName}
+                                This ticket is {getStatusName(ticket)}
                             </h3>
                             <p className="text-gray-500 text-sm max-w-md">
                                 Replies are disabled for this ticket. If you have further updates or issues, please create a new ticket.
