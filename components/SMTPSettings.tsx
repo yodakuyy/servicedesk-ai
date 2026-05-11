@@ -119,7 +119,7 @@ const SMTPSettings: React.FC = () => {
     }
 
     return (
-        <div className="max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden mb-8">
                 <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
                     <div className="flex items-center gap-3">

@@ -669,7 +669,7 @@ const PresentationView: React.FC<{ onExit: () => void }> = ({ onExit }) => {
                     <div className="flex flex-col">
                         {slides.map((slide) => (
                             <div key={slide.id} className="print-break-after relative w-full h-[100vh] bg-[#030712] p-12 flex flex-col justify-center border-b border-white/10">
-                                <div className="max-w-7xl mx-auto w-full h-full flex flex-col">
+                                <div className="w-full h-full flex flex-col">
                                     <div className="mb-8">
                                         <h2 className="text-4xl font-bold text-white mb-2">{slide.title}</h2>
                                         {slide.subtitle && <p className="text-xl text-indigo-200/80">{slide.subtitle}</p>}

@@ -418,7 +418,7 @@ const AutoCloseRules: React.FC = () => {
     };
 
     return (
-        <div className="p-8 max-w-7xl mx-auto">
+        <div className="p-8 w-full min-h-full flex flex-col">
             {/* Run Result Notification */}
             {runResult?.show && (
                 <div className={`mb-6 p-4 rounded-xl flex items-start gap-3 ${runResult.errors.length > 0

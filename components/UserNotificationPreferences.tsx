@@ -184,7 +184,7 @@ const UserNotificationPreferences: React.FC = () => {
     }
 
     return (
-        <div className="p-8 max-w-4xl mx-auto pb-24">
+        <div className="p-8 w-full pb-24">
             {/* Toast */}
             {toast.show && (
                 <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-xl ${toast.type === 'success' ? 'bg-emerald-600 text-white' :

@@ -497,7 +497,7 @@ const AutoAssignment: React.FC = () => {
     };
 
     return (
-        <div className="p-8 max-w-7xl mx-auto">
+        <div className="p-8 w-full min-h-full flex flex-col">
             {/* Header */}
             <div className="mb-8 flex items-center justify-between">
                 <div>

@@ -620,7 +620,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ onNavigate, onViewTicket,
     };
 
     return (
-        <div className="p-8 w-full mx-auto space-y-8">
+        <div className="p-8 w-full min-h-full space-y-8">
             {/* Welcome & Stats Section */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 bg-gradient-to-br from-indigo-600 to-violet-700 p-8 rounded-2xl shadow-lg border border-indigo-500/20 relative overflow-hidden flex flex-col justify-center">

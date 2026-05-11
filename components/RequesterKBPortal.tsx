@@ -613,7 +613,7 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null; onClose?: () => v
             </div>
 
             {/* Main Content */}
-            <div className="max-w-6xl mx-auto px-6 py-12">
+            <div className="w-full px-6 py-12">
                 {/* Search Results */}
                 {(searchQuery || selectedCategory) && articles.length > 0 && (
                     <div className="mb-12">
@@ -782,7 +782,7 @@ const RequesterKBPortal: React.FC<{ companyId?: number | null; onClose?: () => v
 
             {/* Footer CTA */}
             <div className="bg-white border-t border-gray-100">
-                <div className="max-w-6xl mx-auto px-6 py-12">
+                <div className="w-full px-6 py-12">
                     <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-8 md:p-12 text-center">
                         <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">
                             Can&apos;t find what you&apos;re looking for?

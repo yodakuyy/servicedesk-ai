@@ -538,7 +538,7 @@ const SLAPolicies: React.FC<SLAPoliciesProps> = ({ initialPolicyId, onClearIniti
     // RENDER LIST VIEW
     if (view === 'list') {
         return (
-            <div className="p-8 max-w-7xl mx-auto">
+            <div className="p-8 w-full min-h-full flex flex-col">
                 {/* Toast Notification */}
                 {toast.show && (
                     <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-xl shadow-lg flex items-center gap-3 animate-in slide-in-from-top duration-300 ${toast.type === 'success' ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>

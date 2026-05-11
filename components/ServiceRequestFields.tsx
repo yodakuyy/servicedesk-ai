@@ -512,7 +512,7 @@ const ServiceRequestFields: React.FC = () => {
                                     {previewMode ? (
                                         // PREVIEW MODE (VIEW ONLY)
                                         <div className="flex-1 overflow-y-auto bg-gray-50/50 p-12">
-                                            <div className="max-w-2xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-gray-200 space-y-6 animate-in fade-in duration-300">
+                                            <div className="w-full bg-white p-8 rounded-2xl shadow-sm border border-gray-200 space-y-6 animate-in fade-in duration-300">
                                                 <div className="pb-6 border-b border-gray-100">
                                                     <h2 className="text-2xl font-black text-gray-800">New Service Request</h2>
                                                     <p className="text-gray-500 text-sm mt-1">Submit a request for <span className="font-bold text-gray-700">{selectedNodeName}</span></p>
@@ -608,7 +608,7 @@ const ServiceRequestFields: React.FC = () => {
                                     ) : (
                                         // EDIT MODE
                                         <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-                                            <div className="max-w-3xl mx-auto space-y-6">
+                                            <div className="w-full space-y-6">
 
                                                 {/* Fields List */}
                                                 <div className="space-y-4">

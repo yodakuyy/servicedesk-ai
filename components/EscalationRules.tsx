@@ -535,7 +535,7 @@ const EscalationRules: React.FC = () => {
     // LIST VIEW
     if (view === 'list') {
         return (
-            <div className="p-8 pb-20 max-w-7xl mx-auto min-h-screen">
+            <div className="p-8 pb-20 w-full min-h-full flex flex-col">
                 <div className="mb-8">
                     <h1 className="text-2xl font-bold text-gray-800">Escalation Rules</h1>
                     <p className="text-gray-500 mt-1">Configure automated actions when SLA thresholds are reached</p>

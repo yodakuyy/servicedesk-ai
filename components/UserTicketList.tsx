@@ -187,7 +187,7 @@ const UserTicketList: React.FC<UserTicketListProps> = ({ onNavigate, onViewTicke
     };
 
     return (
-        <div className="p-8 w-full mx-auto space-y-8">
+        <div className="p-8 w-full min-h-full space-y-8">
             {/* Header */}
             <div className="space-y-1">
                 <h1 className="text-3xl font-bold text-gray-900">
