@@ -800,7 +800,7 @@ const HelpCenter: React.FC = () => {
                             title: 'Response Time',
                             icon: Clock,
                             color: 'indigo',
-                            desc: slaPolicies[activePolicyIndex]?.targets?.[0]?.response !== '-'
+                            desc: (slaPolicies[activePolicyIndex]?.targets?.[0]?.response && slaPolicies[activePolicyIndex].targets[0].response !== '-')
                                 ? `Starting from ${slaPolicies[activePolicyIndex].targets.find(t => t.response !== '-')?.response}`
                                 : 'How quickly we acknowledge your request'
                         },
@@ -808,7 +808,7 @@ const HelpCenter: React.FC = () => {
                             title: 'Resolution Time',
                             icon: CheckCircle,
                             color: 'green',
-                            desc: slaPolicies[activePolicyIndex]?.targets?.[0]?.resolution !== '-'
+                            desc: (slaPolicies[activePolicyIndex]?.targets?.[0]?.resolution && slaPolicies[activePolicyIndex].targets[0].resolution !== '-')
                                 ? `Target resolved in ${slaPolicies[activePolicyIndex].targets.find(t => t.resolution !== '-')?.resolution}`
                                 : 'Target duration to solve the issue'
                         },
