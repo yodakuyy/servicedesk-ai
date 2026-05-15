@@ -98,11 +98,88 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                     setCurrentUserRoleName((data.roles as any).role_name || '');
                 }
             } catch (err) {
-                console.error('Error fetching current user role:', err);
+                console.error('Error fetching role:', err);
             }
         };
         fetchCurrentRole();
-    }, [userProfile?.id]);
+    }, [userProfile]);
+
+    const fetchDetails = async () => {
+        if (!selectedTicketId) return;
+        const { data: ticket } = await supabase
+            .from('tickets')
+            .select(`
+                *,
+                category_id,
+                ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
+                ticket_categories (name),
+                services (name),
+                requester:profiles!fk_tickets_requester (full_name, email),
+                assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id, roles:role_id(role_name)),
+                group:groups!assignment_group_id (
+                    id, name, company_id, 
+                    company:company_id(company_name, sla_escalation_mode),
+                    group_sla_policies(sla_policy_id),
+                    business_hours(weekly_schedule)
+                ),
+                ticket_attachments (*)
+            `)
+            .eq('id', selectedTicketId)
+            .single();
+        setSelectedTicket(ticket);
+
+        // Dynamically fetch workflow transitions for the ticket's department
+        if (ticket?.group?.company_id) {
+            const { data: wf } = await supabase
+                .from('department_workflows')
+                .select('workflow_id')
+                .eq('department_id', ticket.group.company_id)
+                .eq('is_active', true)
+                .single();
+
+            if (wf) {
+                const { data: trans } = await supabase
+                    .from('workflow_transitions')
+                    .select('from_status_id, to_status_id, allowed_roles')
+                    .eq('workflow_id', wf.workflow_id);
+                if (trans) setWorkflowTransitions(trans);
+                else setWorkflowTransitions([]);
+            } else {
+                setWorkflowTransitions([]);
+            }
+        }
+
+        const { data: aiData } = await supabase.from('ticket_ai_insights').select('*').eq('ticket_id', selectedTicketId).single();
+        setAiInsight(aiData);
+
+        const { data: msgs } = await supabase
+            .from('ticket_messages')
+            .select('*, sender:profiles!sender_id(full_name)')
+            .eq('ticket_id', selectedTicketId)
+            .order('created_at', { ascending: true });
+
+        if (msgs) {
+            setMessages(msgs.map(m => ({
+                ...m,
+                sender_name: m.sender?.full_name || (m.sender_role === 'requester' ? 'User' : 'Agent')
+            })));
+        }
+    };
+
+    const fetchActivityLogs = async () => {
+        if (!selectedTicketId) return;
+        const { data, error } = await supabase
+            .from('ticket_activity_log')
+            .select('*')
+            .eq('ticket_id', selectedTicketId)
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error('Error fetching activity logs:', error);
+            return;
+        }
+        if (data) setActivityLogs(data);
+    };
 
     // Queue Filter State - for switching between different ticket views
     const [queueFilter, setQueueFilter] = useState<'assigned' | 'submitted' | 'all' | 'escalated'>(initialQueueFilter);
@@ -484,7 +561,6 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                     ticket_id: selectedTicketId,
                     file_name: file.name,
                     file_path: fileName,
-                    file_size: file.size,
                     mime_type: file.type,
                     uploaded_by: userProfile?.id
                 })
@@ -498,6 +574,16 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                 ...prev,
                 ticket_attachments: [...(prev.ticket_attachments || []), attData]
             }));
+
+            // Log activity
+            await supabase.from('ticket_activity_log').insert({
+                ticket_id: selectedTicketId,
+                action: `File attached: ${file.name}`,
+                actor_id: userProfile?.id
+            });
+
+            // Refresh activity logs
+            fetchActivityLogs();
 
             // @ts-ignore
             const Swal = (await import('sweetalert2')).default;
@@ -664,80 +750,6 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
             return;
         }
 
-        const fetchDetails = async () => {
-            const { data: ticket } = await supabase
-                .from('tickets')
-                .select(`
-                    *,
-                    category_id,
-                    ticket_statuses!fk_tickets_status (status_name, sla_behavior, is_final),
-                    ticket_categories (name),
-                    services (name),
-                    requester:profiles!fk_tickets_requester (full_name, email),
-                    assigned_agent:profiles!fk_tickets_assigned_agent (full_name, role_id, roles:role_id(role_name)),
-                    group:groups!assignment_group_id (
-                        id, name, company_id, 
-                        company:company_id(company_name, sla_escalation_mode),
-                        group_sla_policies(sla_policy_id),
-                        business_hours(weekly_schedule)
-                    ),
-                    ticket_attachments (*)
-                `)
-                .eq('id', selectedTicketId)
-                .single();
-            setSelectedTicket(ticket);
-
-            // Dynamically fetch workflow transitions for the ticket's department
-            if (ticket?.group?.company_id) {
-                const { data: wf } = await supabase
-                    .from('department_workflows')
-                    .select('workflow_id')
-                    .eq('department_id', ticket.group.company_id)
-                    .eq('is_active', true)
-                    .single();
-
-                if (wf) {
-                    const { data: trans } = await supabase
-                        .from('workflow_transitions')
-                        .select('from_status_id, to_status_id, allowed_roles')
-                        .eq('workflow_id', wf.workflow_id);
-                    if (trans) setWorkflowTransitions(trans);
-                    else setWorkflowTransitions([]);
-                } else {
-                    setWorkflowTransitions([]);
-                }
-            }
-
-            const { data: aiData } = await supabase.from('ticket_ai_insights').select('*').eq('ticket_id', selectedTicketId).single();
-            setAiInsight(aiData);
-
-            const { data: msgs } = await supabase
-                .from('ticket_messages')
-                .select('*, sender:profiles!sender_id(full_name)')
-                .eq('ticket_id', selectedTicketId)
-                .order('created_at', { ascending: true });
-
-            if (msgs) {
-                setMessages(msgs.map(m => ({
-                    ...m,
-                    sender_name: m.sender?.full_name || (m.sender_role === 'requester' ? 'User' : 'Agent')
-                })));
-            }
-        };
-        const fetchActivityLogs = async () => {
-            if (!selectedTicketId) return;
-            const { data, error } = await supabase
-                .from('ticket_activity_log')
-                .select('*')
-                .eq('ticket_id', selectedTicketId)
-                .order('created_at', { ascending: false });
-
-            if (error) {
-                console.error('Error fetching activity logs:', error);
-                return;
-            }
-            if (data) setActivityLogs(data);
-        };
         fetchDetails();
         fetchActivityLogs();
     }, [selectedTicketId]);
@@ -3466,123 +3478,163 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                     </div>
                                 )}
 
-                                {/* Attachments in Conversation */}
-                                {selectedTicket.ticket_attachments && selectedTicket.ticket_attachments.length > 0 && (
-                                    <div className="flex gap-4 group">
-                                        <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-[11px] font-black flex-shrink-0 text-slate-600 shadow-sm">
-                                            <Paperclip size={14} />
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <span className="text-[13px] font-black text-gray-900">Attachments</span>
-                                                <span className="bg-slate-50 text-slate-500 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
-                                                    <Paperclip size={10} /> {selectedTicket.ticket_attachments.length} Files
-                                                </span>
-                                            </div>
-                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                                {selectedTicket.ticket_attachments.map((file: any, index: number) => {
-                                                    const fileUrl = supabase.storage.from('ticket-attachments').getPublicUrl(file.file_path).data.publicUrl;
-                                                    const isImage = file.mime_type?.startsWith('image/');
+                                {/* Chronological Conversation Stream (Messages + Attachments) */}
+                                {(() => {
+                                    const stream = [
+                                        ...(messages || []).map(m => ({ ...m, streamType: 'message' })),
+                                        ...(selectedTicket.ticket_attachments || []).map(a => ({ ...a, streamType: 'attachment' }))
+                                    ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
-                                                    return (
-                                                        <a
-                                                            key={file.id || index}
-                                                            href={fileUrl}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 hover:shadow-md transition-all group/file"
-                                                        >
-                                                            {isImage ? (
-                                                                <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 border border-gray-100">
-                                                                    <img src={fileUrl} alt={file.file_name} className="w-full h-full object-cover" />
-                                                                </div>
-                                                            ) : (
-                                                                <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600 group-hover/file:bg-indigo-600 group-hover/file:text-white transition-colors flex-shrink-0">
-                                                                    <FileText size={18} />
-                                                                </div>
-                                                            )}
-                                                            <div className="flex-1 min-w-0">
-                                                                <p className="text-xs font-bold text-gray-800 truncate group-hover/file:text-indigo-600">{file.file_name}</p>
-                                                                <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">{file.mime_type?.split('/')[1] || 'file'}</p>
+                                    // Group adjacent attachments from same uploader within short time window
+                                    const groupedStream: any[] = [];
+                                    stream.forEach(item => {
+                                        if (item.streamType === 'attachment') {
+                                            const lastItem = groupedStream[groupedStream.length - 1];
+                                            if (lastItem && lastItem.streamType === 'attachment_group' && lastItem.uploaded_by === item.uploaded_by) {
+                                                const timeDiff = Math.abs(new Date(item.created_at).getTime() - new Date(lastItem.created_at).getTime());
+                                                if (timeDiff < 5 * 60 * 1000) { // 5 minute window
+                                                    lastItem.files.push(item);
+                                                    return;
+                                                }
+                                            }
+                                            groupedStream.push({
+                                                streamType: 'attachment_group',
+                                                uploaded_by: item.uploaded_by,
+                                                created_at: item.created_at,
+                                                files: [item]
+                                            });
+                                        } else {
+                                            groupedStream.push(item);
+                                        }
+                                    });
+
+                                    return groupedStream
+                                        .filter(item => item.streamType !== 'message' || (!isRequesterOnly || !item.is_internal))
+                                        .map((item, idx) => {
+                                            if (item.streamType === 'message') {
+                                                const isAgent = item.sender_role === 'agent';
+                                                const isInternal = item.is_internal;
+                                                return (
+                                                    <div key={`msg-${item.id}`} className={`flex gap-4 group animate-in fade-in slide-in-from-bottom-2 duration-300 ${isAgent ? 'flex-row-reverse' : ''}`}>
+                                                        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 shadow-sm transition-transform group-hover:scale-105
+                                                             ${isAgent ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                                                            {item.sender_name?.charAt(0) || 'U'}
+                                                        </div>
+                                                        <div className={`flex-1 flex flex-col ${isAgent ? 'items-end' : 'items-start'}`}>
+                                                            <div className={`flex items-center gap-2 mb-2 ${isAgent ? 'flex-row-reverse' : ''}`}>
+                                                                <span className="text-[13px] font-black text-gray-900">
+                                                                    {item.sender_role === 'system' 
+                                                                        ? `Admin ${selectedTicket.group?.company?.company_name || selectedTicket.group?.name || 'DIT'}` 
+                                                                        : item.sender_name}
+                                                                </span>
+                                                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
+                                                                    {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} WIB
+                                                                </span>
+                                                                {item.sender_role === 'agent' ? (
+                                                                    <span className="bg-indigo-50 text-indigo-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-indigo-100 flex items-center gap-1">
+                                                                        Agent
+                                                                    </span>
+                                                                ) : item.sender_role === 'system' ? (
+                                                                    <span className="bg-amber-50 text-amber-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-amber-100 flex items-center gap-1">
+                                                                        SYSTEM
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="bg-slate-100 text-slate-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
+                                                                        Requester
+                                                                    </span>
+                                                                )}
                                                             </div>
-                                                        </a>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                                {messages
-                                    .filter(m => !isRequesterOnly || !m.is_internal) // Hide internal notes from requesters
-                                    .map((msg) => {
-                                    const isAgent = msg.sender_role === 'agent';
-                                    const isInternal = msg.is_internal;
+                                                            <div className={`p-4 rounded-2xl text-[14px] leading-relaxed font-medium shadow-sm transition-all conversation-content
+                                                                 ${item.content?.includes('system-auto-note')
+                                                                    ? 'bg-amber-50 border-2 border-amber-200 text-amber-900'
+                                                                    : item.content?.includes('status-update-remark')
+                                                                    ? 'bg-emerald-50/10 border-2 border-emerald-100/50 text-slate-700'
+                                                                    : isInternal
+                                                                        ? 'bg-amber-50/40 border-2 border-amber-100/50 text-amber-900'
+                                                                        : isAgent
+                                                                            ? 'bg-white border-2 border-indigo-50 text-slate-700 hover:border-indigo-100 hover:shadow-indigo-50/50'
+                                                                            : 'bg-slate-50 border border-slate-100 text-slate-700'}`}>
+                                                                <div
+                                                                    className="prose prose-slate prose-sm max-w-none"
+                                                                    dangerouslySetInnerHTML={{ __html: item.content || '' }}
+                                                                    onClick={(e) => {
+                                                                        const target = e.target as HTMLElement;
+                                                                        if (target.tagName === 'IMG') {
+                                                                            handleImagePreview(target.getAttribute('src') || '');
+                                                                        }
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            } else {
+                                                // Attachment Group
+                                                const uploaderAgent = allAgents.find(a => a.id === item.uploaded_by);
+                                                const isAgent = !!uploaderAgent;
+                                                const uploaderName = uploaderAgent?.full_name || 
+                                                                   (item.uploaded_by === selectedTicket.requester_id ? selectedTicket.requester?.full_name : 'User');
+                                                const avatarChar = uploaderName?.charAt(0) || 'U';
 
-                                    return (
-                                        <div key={msg.id} className={`flex gap-4 group animate-in fade-in slide-in-from-bottom-2 duration-300 ${isAgent ? 'flex-row-reverse' : ''}`}>
-                                            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 shadow-sm transition-transform group-hover:scale-105
-                                                 ${isAgent ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
-                                                {msg.sender_name?.charAt(0) || 'U'}
-                                            </div>
-                                            <div className={`flex-1 flex flex-col ${isAgent ? 'items-end' : 'items-start'}`}>
-                                                <div className={`flex items-center gap-2 mb-2 ${isAgent ? 'flex-row-reverse' : ''}`}>
-                                                    <span className="text-[13px] font-black text-gray-900">
-                                                        {msg.sender_role === 'system' 
-                                                            ? `Admin ${selectedTicket.group?.company?.company_name || selectedTicket.group?.name || 'DIT'}` 
-                                                            : msg.sender_name}
-                                                    </span>
-                                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
-                                                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} WIB
-                                                    </span>
-                                                    {msg.sender_role === 'agent' ? (
-                                                        <span className="bg-indigo-50 text-indigo-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-indigo-100 flex items-center gap-1">
-                                                            Agent
-                                                        </span>
-                                                    ) : msg.sender_role === 'system' ? (
-                                                        <span className="bg-amber-50 text-amber-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-amber-100 flex items-center gap-1">
-                                                            SYSTEM
-                                                        </span>
-                                                    ) : (
-                                                        <span className="bg-slate-100 text-slate-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
-                                                            Requester
-                                                        </span>
-                                                    )}
-                                                    {isInternal && (
-                                                        <span className="bg-amber-50 text-amber-600 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-amber-100 flex items-center gap-1">
-                                                            <Lock size={10} /> Private Note
-                                                        </span>
-                                                    )}
-                                                    {msg.content?.includes('status-update-remark') && (
-                                                        <span className="bg-emerald-50 text-emerald-600 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-emerald-100 flex items-center gap-1">
-                                                            <RefreshCw size={10} /> Status Update
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className={`p-4 rounded-2xl text-[14px] leading-relaxed font-medium shadow-sm transition-all conversation-content
-                                                     ${msg.content?.includes('system-auto-note')
-                                                        ? 'bg-amber-50 border-2 border-amber-200 text-amber-900'
-                                                        : msg.content?.includes('status-update-remark')
-                                                        ? 'bg-emerald-50/10 border-2 border-emerald-100/50 text-slate-700'
-                                                        : isInternal
-                                                            ? 'bg-amber-50/40 border-2 border-amber-100/50 text-amber-900'
-                                                            : isAgent
-                                                                ? 'bg-white border-2 border-indigo-50 text-slate-700 hover:border-indigo-100 hover:shadow-indigo-50/50'
-                                                                : 'bg-slate-50 border border-slate-100 text-slate-700'}`}>
-                                                    <div
-                                                        className="prose prose-slate prose-sm max-w-none"
-                                                        dangerouslySetInnerHTML={{ __html: msg.content || '' }}
-                                                        onClick={(e) => {
-                                                            const target = e.target as HTMLElement;
-                                                            if (target.tagName === 'IMG') {
-                                                                handleImagePreview(target.getAttribute('src') || '');
-                                                            }
-                                                        }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                                                return (
+                                                    <div key={`att-${idx}`} className={`flex gap-4 group animate-in fade-in slide-in-from-bottom-2 duration-300 ${isAgent ? 'flex-row-reverse' : ''}`}>
+                                                        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 shadow-sm transition-transform group-hover:scale-105
+                                                             ${isAgent ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                                                            {isAgent ? avatarChar : <Paperclip size={14} />}
+                                                        </div>
+                                                        <div className={`flex-1 flex flex-col ${isAgent ? 'items-end' : 'items-start'}`}>
+                                                            <div className={`flex items-center gap-2 mb-2 ${isAgent ? 'flex-row-reverse' : ''}`}>
+                                                                <span className="text-[13px] font-black text-gray-900">
+                                                                    {isAgent ? uploaderName : 'Attachments'}
+                                                                </span>
+                                                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
+                                                                    {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} WIB
+                                                                </span>
+                                                                <span className="bg-slate-50 text-slate-500 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-slate-200 flex items-center gap-1">
+                                                                    <Paperclip size={10} /> {item.files.length} Files
+                                                                </span>
+                                                                {isAgent && (
+                                                                    <span className="bg-indigo-50 text-indigo-700 text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md border border-indigo-100 flex items-center gap-1">
+                                                                        Agent
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <div className={`flex flex-wrap gap-3 max-w-2xl ${isAgent ? 'justify-end' : 'justify-start'}`}>
+                                                                {item.files.map((file: any, fIdx: number) => {
+                                                                    const fileUrl = supabase.storage.from('ticket-attachments').getPublicUrl(file.file_path).data.publicUrl;
+                                                                    const isImage = file.mime_type?.startsWith('image/');
+                                                                    return (
+                                                                        <a
+                                                                            key={file.id || fIdx}
+                                                                            href={fileUrl}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
+                                                                            className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 hover:shadow-md transition-all group/file min-w-[200px]"
+                                                                        >
+                                                                            {isImage ? (
+                                                                                <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 border border-gray-100">
+                                                                                    <img src={fileUrl} alt={file.file_name} className="w-full h-full object-cover" />
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600 group-hover/file:bg-indigo-600 group-hover/file:text-white transition-colors flex-shrink-0">
+                                                                                    <FileText size={18} />
+                                                                                </div>
+                                                                            )}
+                                                                            <div className="flex-1 min-w-0">
+                                                                                <p className="text-xs font-bold text-gray-800 truncate group-hover/file:text-indigo-600">{file.file_name}</p>
+                                                                                <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">{file.mime_type?.split('/')[1] || 'file'}</p>
+                                                                            </div>
+                                                                        </a>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                        });
+                                })()}
+
 
                                 {/* System Divider */}
                                 <div className="flex items-center gap-4 py-8">
