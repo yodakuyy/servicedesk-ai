@@ -669,43 +669,6 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     />
                 </div>
 
-                {/* Attachments Section */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h3 className="text-sm font-bold text-gray-700 mb-4 flex items-center gap-2">
-                        <Paperclip size={16} className="text-indigo-500" />
-                        Attachments
-                    </h3>
-                    {(!ticket.ticket_attachments || ticket.ticket_attachments.length === 0) ? (
-                        <div className="text-sm text-gray-500 italic bg-gray-50 p-4 rounded-lg border border-gray-100 flex items-center gap-2">
-                            <Info size={14} />
-                            No files attached to this ticket.
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {ticket.ticket_attachments?.map((file: any, index: number) => {
-                                const fileUrl = supabase.storage.from('ticket-attachments').getPublicUrl(file.file_path).data.publicUrl;
-                                return (
-                                    <a
-                                        key={file.id || index}
-                                        href={fileUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 hover:border-indigo-200 transition-all group"
-                                    >
-                                        <div className="p-2 bg-white rounded-md border border-gray-200 text-indigo-600 group-hover:text-indigo-700">
-                                            <FileText size={18} />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-gray-700 truncate group-hover:text-indigo-700">{file.file_name}</p>
-                                            <p className="text-xs text-gray-400">{file.mime_type || 'Unknown Type'}</p>
-                                        </div>
-                                        <ExternalLink size={14} className="text-gray-400 group-hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity" />
-                                    </a>
-                                );
-                            })}
-                        </div>
-                    )}
-                </div>
 
                 {/* Conversation Section */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col min-h-[400px]">
@@ -717,61 +680,159 @@ const RequesterTicketView: React.FC<RequesterTicketViewProps> = ({ ticketId, onB
                     </div>
 
                     <div className="flex-1 p-6 space-y-6 overflow-y-auto max-h-[500px]">
-                        {messages.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center h-full text-gray-400 py-10">
-                                <MessageSquare size={48} className="opacity-20 mb-2" />
-                                <p className="text-sm">No messages yet. Start the conversation!</p>
-                            </div>
-                        ) : (
-                            messages.map((msg) => (
-                                <div key={msg.id} className={`flex gap-3 mb-6 ${msg.sender_role === 'requester' ? 'flex-row-reverse' : 'flex-row'}`}>
-                                    {/* Avatar */}
-                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 shadow-sm ${msg.sender_role === 'requester' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-200 text-slate-600'}`}>
-                                        {(msg.sender?.full_name || msg.sender_role).charAt(0).toUpperCase()}
-                                    </div>
+                        {(() => {
+                            const stream = [
+                                ...(messages || []).map(m => ({ ...m, streamType: 'message' })),
+                                ...(ticket?.ticket_attachments || []).map((a: any) => ({ ...a, streamType: 'attachment' }))
+                            ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
-                                    <div className={`max-w-[85%] flex flex-col ${msg.sender_role === 'requester' ? 'items-end' : 'items-start'}`}>
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <span className="text-xs font-bold text-slate-700">
-                                                {msg.sender_role === 'system' 
-                                                    ? `Admin ${ticket.group?.company?.company_name || ticket.group?.name || 'DIT'}` 
-                                                    : (msg.sender?.full_name || 'Support Agent')}
-                                            </span>
-                                            <span className="text-[10px] text-slate-400 font-medium">
-                                                {new Date(msg.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}, {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                            </span>
-                                            {msg.sender_role === 'requester' ? (
-                                                <span className="bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
-                                                    Requester
-                                                </span>
-                                            ) : msg.sender_role === 'system' ? (
-                                                <span className="bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
-                                                    SYSTEM
-                                                </span>
-                                            ) : (
-                                                <span className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
-                                                    Agent
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div
-                                            className={`py-3 px-4 shadow-sm text-sm leading-relaxed prose prose-sm max-w-none 
-                                            ${msg.sender_role === 'requester'
-                                                    ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-[2px]'
-                                                    : 'bg-[#f0f2f5] text-slate-800 rounded-2xl rounded-tl-[2px] border border-slate-100'
-                                                }`}
-                                            dangerouslySetInnerHTML={{ __html: msg.content || '' }}
-                                            onClick={(e) => {
-                                                const target = e.target as HTMLElement;
-                                                if (target.tagName === 'IMG') {
-                                                    handleImagePreview(target.getAttribute('src') || '');
-                                                }
-                                            }}
-                                        />
+                            const groupedStream: any[] = [];
+                            stream.forEach(item => {
+                                if (item.streamType === 'attachment') {
+                                    const lastItem = groupedStream[groupedStream.length - 1];
+                                    if (lastItem && lastItem.streamType === 'attachment_group' && lastItem.uploaded_by === item.uploaded_by) {
+                                        const timeDiff = Math.abs(new Date(item.created_at).getTime() - new Date(lastItem.created_at).getTime());
+                                        if (timeDiff < 5 * 60 * 1000) { // 5 minute window
+                                            lastItem.files.push(item);
+                                            return;
+                                        }
+                                    }
+                                    groupedStream.push({
+                                        streamType: 'attachment_group',
+                                        uploaded_by: item.uploaded_by,
+                                        created_at: item.created_at,
+                                        files: [item]
+                                    });
+                                } else {
+                                    groupedStream.push(item);
+                                }
+                            });
+
+                            if (groupedStream.length === 0) {
+                                return (
+                                    <div className="flex flex-col items-center justify-center h-full text-gray-400 py-10">
+                                        <MessageSquare size={48} className="opacity-20 mb-2" />
+                                        <p className="text-sm">No messages yet. Start the conversation!</p>
                                     </div>
-                                </div>
-                            ))
-                        )}
+                                );
+                            }
+
+                            return groupedStream.map((item, idx) => {
+                                if (item.streamType === 'message') {
+                                    const msg = item;
+                                    return (
+                                        <div key={`msg-${msg.id}`} className={`flex gap-3 mb-6 ${msg.sender_role === 'requester' ? 'flex-row-reverse' : 'flex-row'}`}>
+                                            {/* Avatar */}
+                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 shadow-sm ${msg.sender_role === 'requester' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-200 text-slate-600'}`}>
+                                                {(msg.sender?.full_name || msg.sender_role).charAt(0).toUpperCase()}
+                                            </div>
+
+                                            <div className={`max-w-[85%] flex flex-col ${msg.sender_role === 'requester' ? 'items-end' : 'items-start'}`}>
+                                                <div className={`flex items-center gap-2 mb-1 ${msg.sender_role === 'requester' ? 'flex-row-reverse' : ''}`}>
+                                                    <span className="text-xs font-bold text-slate-700">
+                                                        {msg.sender_role === 'system' 
+                                                            ? `Admin ${ticket.group?.company?.company_name || ticket.group?.name || 'DIT'}` 
+                                                            : (msg.sender?.full_name || 'Support Agent')}
+                                                    </span>
+                                                    <span className="text-[10px] text-slate-400 font-medium">
+                                                        {new Date(msg.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}, {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    </span>
+                                                    {msg.sender_role === 'requester' ? (
+                                                        <span className="bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                                            Requester
+                                                        </span>
+                                                    ) : msg.sender_role === 'system' ? (
+                                                        <span className="bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                                            SYSTEM
+                                                        </span>
+                                                    ) : (
+                                                        <span className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                                            Agent
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div
+                                                    className={`py-3 px-4 shadow-sm text-sm leading-relaxed prose prose-sm max-w-none 
+                                                    ${msg.sender_role === 'requester'
+                                                            ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-[2px]'
+                                                            : 'bg-[#f0f2f5] text-slate-800 rounded-2xl rounded-tl-[2px] border border-slate-100'
+                                                        }`}
+                                                    dangerouslySetInnerHTML={{ __html: msg.content || '' }}
+                                                    onClick={(e) => {
+                                                        const target = e.target as HTMLElement;
+                                                        if (target.tagName === 'IMG') {
+                                                            handleImagePreview(target.getAttribute('src') || '');
+                                                        }
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+                                    );
+                                } else {
+                                    // Attachment Group
+                                    const isRequester = item.uploaded_by === ticket?.requester_id;
+                                    
+                                    return (
+                                        <div key={`att-${idx}`} className={`flex gap-3 mb-6 ${isRequester ? 'flex-row-reverse' : 'flex-row'}`}>
+                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 shadow-sm ${isRequester ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-200 text-slate-600'}`}>
+                                                <Paperclip size={14} />
+                                            </div>
+                                            <div className={`max-w-[85%] flex flex-col ${isRequester ? 'items-end' : 'items-start'}`}>
+                                                <div className={`flex items-center gap-2 mb-1 ${isRequester ? 'flex-row-reverse' : ''}`}>
+                                                    <span className="text-xs font-bold text-slate-700">
+                                                        Attachments
+                                                    </span>
+                                                    <span className="text-[10px] text-slate-400 font-medium">
+                                                        {new Date(item.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}, {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    </span>
+                                                    <span className="bg-slate-50 text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                                                        <Paperclip size={10} /> {item.files.length} Files
+                                                    </span>
+                                                    {isRequester ? (
+                                                        <span className="bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                                            Requester
+                                                        </span>
+                                                    ) : (
+                                                        <span className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                                            Agent
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className={`flex flex-wrap gap-2 ${isRequester ? 'justify-end' : 'justify-start'}`}>
+                                                    {item.files.map((file: any, fIdx: number) => {
+                                                        const fileUrl = supabase.storage.from('ticket-attachments').getPublicUrl(file.file_path).data.publicUrl;
+                                                        const isImage = file.mime_type?.startsWith('image/');
+                                                        return (
+                                                            <a
+                                                                key={file.id || fIdx}
+                                                                href={fileUrl}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="flex items-center gap-3 p-2.5 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 hover:shadow-sm transition-all group/file min-w-[180px] max-w-[250px]"
+                                                            >
+                                                                {isImage ? (
+                                                                    <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 border border-gray-100">
+                                                                        <img src={fileUrl} alt={file.file_name} className="w-full h-full object-cover" />
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600 group-hover/file:bg-indigo-600 group-hover/file:text-white transition-colors flex-shrink-0">
+                                                                        <FileText size={18} />
+                                                                    </div>
+                                                                )}
+                                                                <div className="flex-1 min-w-0">
+                                                                    <p className="text-xs font-bold text-gray-800 truncate group-hover/file:text-indigo-600">{file.file_name}</p>
+                                                                    <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider truncate">{file.mime_type?.split('/')[1] || 'file'}</p>
+                                                                </div>
+                                                            </a>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                }
+                            });
+                        })()}
                     </div>
 
                     {/* Reply Composer */}

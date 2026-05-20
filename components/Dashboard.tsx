@@ -992,80 +992,92 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
         const events: any[] = [];
 
         // 1. FETCH TICKET-BASED EVENTS
-        const { data: allTickets } = await supabase
-          .from('tickets')
-          .select(`
-            id, subject, description, ticket_statuses!status_id!inner(status_name), 
-            requester:requester_id(full_name),
-            ticket_categories!category_id!inner(company_id)
-          `)
-          .or(`company_id.eq.${userProfile?.company_id},company_id.is.null`, { foreignTable: 'ticket_categories' });
-        
-        if (allTickets) {
-          allTickets.forEach(t => {
-            const status = (t.ticket_statuses as any)?.status_name?.toLowerCase();
-            if (!['approved', 'resolved', 'closed'].includes(status)) return;
-            
-            const desc = t.description || '';
-            const dateCellRegex = /<td[^>]*>Event Date.*?<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
-            const dateCellMatch = desc.match(dateCellRegex);
-            let rawDate = "";
-            
-            if (dateCellMatch) {
-              rawDate = dateCellMatch[1].replace(/&nbsp;/g, ' ').replace(/<[^>]*>/g, '').trim();
-            } else {
-              const generalDateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/;
-              const generalMatch = desc.match(generalDateRegex);
-              if (generalMatch) rawDate = generalMatch[0];
-            }
-            
-            if (!rawDate) return;
+        const { data: calCats } = await supabase
+            .from('ticket_categories')
+            .select('id, name')
+            .eq('show_on_calendar', true);
 
-            let eventDate: Date;
-            const namedMonthRegex = /^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/;
-            const namedMatch = rawDate.match(namedMonthRegex);
-            
-            if (namedMatch) {
-              const day = parseInt(namedMatch[1]);
-              const monthStr = namedMatch[2].toLowerCase();
-              const year = parseInt(namedMatch[3]);
-              const months: { [key: string]: number } = {
-                'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'mei': 4, 'may': 4, 'jun': 5,
-                'jul': 6, 'agu': 7, 'ags': 7, 'aug': 7, 'sep': 8, 'okt': 9, 'oct': 9,
-                'nov': 10, 'des': 11, 'dec': 11
-              };
-              const month = months[monthStr.substring(0, 3)] ?? 0;
-              eventDate = new Date(year, month, day);
-            } else {
-              eventDate = new Date(rawDate);
-            }
+        if (calCats && calCats.length > 0) {
+            const catIds = calCats.map(c => c.id);
+            const { data: calTickets } = await supabase
+                .from('tickets')
+                .select(`
+                    id, subject, description, category_id, 
+                    ticket_statuses!status_id!inner(status_name),
+                    requester:profiles!requester_id(full_name),
+                    ticket_categories!category_id!inner(company_id)
+                `)
+                .in('category_id', catIds)
+                .or(`company_id.eq.${userProfile?.company_id},company_id.is.null`, { foreignTable: 'ticket_categories' });
 
-            if (isNaN(eventDate.getTime())) return;
-            if (eventDate < new Date(new Date().setHours(0,0,0,0))) return;
-
-            let eventName = t.subject;
-            const eventNameRegex = /<td[^>]*>Event Name<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
-            const nameMatch = desc.match(eventNameRegex);
-            if (nameMatch && nameMatch[1]) {
-              eventName = nameMatch[1].replace(/<[^>]*>/g, '').trim();
-            }
-
-            events.push({
-              id: t.id,
-              title: eventName,
-              category: 'Ticket Booking',
-              date: eventDate.toISOString().split('T')[0],
-              requester: (t as any).requester?.full_name || 'User',
-              raw: t,
-              isManual: false
+            const approvedTickets = calTickets?.filter(t => {
+                const status = (t.ticket_statuses as any)?.status_name?.toLowerCase();
+                return ['approved', 'resolved', 'closed'].includes(status);
             });
-          });
+
+            if (approvedTickets) {
+                approvedTickets.forEach(t => {
+                    const desc = t.description || '';
+                    const dateCellRegex = /<td[^>]*>Event Date.*?<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+                    const dateCellMatch = desc.match(dateCellRegex);
+                    let rawDate = "";
+                    
+                    if (dateCellMatch) {
+                        rawDate = dateCellMatch[1].replace(/&nbsp;/g, ' ').replace(/<[^>]*>/g, '').trim();
+                    } else {
+                        const generalDateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/;
+                        const generalMatch = desc.match(generalDateRegex);
+                        if (generalMatch) rawDate = generalMatch[0];
+                    }
+                    
+                    if (!rawDate) return;
+
+                    let eventDate: Date;
+                    const namedMonthRegex = /^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/;
+                    const namedMatch = rawDate.match(namedMonthRegex);
+                    
+                    if (namedMatch) {
+                        const day = parseInt(namedMatch[1]);
+                        const monthStr = namedMatch[2].toLowerCase();
+                        const year = parseInt(namedMatch[3]);
+                        const months: { [key: string]: number } = {
+                            'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'mei': 4, 'may': 4, 'jun': 5,
+                            'jul': 6, 'agu': 7, 'ags': 7, 'aug': 7, 'sep': 8, 'okt': 9, 'oct': 9,
+                            'nov': 10, 'des': 11, 'dec': 11
+                        };
+                        const month = months[monthStr.substring(0, 3)] ?? 0;
+                        eventDate = new Date(year, month, day);
+                    } else {
+                        eventDate = new Date(rawDate);
+                    }
+
+                    if (isNaN(eventDate.getTime())) return;
+                    
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    if (eventDate < today) return;
+
+                    const nameRegex = /<td[^>]*>Event Name<\/td>\s*<td[^>]*>(.*?)<\/td>/i;
+                    const nameMatch = desc.match(nameRegex);
+                    const eventName = nameMatch ? nameMatch[1].replace(/<[^>]*>/g, '').trim() : t.subject;
+
+                    events.push({
+                        id: t.id,
+                        title: eventName,
+                        category: calCats.find(c => c.id === t.category_id)?.name,
+                        date: eventDate.toISOString().split('T')[0],
+                        requester: (t.requester as any)?.full_name || 'Anonymous',
+                        raw: t,
+                        isManual: false
+                    });
+                });
+            }
         }
 
         // 2. FETCH MANUAL EVENTS
         let manualEventsQuery = supabase
           .from('calendar_events')
-          .select('*, profiles:created_by(full_name)')
+          .select('*')
           .or('is_public.eq.true,is_public.is.null')
           .gte('event_date', new Date().toISOString().split('T')[0]);
 
@@ -1082,7 +1094,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, onChangeDepartment, ini
               title: me.title,
               category: me.category_name || 'Internal Event',
               date: me.event_date,
-              requester: (me as any).profiles?.full_name || 'Admin',
+              requester: 'Admin', // Simplified to avoid join issues for now
               raw: me,
               isManual: true
             });
