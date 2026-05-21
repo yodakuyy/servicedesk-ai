@@ -3514,6 +3514,71 @@ const AgentTicketView: React.FC<AgentTicketViewProps> = ({
                                             if (item.streamType === 'message') {
                                                 const isAgent = item.sender_role === 'agent';
                                                 const isInternal = item.is_internal;
+
+                                                if (item.content?.includes('status-update-remark')) {
+                                                    // Parse status update details
+                                                    const statusMatch = item.content.match(/data-status="([^"]*)"/);
+                                                    const statusName = statusMatch ? statusMatch[1] : 'Updated';
+                                                    const statusNameLower = statusName.toLowerCase();
+                                                    
+                                                    let remarkText = '';
+                                                    try {
+                                                        const parser = new DOMParser();
+                                                        const doc = parser.parseFromString(item.content, 'text/html');
+                                                        const remarkElement = doc.querySelector('.status-update-remark');
+                                                        remarkText = remarkElement ? remarkElement.textContent || '' : item.content;
+                                                    } catch (e) {
+                                                        const textMatch = item.content.match(/>([^]*)</);
+                                                        remarkText = textMatch ? textMatch[1].trim() : item.content;
+                                                    }
+                                                    
+                                                    // Style options depending on status
+                                                    let badgeBg = 'bg-slate-100 text-slate-700 border-slate-200';
+                                                    let cardBg = 'bg-slate-50 border-slate-200/60 text-slate-800';
+                                                    if (statusNameLower.includes('cancel')) {
+                                                        badgeBg = 'bg-red-50 text-red-700 border-red-100';
+                                                        cardBg = 'bg-red-50/20 border-red-100/50 text-slate-800';
+                                                    } else if (statusNameLower.includes('approve') || statusNameLower.includes('resolve') || statusNameLower.includes('close')) {
+                                                        badgeBg = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+                                                        cardBg = 'bg-emerald-50/20 border-emerald-100/50 text-slate-800';
+                                                    } else if (statusNameLower.includes('pending')) {
+                                                        badgeBg = 'bg-amber-50 text-amber-700 border-amber-100';
+                                                        cardBg = 'bg-amber-50/20 border-amber-100/50 text-slate-800';
+                                                    } else if (statusNameLower.includes('progress')) {
+                                                        badgeBg = 'bg-blue-50 text-blue-700 border-blue-100';
+                                                        cardBg = 'bg-blue-50/20 border-blue-100/50 text-slate-800';
+                                                    }
+                                                    
+                                                    return (
+                                                        <div key={`msg-${item.id}`} className="w-full flex justify-end py-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                                            <div className={`max-w-2xl w-full border rounded-2xl p-4 shadow-sm ${cardBg}`}>
+                                                                <div className="flex items-center justify-between gap-4 pb-2 border-b border-gray-200/40 mb-2.5">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600">
+                                                                            {item.sender_name?.charAt(0) || 'A'}
+                                                                        </div>
+                                                                        <span className="text-xs font-bold text-slate-700">
+                                                                            {item.sender_name}
+                                                                        </span>
+                                                                        <span className="text-[11px] text-slate-400 font-medium">
+                                                                            updated status to
+                                                                        </span>
+                                                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${badgeBg}`}>
+                                                                            {statusName}
+                                                                        </span>
+                                                                    </div>
+                                                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
+                                                                        {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} WIB
+                                                                    </span>
+                                                                </div>
+                                                                <div className="text-sm font-semibold text-slate-700 italic leading-relaxed pl-3 border-l-2 border-slate-300">
+                                                                    "{remarkText}"
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+
                                                 return (
                                                     <div key={`msg-${item.id}`} className={`flex gap-4 group animate-in fade-in slide-in-from-bottom-2 duration-300 ${isAgent ? 'flex-row-reverse' : ''}`}>
                                                         <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 shadow-sm transition-transform group-hover:scale-105
